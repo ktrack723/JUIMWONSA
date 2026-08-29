@@ -4,13 +4,17 @@
 // 파라미터 계기판은 없다 — 브리핑의 증상을 읽는 것이 게임이다. 화면에 뜨는 수치는
 // 무사고 카운터·날짜·진급 심사일·사고 누계뿐이다.
 //
-// 타임라인 스프라이트 통근(three.js 빌보드)은 M3 몫이다. 지금은 슬롯 진행 표시로 돈다.
+// 일과 무대(sprites.js)는 연출이다 — 해가 움직이고 병사 판때기들이 장소를 옮겨 다니며
+// 말풍선을 띄운다. 그 대사는 **부임 때 한 번 받아 둔 캐시 풀**(ambient.js)에서 나오므로
+// 하루의 콜 수를 한 건도 늘리지 않는다. 군가는 units.js의 static 인용이라 아예 공짜다.
 
 import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE } from './roster.js';
-import { PLACES, slotsFor, weekdayOf } from './params.js';
+import { PLACES, slotsFor, weekdayOf, dayFraction } from './params.js';
+import { AmbientPool } from './ambient.js';
+import { Stage } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
 import * as pace from './pacing.js';
 import { $, $$, escapeHtml, sget, sset, toast, withLoading } from './ui.js';
@@ -27,6 +31,7 @@ const state = {
   holdWanted: false,     // ⏸ 눌림 — 다음 슬롯 경계에서 선다
   holdRelease: null,     // 개입 콘솔이 닫힐 때 부르는 손잡이
   interviewHandle: null, // 진행 중인 면담 왕복 손잡이
+  stage: null,           // 일과 무대 (three.js). WebGL이 없으면 null인 채로 돈다
 };
 
 // 판정 계열(E-3·N·I-2)을 태울 저가 모델. 업자별로 하나씩만 안다 — 모르면 기본 모델.
@@ -77,6 +82,7 @@ function loadCampaign(unitId) {
 function wipeCampaign(unitId) {
   sset('localStorage', campaignKey(unitId), null);
   new Roster(UNIT_BY_ID[unitId]).clear();
+  new AmbientPool(UNIT_BY_ID[unitId]).clear();
 }
 
 // ── 부대 선택 ───────────────────────────────────────────
@@ -136,6 +142,7 @@ async function startCampaign(unitId, savedState) {
   }
   saveCampaign();
   show('day');
+  openStage();
   renderHud();
   renderRoster();
   renderNotices();
@@ -158,6 +165,81 @@ function renderTimeline(activeIndex = -1) {
   const slots = slotsFor(state.engine.state.date);
   $('#timeline-slots').innerHTML = slots.map((sl, i) =>
     `<li class="${i < activeIndex ? 'done' : i === activeIndex ? 'now' : ''}">${escapeHtml(sl.label)}</li>`).join('');
+}
+
+// ── 일과 무대 ───────────────────────────────────────────
+// 화면이 열릴 때 한 번 만들고 캠페인 내내 쓴다. WebGL이 안 되면 stage.ok가 false고,
+// 그때도 하늘·해·장소 라벨은 CSS라 그대로 뜬다 — 병사 판때기만 없다.
+function openStage() {
+  if (!state.stage) {
+    state.stage = new Stage($('#stage-canvas'), { count: 12 });
+    state.stage.start();
+    addEventListener('resize', () => state.stage?.resize());
+  }
+  // 장소 팻말은 params.js의 대응표가 그대로 그린다 — 화면이 자리를 따로 알 필요가 없다.
+  $('#stage-places').innerHTML = Object.values(PLACES)
+    .map(pl => `<span class="stage-place" style="left:${(pl.x * 100).toFixed(1)}%">${escapeHtml(pl.label)}</span>`).join('');
+}
+
+/** 슬롯 하나로 무대를 옮긴다 — 해·하늘·통근·말풍선. */
+function stageTo(slot, chatter = []) {
+  const sky = $('#stage-sky');
+  const f = dayFraction(slot.time);
+  state.stage?.goto(slot);
+  const look = state.stage?.ok ? state.stage.look() : { sky: skyFallback(f), sun: sunFallback(f) };
+  sky.style.background = `linear-gradient(180deg, ${look.sky.top} 0%, ${look.sky.bot} 100%)`;
+  const sun = $('#stage-sun');
+  sun.style.left = `${(look.sun.x * 100).toFixed(1)}%`;
+  sun.style.bottom = `${(18 + look.sun.y * 62).toFixed(1)}%`;
+  sun.classList.toggle('moon', look.sun.night);
+  $('#stage-clock').textContent = slot.time;
+  $('#stage-slot').textContent = `${slot.label} · ${PLACES[slot.at]?.label || ''}`;
+  speak(chatter);
+}
+
+// stage가 안 열렸을 때를 위한 최소 폴백. sprites.js의 같은 함수를 안 쓰는 이유는
+// 그 모듈이 three.js를 물고 있어서다 — 로드 자체가 실패한 환경도 하늘은 떠야 한다.
+const skyFallback = f => (f > 0.28 && f < 0.75 ? { top: '#8fc0ea', bot: '#cfe4f2' } : { top: '#111726', bot: '#1a2130' });
+const sunFallback = f => ({ x: Math.max(0, Math.min(1, (f - 0.25) / 0.5)), y: 0.6, night: !(f > 0.25 && f < 0.75) });
+
+/**
+ * 사건이 터진 자리에 ❗를 띄운다. 스프라이트 하나를 골라 그 위에 붙는다 —
+ * 어느 판때기가 사고를 쳤는지가 눈에 보여야 「달려가는」 그림이 된다.
+ * 대응이 끝나면 지운다.
+ */
+function markIncident(on) {
+  const box = $('#stage-bubbles');
+  box.querySelector('.incident-mark')?.remove();
+  if (!on) return;
+  const pos = state.stage?.ok ? state.stage.positions() : [];
+  const p = pos.length ? pos[Math.floor(Math.random() * pos.length)] : { x: 0.5 };
+  const el = document.createElement('div');
+  el.className = 'incident-mark';
+  el.textContent = '❗';
+  el.style.left = `${(p.x * 100).toFixed(1)}%`;
+  box.appendChild(el);
+}
+
+/** 말풍선. 스프라이트가 서 있는 자리에 붙는다 — 대사는 캐시 풀에서 왔고 콜은 없다. */
+function speak(chatter) {
+  const box = $('#stage-bubbles');
+  // ❗는 대응이 끝날 때까지 살아 있어야 한다 — 말풍선만 갈아 끼운다.
+  box.querySelectorAll('.bubble').forEach(b => b.remove());
+  if (!chatter?.length) return;
+  const pos = state.stage?.ok ? state.stage.positions() : [];
+  chatter.slice(0, 3).forEach((c, i) => {
+    const el = document.createElement('div');
+    el.className = `bubble ${c.kind}${c.kind === 'song' && c.mode === 'broadcast' ? ' broadcast' : ''}`;
+    // 군가는 누가 부르는지가 아니라 어디서 오는지가 다르다 — 목이냐 스피커냐.
+    el.textContent = c.kind === 'song'
+      ? (c.mode === 'broadcast' ? `📻 ♪ ${c.text}` : `♪ ${c.text}`)
+      : c.text;
+    if (c.kind === 'song') el.title = c.title;
+    const p = pos[(i * 4 + 1) % Math.max(1, pos.length)];
+    el.style.left = `${((p ? p.x : 0.2 + i * 0.3) * 100).toFixed(1)}%`;
+    el.style.bottom = `${34 + i * 17}%`;
+    box.appendChild(el);
+  });
 }
 
 function renderRoster() {
@@ -199,22 +281,26 @@ function makeHandlers() {
   return {
     briefing: async ({ date, briefing, arrivals, departures }) => {
       renderHud(); renderRoster(); renderTimeline(-1);
+      stageTo(slotsFor(date)[0], []);
       await addEntry('briefing', `[아침 브리핑 · ${date}]\n${briefing}`);
       for (const d of departures || []) await addEntry('sys', `${d.name} ${d.serial} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
       for (const a of arrivals || []) await addEntry('sys', `${a.name} ${a.serial} 전입 신고 (${a.job}).`, { typed: false });
     },
-    slot: async ({ index, slot, line }) => {
+    slot: async ({ index, slot, line, chatter }) => {
       renderTimeline(index);
+      stageTo(slot, chatter);
       if (line) await addEntry('slot', `[${slot.label}] ${line}`);
       else await addEntry('slot', `[${slot.label}]`, { typed: false });
       await holdGate();   // ⏸가 눌려 있으면 여기서 선다
     },
     incident: async ({ scene, place, slot }) => {
       sfx.bad();
+      markIncident(true);
       await addEntry('incident', `❗ ${slot.label} · ${place}\n${scene}`);
       return await askDirective();
     },
     outcome: async ({ scene }) => {
+      markIncident(false);
       await addEntry('outcome', scene);
     },
     verdict: async ({ escalated, tier }) => {

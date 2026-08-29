@@ -1,6 +1,8 @@
 // node --test tests/engine.test.mjs — 하네스. 결정적 가짜 LLM으로 하루 3턴 (§9.5).
 //
 //   1일차: 조용한 날 — 브리핑 한 콜로 하루가 끝난다. 제일 싼 날.
+//         (병영 소음은 부임 때 한 번만 채워지므로 미리 채워 두고 시작한다 — 실제 게임도
+//          둘째 날부터는 그 상태다. 「부임 첫날만 한 콜 더」는 따로 못박는다.)
 //   2일차: 사건 → 지침 → 확전(사고) — 카운터 0 회귀, 병사·파라미터는 그대로.
 //   3일차: 브리핑에 어제가 코드 요약으로 실린다.
 //
@@ -9,6 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine } from '../js/engine.js';
 import { Roster } from '../js/roster.js';
+import { AmbientPool } from '../js/ambient.js';
 import { TUNING } from '../js/params.js';
 
 // ── 가짜 LLM — label로 갈라 결정적 응답을 준다 ──────────
@@ -23,6 +26,7 @@ class FakeLLM {
     this.calls.push({ ...req, messages: structuredClone(req.messages || []) });
     const l = req.label || '';
     if (l.startsWith('전입')) return { name: `병사${this.calls.length}`, sheet: `시트${this.calls.length}` };
+    if (l.startsWith('병영 소음')) return { lines: [{ slot: 'reveille', text: '또 아침이네' }, { slot: 'amwork', text: '장갑 한 짝 어디 갔냐' }] };
     if (l.startsWith('아침 브리핑')) return { briefing: '브리핑본문', slots: Array.from({ length: 9 }, (_, i) => `조각${i}`) };
     if (l.startsWith('사건 장면')) return '사건장면텍스트';
     if (l.startsWith('대응 결과')) return '결과장면텍스트';
@@ -48,11 +52,18 @@ const unit = {
   culture: 'CULT표식', rules: 'REGS표식', soldierRules: 'SRULES표식',
   intel: { score: 5, desc: '보통 머리' }, macho: { score: 5, desc: '보통 피' },
   difficulty: 5, serviceMonths: 18, serial: { tag: 'PR', pad: 7 }, jobs: ['a', 'b', 'c', 'd'],
+  songMode: 'chorus', songSlots: ['reveille'],
+  songs: [{ title: '군가표식', note: '감사용 곡', lines: ['군가소절표식'] }],
 };
 
-function fixture({ rng, judges = [] } = {}) {
+const memStore = memStorage;
+
+function fixture({ rng, judges = [], ambientReady = true } = {}) {
   const llm = new FakeLLM();
   llm.judgeQueue = judges;
+  // 병영 소음은 부임 때 한 번 채워지고 끝이다. 하루 루프를 재는 테스트는 채워진 채로 시작한다.
+  const ambient = new AmbientPool(unit, { storage: memStore() });
+  if (ambientReady) ambient.fill([{ slot: 'reveille', text: '또 아침이네' }, { slot: 'amwork', text: '장갑 한 짝' }]);
   const roster = new Roster(unit, { storage: memStorage() });
   for (let i = 0; i < 16; i++) {
     roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
@@ -61,17 +72,20 @@ function fixture({ rng, judges = [] } = {}) {
   const state = Engine.newCampaign(unit, '2026-08-26');
   const events = [];
   const engine = new Engine(llm, {
-    unit, roster, state, rng: rng || seqRng(),
+    unit, roster, state, ambient, rng: rng || seqRng(),
     handlers: {
       briefing: e => events.push(['briefing', e]),
-      slot: e => events.push(['slot', e.slot.key]),
+      slot: e => {
+        events.push(['slot', e.slot.key]);
+        if (e.chatter?.length) events.push(['slotChatter', e.chatter]);
+      },
       incident: e => { events.push(['incident', e]); return engine._directive ?? null; },
       outcome: e => events.push(['outcome', e]),
       verdict: e => events.push(['verdict', e]),
       dayEnd: e => events.push(['dayEnd', e]),
     },
   });
-  return { llm, roster, state, engine, events };
+  return { llm, roster, state, engine, events, ambient };
 }
 
 // ── 1일차: 조용한 날 ────────────────────────────────────
@@ -252,4 +266,73 @@ test('무사고 100일이면 진급이다', async () => {
   const snap = await engine.runDay();
   assert.equal(snap.streak, 100);
   assert.ok(snap.promoted, '100일을 찍었는데 진급이 안 됐다');
+});
+
+// ── A. 병영 소음 — 부임 때 한 콜, 그 뒤로는 공짜 ────────
+test('부임 첫날만 소음을 한 콜 더 받는다 — 둘째 날부터는 브리핑 하나뿐이다', async () => {
+  const { llm, engine, ambient } = fixture({ ambientReady: false });
+  assert.equal(ambient.ready(), false);
+
+  await engine.runDay();
+  assert.deepEqual(llm.labels(), ['병영 소음 생성', '아침 브리핑'], '부임 첫날 콜이 둘이 아니다');
+  assert.ok(ambient.ready(), '소음 풀이 안 채워졌다');
+
+  llm.calls.length = 0;
+  await engine.runDay();
+  assert.deepEqual(llm.labels(), ['아침 브리핑'], '둘째 날에 소음을 또 받았다 — 캐시가 안 먹었다');
+});
+
+test('소음 호출은 부대 상태를 한 글자도 안 본다 — 그래서 100일을 버틴다', async () => {
+  const { llm, engine, state } = fixture({ ambientReady: false });
+  state.yesterday = '어제표식';
+  state.notices.push('지침표식');
+  await engine.runDay();
+  const req = llm.byLabel('병영 소음')[0];
+  const whole = JSON.stringify({ system: req.system, messages: req.messages });
+  for (const leak of ['어제표식', '지침표식', 'very-low', 'very-high', 'mid', '기존시트0']) {
+    assert.ok(!whole.includes(leak), `소음 호출이 「${leak}」를 봤다`);
+  }
+  assert.ok(whole.includes('CULT표식'), '소음 호출에 부대 프롬프트가 없다');
+});
+
+test('슬롯마다 스프라이트 대사가 딸려 나온다 — 콜은 하나도 안 는다', async () => {
+  const { llm, engine, events } = fixture();
+  await engine.runDay();
+  assert.deepEqual(llm.labels(), ['아침 브리핑'], '대사 때문에 콜이 늘었다');
+  const withChatter = events.filter(e => e[0] === 'slotChatter');
+  assert.ok(withChatter.length > 0, '슬롯 핸들러가 대사를 못 받았다');
+});
+
+test('소음 호출이 실패해도 하루는 돈다 — 군가는 static이라 그대로 나온다', async () => {
+  const { engine, ambient } = fixture({ ambientReady: false });
+  engine.llm.call = async req => {
+    if ((req.label || '').startsWith('병영 소음')) throw new Error('회선 두절');
+    return new FakeLLM().call(req);
+  };
+  const snap = await engine.runDay();
+  assert.equal(snap.streak, 1, '소음이 없다고 하루가 안 돌았다');
+  assert.equal(ambient.ready(), false);
+  // 잡담 풀이 비어도 군가 자리에서는 소리가 난다
+  const got = engine.ambientFor('reveille', 3);
+  assert.ok(got.every(g => g.kind === 'song'), '풀이 비었는데 없는 잡담이 나왔다');
+});
+
+test('연출은 게임 롤을 밀어내지 않는다 — 말풍선 수가 사고 확률을 바꾸면 안 된다', async () => {
+  // 같은 게임 난수, 다른 대사 개수. 하루의 결과가 **바이트 동일**해야 한다.
+  const run = async (chatterCount) => {
+    const f = fixture({ rng: incidentRng() });
+    f.engine._directive = null;
+    // 슬롯마다 뽑는 대사 수를 바꿔 연출 난수를 다르게 소모시킨다
+    const orig = f.engine.ambientFor.bind(f.engine);
+    f.engine.ambientFor = k => orig(k, chatterCount);
+    await f.engine.runDay();
+    return { labels: f.llm.labels(), streak: f.state.streak, params: { ...f.state.params } };
+  };
+  const a = await run(1);
+  const b = await run(3);
+  assert.deepEqual(a.labels, b.labels, '대사 개수가 사건 발생 여부를 바꿨다 — 난수 통이 섞였다');
+  assert.equal(a.streak, b.streak);
+  assert.deepEqual(a.params, b.params);
+  // 그리고 그 하루에는 실제로 사건이 있었다 — 빈 하루끼리 비교해 놓고 통과한 게 아니다
+  assert.ok(a.labels.includes('사건 장면'), '사건이 없는 하루로 비교했다');
 });

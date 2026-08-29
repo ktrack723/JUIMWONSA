@@ -36,9 +36,10 @@ function bannedKeys(node, path = '$', found = []) {
 // export되는 *_SCHEMA = 실제로 API에 보내는 최상위 스키마 전부.
 const SCHEMAS = Object.entries(P).filter(([k, v]) => k.endsWith('_SCHEMA') && v && typeof v === 'object');
 
-test('내보내는 스키마가 하나도 빠짐없이 존재한다 — P·D·E-3·N 넷', () => {
+test('내보내는 스키마가 하나도 빠짐없이 존재한다 — A·P·D·E-3·N 다섯', () => {
   const names = SCHEMAS.map(([k]) => k).sort();
-  assert.deepEqual(names, ['BRIEFING_SCHEMA', 'ESCALATION_SCHEMA', 'NOTICE_SCHEMA', 'RECRUIT_SCHEMA']);
+  assert.deepEqual(names,
+    ['AMBIENT_SCHEMA', 'BRIEFING_SCHEMA', 'ESCALATION_SCHEMA', 'NOTICE_SCHEMA', 'RECRUIT_SCHEMA']);
 });
 
 for (const [name, schema] of SCHEMAS) {
@@ -74,4 +75,7 @@ test('슬롯 아홉 개 상한은 스키마가 아니라 프롬프트 지시와 
   // BRIEFING_SCHEMA의 slots에 minItems/maxItems를 걸면 400이다 — 개수는 지시로만
   assert.ok(!('minItems' in P.BRIEFING_SCHEMA.properties.slots));
   assert.match(P.BRIEFING_SCHEMA.properties.slots.description, /Same count as the slots/);
+  // 앰비언트도 같다 — 줄 수는 지시로 말하고, 넘치거나 모자란 것은 ambient.js가 받아낸다
+  assert.ok(!('maxItems' in P.AMBIENT_SCHEMA.properties.lines));
+  assert.match(P.AMBIENT_SCHEMA.properties.lines.description, /three or four lines each/);
 });

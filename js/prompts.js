@@ -4,6 +4,7 @@
 //
 //   U.   부대 프롬프트 — 호출이 아니라 재료. 모든 생성 호출의 system 접두사.
 //        ①문화 ②규정 ③병사간 룰 ④지능 서술 ⑤마초 서술 — ④⑤의 수치는 여기 없다.
+//   A.   병영 소음 — 부임 때 **한 번** 부르고 100일 내내 재사용하는 앰비언트 대사 풀 (🟫 cached)
 //   P.   전입 병사 생성 — 굴려진 등급(코드) + 직무·군번 → 프로필 sheet (🟫 cached)
 //   D.   아침 브리핑 — 밴드·어제 요약·명부 발췌 → 브리핑 + 슬롯별 일상 조각 (🟧 once)
 //   E-1. 사건 장면 — 슬롯·장소·심각도(코드) + 연루 병사 + 활성 지침 → 장면 (🟧)
@@ -16,12 +17,19 @@
 // system 접두사는 부임 내내 바이트 동일하다 — [WORLD][UNIT][ROLE] 순서로 조립하고,
 // 가변 데이터(밴드·명부·지침 목록)는 절대 system에 넣지 않는다. 전부 user 메시지로.
 //
+// A(병영 소음)가 캐시될 수 있는 이유는 **아무 상태도 안 보기 때문**이다 — 파라미터도,
+// 명부도, 카운터도 못 본다. 부대 프롬프트와 슬롯 목록만 보고 익명 병사의 소리를 쓴다.
+// 상태를 하나라도 보여주면 그 순간 캐시가 거짓말이 된다 (부임 첫날 상태로 100일을 떠든다).
+// 그래서 이 블록은 하루의 콜 수를 늘리지 않는다: 스프라이트 대사는 공짜다.
+//
 // 숨은 파라미터는 프롬프트에 수치로 들어가지 않는다 — 밴드 라벨(문자열)만 받는다.
 // 이 파일의 빌더들은 숫자가 들어오면 그 자리에서 죽는다 (#label 가드).
 //
 // 지시는 전부 영어로 쓴다. 한국어는 (1) 부대 프롬프트·병사 데이터, (2) 화면 라벨,
 // (3) 한국어 출력 예시 — 셋뿐이다. ASCII 가상 부대로 전 블록을 지어
 // 한글이 한 글자라도 남으면 테스트가 깨진다 (tests/hierarchy.test.mjs).
+
+import { SLOT_KEYS } from './params.js';
 
 // 출력 언어 고정. 블록마다 반복한다. 한 번만 넣으면 뒤쪽 출력에서 새어나간다.
 const KO = 'Write your output in Korean. Every word of it. No English in the output.';
@@ -33,11 +41,15 @@ const label = (v) => {
 };
 
 export const WORLD = `[SETTING]
-A present-day Republic of Korea military unit. The player is the unit's 주임원사 — the
-sergeant major, a career soldier on his last shot at promotion: one hundred consecutive
-days without an accident and he makes 원사. The soldiers are conscripts in their early
-twenties counting the days until discharge. The sergeant major never appears as a voice
-in scenes: he acts only through orders, inspections and interviews.
+A present-day Republic of Korea military unit. The player holds the 주임원사 post — the
+unit's most senior NCO, who represents the NCOs and the conscripts and advises the
+commander as a staff officer. He commands nobody: the post carries no command authority,
+and accident prevention is literally in his job description. He is still a 상사,
+holding the post as a 주임상사, which in this army means exactly one thing: he is up for
+promotion to 원사. One hundred consecutive accident-free days is his last shot at it.
+The soldiers are conscripts in their early twenties counting the days until discharge.
+He never appears as a voice in scenes: he acts only through orders, inspections and
+interviews.
 
 [LANGUAGE] Instructions and labels are English. The unit data and all dialogue are Korean.
 Output is Korean, always — every word of it. Never answer in English.
@@ -69,7 +81,12 @@ ${unit.soldierRules}
 [THE HEADS — how smart this population is]
 ${unit.intel.desc}
 [THE BLOOD — how macho this population is]
-${unit.macho.desc}`;
+${unit.macho.desc}
+[THE SONGS — what this unit's music is, and how it reaches the soldiers]
+${unit.songMode === 'chorus'
+    ? 'Sung out loud, by the throat, in formation. Getting the words wrong in front of everyone is its own small disaster.'
+    : 'Piped over the base loudspeakers around clock-in and clock-out. Nobody sings along; it is wallpaper they have stopped hearing.'}
+${unit.songs.map(s => `· ${s.title} — ${s.note}`).join('\n')}`;
 }
 
 // system 조립 — [WORLD][UNIT][ROLE] 순서. 부임 내내 바이트 동일해야 캐시가 붙는다.
@@ -337,3 +354,66 @@ ${KO}`;
 export const noticeSystem = unit => sys(unit, N_ROLE);
 
 export const noticeUser = text => `[THE NOTICE, VERBATIM]\n"""\n${(text || '').trim()}\n"""\n\nJudge it and return the one line.`;
+
+// ── A. 병영 소음 — 부임 때 한 번, 100일 내내 재사용 ────────
+// 스프라이트가 통근하며 흘리는 한 줄짜리 대사 풀이다. **부임 시 한 콜**로 통째로 받아
+// localStorage에 눕히고, 그 뒤로는 코드가 뽑아 쓴다 — 하루의 콜 수가 늘지 않는다.
+//
+// 그래서 이 프롬프트는 **아무 상태도 안 본다.** 파라미터도, 명부도, 카운터도, 날짜도.
+// 부대 프롬프트와 슬롯 이름, 그리고 「군가가 어디서 울리는가」만 보고 익명 병사의 소리를 쓴다.
+// 상태를 보여주는 순간 이 풀은 부임 첫날의 상태로 100일을 떠들게 된다.
+//
+// 군가 가사 자체는 여기서 안 만든다 — units.js의 static 인용이 코드로 곧장 풀에 들어간다.
+// 이 호출이 쓰는 것은 그 노래 **주변에서** 나오는 말이다: 음이탈 놀리기, 가사 틀린 놈,
+// 방송 스피커 욕, 따라 부르기 싫은 놈.
+export const AMBIENT_SCHEMA = {
+  type: 'object',
+  properties: {
+    lines: {
+      type: 'array',
+      description: 'The chatter pool. Cover every slot listed in the request, three or four lines each',
+      items: {
+        type: 'object',
+        properties: {
+          slot: { type: 'string', enum: SLOT_KEYS, description: 'Which slot of the day this line belongs to' },
+          text: { type: 'string', description: 'Korean. One short line a soldier says out loud in passing — at most about twenty characters. Dialogue only, no name tag, no quote marks' },
+        },
+        required: ['slot', 'text'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['lines'],
+  additionalProperties: false,
+};
+
+const A_ROLE = `[ROLE — BARRACKS NOISE]
+You write the throwaway lines soldiers say in passing as they move through the day — the
+stuff the sergeant major overhears crossing the yard. Not scenes, not events: noise.
+
+· Every line is spoken by **an anonymous soldier**. Never a name, never a specific person,
+  never a callback to anything that happened. These lines get reused for months, so a line
+  that refers to any particular event or person is a line that will be wrong tomorrow.
+· Short. The length of something said sideways while walking. Two words is a fine line.
+· Ordinary and specific beats dramatic: what is for lunch, whose turn it is, how many days
+  left, who is missing a glove, the smell of the place. Grumbling is the default register.
+· Use this unit's own jargon and the way this population talks. A unit of sharp bored
+  conscripts does not sound like a unit that runs on shouting.
+· Where the songs land, write what happens **around** them — the one who is off-key, the
+  one who mouths it, the one who mutters about the loudspeaker. **Never write song lyrics
+  yourself**; the real lines are already on file and get mixed in with yours.
+· Nothing that would be an incident. No injuries, no fights, no one missing. That is
+  someone else's job, and these lines have to be safe to say on any day of the hundred.
+
+${KO}`;
+
+export const ambientSystem = unit => sys(unit, A_ROLE);
+
+export function ambientUser({ slots, songSlots = [], songMode = 'chorus' }) {
+  return `[SLOTS OF THE DAY — write lines for each]
+${slots.map(s => `· ${s.key} — ${s.label}`).join('\n')}
+[WHERE THE MUSIC LANDS] ${songSlots.length ? songSlots.join(', ') : '(nowhere in particular)'}
+[HOW IT LANDS] ${songMode === 'chorus' ? 'sung by the soldiers themselves' : 'played over the base loudspeakers'}
+
+Write three or four lines for every slot listed.`;
+}

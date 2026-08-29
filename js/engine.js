@@ -17,6 +17,7 @@
 //   · 스레드는 하루가 끝나면 닫고, 다음 날은 어제의 코드 요약으로 시작한다.
 //   · 면담은 별도 단명 스레드. 판정(E-3·N)은 스레드 없음 — user 한 장, 스키마 출력.
 //   · 가변 데이터는 절대 system에 넣지 않는다.
+//   · 병영 소음(A)은 **부임 때 한 콜**로 100일치를 받아 눕힌다. 스프라이트 대사는 그 뒤로 공짜다.
 
 import * as P from './prompts.js';
 import {
@@ -26,6 +27,7 @@ import {
   pickInvolved, rollGrades, PLACES, TUNING,
 } from './params.js';
 import { assignJob } from './roster.js';
+import { AmbientPool } from './ambient.js';
 
 const clamp10 = v => Math.max(0, Math.min(10, v));
 const SAME = { outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' };
@@ -40,17 +42,24 @@ export class Engine {
    *   roster     — roster.js의 Roster (병사 저장·채번)
    *   state      — 캠페인 상태. 없으면 새 부임(newCampaign)
    *   handlers   — 화면 연결점. 전부 선택이고 await 된다
-   *   rng        — 주입식 난수 (테스트가 결정적으로 돈다)
+   *   ambient    — ambient.js의 AmbientPool. 안 주면 이 부대 것으로 하나 만든다
+   *   rng        — 게임 난수. 사고 롤·등급 굴림·연루자 선정이 쓴다 (테스트가 결정적으로 돈다)
+   *   cosmeticRng— 연출 난수. 스프라이트 대사 뽑기가 쓴다. **게임 난수와 반드시 갈라 둔다** —
+   *                한 통을 같이 쓰면 말풍선 몇 개를 뽑았느냐가 사고 확률을 밀어낸다
    *   cheapModel — 판정 계열(E-3·N·I-2)을 태울 저가 모델 id. 없으면 기본 모델
    */
-  constructor(llm, { unit, roster, state, handlers, rng = Math.random, cheapModel = null }) {
+  constructor(llm, { unit, roster, state, handlers, ambient = null, rng = Math.random, cosmeticRng = Math.random, cheapModel = null }) {
     this.llm = llm;
     this.unit = unit;
     this.roster = roster;
     this.h = handlers || {};
     this.rng = rng;
+    this.cosmeticRng = cosmeticRng;
     this.cheapModel = cheapModel;
     this.state = state || Engine.newCampaign(unit);
+    // 병영 소음 풀. 부임 때 한 번 채우고 100일 내내 쓴다 — 저장돼 있으면 그걸 집는다.
+    this.ambient = ambient || new AmbientPool(unit);
+    this.ambient.load();
     this.thread = [];            // 오늘의 D·E-1·E-2 공유 스레드
     this.daySys = P.daySystem(unit);
     this.interventionsToday = 0;
@@ -121,6 +130,39 @@ export class Engine {
     });
   }
 
+  // ── A. 병영 소음 — 부임 때 한 콜, 그 뒤로는 공짜 ──────
+  /**
+   * 앰비언트 대사 풀을 채운다. 이미 차 있으면 아무것도 안 한다(부임당 한 콜).
+   * 실패해도 하루는 돈다 — 군가는 static이라 풀이 비어도 스프라이트가 그건 부른다.
+   */
+  async ensureAmbient() {
+    if (this.ambient.ready()) return false;
+    const slots = slotsFor(this.state.date);
+    try {
+      const out = await this.#gen({
+        label: '병영 소음 생성',
+        system: P.ambientSystem(this.unit),
+        messages: [{ role: 'user', content: P.ambientUser({
+          slots, songSlots: this.unit.songSlots, songMode: this.unit.songMode,
+        }) }],
+        schema: P.AMBIENT_SCHEMA, maxTokens: 4000,
+      });
+      this.ambient.fill(out?.lines || []);
+      return true;
+    } catch {
+      return false;   // 소음이 없어도 게임은 돈다. 조용한 부대가 될 뿐이다
+    }
+  }
+
+  /**
+   * 화면이 스프라이트에 물릴 대사. 코드가 뽑는다 — 여기서 LLM은 안 돈다.
+   * **연출 난수를 쓴다.** 게임 난수를 쓰면 말풍선을 몇 개 뽑았느냐가 그 뒤 사고 롤을
+   * 통째로 밀어낸다 — 대사 하나 늘렸다고 사고가 나는 게임이 된다.
+   */
+  ambientFor(slotKey, n = 3) {
+    return this.ambient.picks(slotKey, n, this.cosmeticRng);
+  }
+
   /** 정원까지 채운다. 부임 첫날의 초기 명부 생성에도, 전역 후 충원에도 쓰인다. */
   async fillRoster(joinDates = null, onProgress = null) {
     const arrivals = [];
@@ -148,6 +190,9 @@ export class Engine {
     const incidents = [];   // 오늘의 사건 기록 (코드 요약용)
 
     try {
+      // 병영 소음이 아직 없으면 여기서 한 번 채운다 (부임 첫날 한 콜).
+      await this.ensureAmbient();
+
       // 전역 → 전입. 빈 자리는 그날 바로 채워진다.
       const departures = this.roster.discharge(date);
       const arrivals = this.roster.vacancies() > 0 ? await this.fillRoster() : [];
@@ -180,7 +225,11 @@ export class Engine {
       // 슬롯 아홉 — 슬롯마다 사고 롤이 돈다. 화면은 h.slot에서 개입(면담·점검·공지)할 수 있다.
       for (let i = 0; i < slots.length; i++) {
         const slot = slots[i];
-        await this.h.slot?.({ index: i, count: slots.length, slot, line: slotLines[i] || '' });
+        await this.h.slot?.({
+          index: i, count: slots.length, slot, line: slotLines[i] || '',
+          // 스프라이트가 흘릴 대사. 캐시된 잡담과 static 군가가 섞여 나온다 — 콜은 없다.
+          chatter: this.ambientFor(slot.key, 3),
+        });
 
         const roll = rollSlot(s.params, {
           intel: this.unit.intel.score, macho: this.unit.macho.score, difficulty: effDiff,

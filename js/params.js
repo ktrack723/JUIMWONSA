@@ -128,36 +128,52 @@ export const reviewDate = (currentDate, streak) => dateAdd(currentDate, TUNING.g
 
 // ── 일과 타임라인 — 슬롯 아홉 ─────────────────────────────
 // kind는 사고 롤 보정(roll.slotMult)의 열쇠다. 주말에는 일과 슬롯이 개인정비로 바뀐다.
+// time·at은 화면 몫이다 — 해가 뜨는 높이와 병사 스프라이트가 모이는 자리를 정한다.
+// 시각은 실제 병영 일과표를 압축한 것이다 (docs/research.md §6):
+//   06:30 기상 · 07:00 아침점호 · 07:30 아침식사 · 09:00 오전일과 · 11:45 점심
+//   13:00 오후일과 · 16:30 체력단련 · 17:30 저녁식사 · 19:00 개인정비 · 21:30 저녁점호 · 22:00 취침
 export const SLOTS = [
-  { key: 'reveille', label: '아침점호', kind: 'rollcall' },
-  { key: 'breakfast', label: '아침식사', kind: 'meal' },
-  { key: 'amwork', label: '오전일과', kind: 'work', weekendLabel: '오전 개인정비', weekendKind: 'rest' },
-  { key: 'lunch', label: '점심식사', kind: 'meal' },
-  { key: 'pmwork', label: '오후일과', kind: 'work', weekendLabel: '오후 개인정비', weekendKind: 'rest' },
-  { key: 'dinner', label: '저녁식사', kind: 'meal' },
-  { key: 'rest', label: '하번 후 휴식', kind: 'rest' },
-  { key: 'taps', label: '저녁점호', kind: 'rollcall' },
-  { key: 'sleep', label: '수면', kind: 'sleep' },
+  { key: 'reveille', label: '아침점호', kind: 'rollcall', time: '06:40', at: 'barracks' },
+  { key: 'breakfast', label: '아침식사', kind: 'meal', time: '07:30', at: 'messhall' },
+  { key: 'amwork', label: '오전일과', kind: 'work', time: '09:00', at: 'worksite', weekendLabel: '오전 개인정비', weekendKind: 'rest', weekendAt: 'barracks' },
+  { key: 'lunch', label: '점심식사', kind: 'meal', time: '11:45', at: 'messhall' },
+  { key: 'pmwork', label: '오후일과', kind: 'work', time: '13:00', at: 'worksite', weekendLabel: '오후 개인정비', weekendKind: 'rest', weekendAt: 'smoking' },
+  { key: 'dinner', label: '저녁식사', kind: 'meal', time: '17:30', at: 'messhall' },
+  { key: 'rest', label: '하번 후 휴식', kind: 'rest', time: '19:00', at: 'smoking' },
+  { key: 'taps', label: '저녁점호', kind: 'rollcall', time: '21:30', at: 'barracks' },
+  { key: 'sleep', label: '수면', kind: 'sleep', time: '22:30', at: 'barracks' },
 ];
+export const SLOT_KEYS = SLOTS.map(s => s.key);
+
 export function slotsFor(iso) {
   const weekend = isWeekend(iso);
   return SLOTS.map(s => ({
     key: s.key,
     label: weekend && s.weekendLabel ? s.weekendLabel : s.label,
     kind: weekend && s.weekendKind ? s.weekendKind : s.kind,
+    time: s.time,
+    at: weekend && s.weekendAt ? s.weekendAt : s.at,
   }));
+}
+
+/** 시각 문자열 → 하루의 몇 할이 지났는가 (0..1). 해의 높이와 하늘색이 이걸 본다. */
+export function dayFraction(time) {
+  const [h, m] = String(time || '12:00').split(':').map(Number);
+  return ((h || 0) * 60 + (m || 0)) / 1440;
 }
 
 // ── 장소-파라미터 대응표 — 불시점검이 드러내는 것 ─────────
 // 생활관은 갈등을, 작업장은 가라를 드러낸다. 장소마다 보이는 파라미터가 다르다 —
 // 점검 소견(I-2)에는 그 장소가 드러내는 밴드만 실린다.
+// x는 무대 위의 가로 자리(0..1)다 — 스프라이트가 슬롯을 따라 이 자리들 사이를 통근한다.
+// 드러내는 파라미터와 무대 자리는 같은 표에 산다: 생활관은 갈등을 드러내고, 무대 왼쪽 끝에 있다.
 export const PLACES = {
-  barracks: { label: '생활관', reveals: ['conflict'] },
-  worksite: { label: '작업장', reveals: ['gara'] },
-  office: { label: '행정반', reveals: ['gara'] },
-  messhall: { label: '식당', reveals: ['happy'] },
-  storage: { label: '창고', reveals: ['gara', 'conflict'] },
-  smoking: { label: '흡연장', reveals: ['happy', 'conflict'] },
+  barracks: { label: '생활관', reveals: ['conflict'], x: 0.12 },
+  messhall: { label: '식당', reveals: ['happy'], x: 0.32 },
+  office: { label: '행정반', reveals: ['gara'], x: 0.5 },
+  worksite: { label: '작업장', reveals: ['gara'], x: 0.7 },
+  storage: { label: '창고', reveals: ['gara', 'conflict'], x: 0.86 },
+  smoking: { label: '흡연장', reveals: ['happy', 'conflict'], x: 0.97 },
 };
 
 // ── 사건 풀 — 후보와 심각도는 코드가 뽑고, LLM은 장면만 쓴다 ──

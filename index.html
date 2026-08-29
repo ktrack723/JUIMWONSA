@@ -90,6 +90,21 @@
           </div>
         </div>
         <div class="day-right">
+          <!-- 일과 무대 — 해가 움직이고 병사 판때기들이 장소를 옮겨 다닌다.
+               WebGL이 없으면 canvas가 비고 하늘·해·라벨만 남는다. 게임은 그대로 돈다. -->
+          <div class="stage-wrap panel95" data-title="일과 현황 · 위병소 CCTV">
+            <div id="stage-sky" class="stage-sky">
+              <div id="stage-sun" class="stage-sun"></div>
+              <div id="stage-ground" class="stage-ground"></div>
+              <div id="stage-places" class="stage-places"></div>
+              <canvas id="stage-canvas" class="stage-canvas"></canvas>
+              <div id="stage-bubbles" class="stage-bubbles"></div>
+            </div>
+            <div class="stage-bar">
+              <span id="stage-clock" class="stage-clock"></span>
+              <span id="stage-slot" class="stage-slot"></span>
+            </div>
+          </div>
           <div class="pace-bar">
             <span class="pace-tag">재생 속도</span>
             <div id="pace-buttons" class="pace-buttons" role="group" aria-label="재생 속도"></div>
