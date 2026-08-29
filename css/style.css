@@ -1144,3 +1144,14 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 }
 @keyframes mark-bob { from { bottom: 30%; } to { bottom: 35%; } }
 @media (prefers-reduced-motion: reduce) { .stage-bubbles .incident-mark { animation: none; } }
+
+/* 계급 배지 — 명부에서 짬이 한눈에 보이게 */
+.roster-row .rk {
+  display: inline-block; min-width: 30px; text-align: center;
+  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600;
+  padding: 0 3px; border: 1px solid var(--ink-soft); color: var(--ink);
+}
+.roster-row .rk-이병 { background: #e8eef4; }
+.roster-row .rk-일병 { background: #dfe8d8; }
+.roster-row .rk-상병 { background: #efe4c8; }
+.roster-row .rk-병장 { background: #e9d3c4; border-color: var(--stamp); font-weight: 700; }

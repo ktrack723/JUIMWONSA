@@ -41,9 +41,9 @@ test('④⑤는 수치+서술 한 쌍이다 — 기획서의 초기 데이터 �
 
 test('스키마 밖 필드가 없다 — 검증은 로드 시 이미 죽였겠지만, 목록도 못박는다', () => {
   assert.deepEqual([...UNIT_FIELDS].sort(), [
-    'branch', 'culture', 'desc', 'difficulty', 'id', 'intel', 'jobs',
-    'macho', 'name', 'rules', 'serial', 'serviceMonths', 'soldierRules',
-    'songMode', 'songSlots', 'songs',
+    'branch', 'cohort', 'culture', 'desc', 'difficulty', 'id', 'intel', 'jobs',
+    'macho', 'name', 'nameStyle', 'rankMonths', 'rules', 'serial', 'serviceMonths',
+    'soldierRules', 'songMode', 'songSlots', 'songs',
   ]);
   for (const u of UNITS) {
     assert.deepEqual(Object.keys(u).sort(), [...UNIT_FIELDS].sort());
@@ -52,10 +52,13 @@ test('스키마 밖 필드가 없다 — 검증은 로드 시 이미 죽였겠�
 
 test('군번 형식과 직무 슬롯이 부대마다 있다 — 채번과 배정은 코드 몫이다', () => {
   for (const u of UNITS) {
-    assert.ok(u.serial.tag.length >= 1);
-    assert.ok(u.serial.pad >= 4);
+    assert.match(u.serial.branchCode, /^[135]$/, `${u.id}: 군 코드가 이상하다`);
+    assert.ok(u.serial.seqBase >= 0);
     assert.ok(u.jobs.length >= 4);
   }
+  // 육군 1 · 해군/해병 3 · 공군 5 — 실제 군 코드다
+  assert.equal(UNIT_BY_ID['marine-fort'].serial.branchCode, '3');
+  assert.equal(UNIT_BY_ID['airforce-sys'].serial.branchCode, '5');
 });
 
 // M5의 핵심 — 코드 어디에도 특정 부대를 아는 분기를 두지 않는다.

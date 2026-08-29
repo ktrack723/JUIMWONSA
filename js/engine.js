@@ -18,6 +18,23 @@
 //   · 면담은 별도 단명 스레드. 판정(E-3·N)은 스레드 없음 — user 한 장, 스키마 출력.
 //   · 가변 데이터는 절대 system에 넣지 않는다.
 //   · 병영 소음(A)은 **부임 때 한 콜**로 100일치를 받아 눕힌다. 스프라이트 대사는 그 뒤로 공짜다.
+//
+// ── 캐시 breakpoint를 왜 안 쪼갰는가 ──────────────────
+// 블록 여섯(A·P·D·I-1·I-2·N)의 system은 [WORLD+UNIT](≈1.4k tok) + [ROLE]이고, 공통 접두사가
+// 블록마다 통째로 다시 캐시된다. 「공통 접두사에 breakpoint를 하나 더 걸어 여섯이 나눠 쓰게
+// 하면 싸지지 않나」가 자연스러운 생각인데, **재 보면 손해다.**
+//   · 아끼는 것: 공통 접두사 기록 6번 → 1번. 1.4k × 5 × (1.25 − 0.1) ≈ 8k 토큰어치.
+//   · 잃는 것: [ROLE]이 캐시 밖으로 나간다. 조각이 220~630 tok이라 Anthropic의 최소 캐시
+//     단위(1024 tok)에 못 미쳐 두 번째 breakpoint가 아예 안 붙기 때문이다.
+//     그러면 D·E-1·E-2처럼 하루에도 여러 번 나가는 블록이 매 호출마다 [ROLE]을 정가로 낸다 —
+//     D 하나만 100일치로 38k 토큰어치다.
+// 자주 불리는 블록일수록 기록 비용이 잘 상각된다. 지금처럼 **system 전체에 하나**가 맞다.
+//
+// 대신 실제로 값이 되는 자리는 따로 있고, 거기를 손봤다:
+//   · 전입 열여섯은 서로를 안 본다 → 병렬. 다만 첫 한 건은 캐시를 깔러 혼자 먼저 간다
+//     (한꺼번에 쏘면 열여섯이 전부 캐시 미스로 출발해 접두사를 열여섯 번 재과금한다).
+//   · 병영 소음과 아침 브리핑도 서로를 안 본다 → 같이 띄운다.
+//   · 확전 판정(E-3)은 결과 장면을 화면에 흘리는 동안 뒤에서 날아온다.
 
 import * as P from './prompts.js';
 import {
@@ -26,10 +43,31 @@ import {
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, PLACES, TUNING,
 } from './params.js';
-import { assignJob } from './roster.js';
+import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
 
 const clamp10 = v => Math.max(0, Math.min(10, v));
+
+/** 동시성 상한 — 병렬 호출이 업자 rate limit을 넘지 않게. */
+const FANOUT = 5;
+
+/**
+ * 일감 여럿을 상한을 지키며 병렬로 돌린다. 결과는 **넣은 순서 그대로** 돌려준다 —
+ * 순서가 흐트러지면 미리 떼어 둔 군번·이름과 시트가 서로 어긋난다.
+ */
+async function parallelMap(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 const SAME = { outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' };
 
 // 밴드 뭉치 — 프롬프트로 나가는 것은 언제나 이 라벨들이다. 수치는 못 나간다.
@@ -84,6 +122,15 @@ export class Engine {
     };
   }
 
+  /**
+   * 프롬프트로 나갈 병사 표기. 저장된 필드에 **그날의 기수·계급**을 얹는다.
+   * 계급은 날이 갈수록 오르므로 저장돼 있지 않다 — 나갈 때마다 계산한다.
+   */
+  dressed(soldier) {
+    return { ...soldier, standing: rankLine(this.unit, soldier, this.state.date) };
+  }
+  dressedAll(list) { return (list || []).map(s => this.dressed(s)); }
+
   snapshot() {
     const s = this.state;
     return {
@@ -112,22 +159,82 @@ export class Engine {
     });
   }
 
-  // ── P. 전입 — 등급은 코드가 굴리고, LLM은 인물만 쓴다 ──
-  async recruitOne(joined = this.state.date) {
+  // ── P. 전입 — 굴림은 코드가, 인물은 LLM이 ────────────
+  /**
+   * 전입 한 명분의 **굴림**. LLM 없이 돈다 — 이름·등급·직무·군번이 여기서 다 정해진다.
+   * 병렬 전입이 가능한 이유가 이것이다: 굴림을 먼저 전부 끝내 놓으면 남는 것은
+   * 서로 독립인 호출 열여섯 개뿐이다.
+   *
+   * 순서대로 굴려야 하는 것들이라 이 함수는 **동기**다. 병렬로 굴리면 열여섯이 전부
+   * 빈 명부를 보고 같은 직무를 고르고, 군번도 겹친다.
+   */
+  rollRecruit(joined = this.state.date, pending = []) {
     const { grade, character } = rollGrades(this.unit, this.rng);
-    const job = assignJob(this.unit, this.roster.soldiers, this.rng);
-    // 군번은 명부가 채번한다. 프롬프트에는 채번될 군번을 미리 보여준다.
-    const serial = `${this.unit.serial.tag}${joined.slice(2, 4)}-${String(this.roster.seq).padStart(this.unit.serial.pad, '0')}`;
-    const out = await this.#gen({
-      label: '전입 병사 생성',
-      system: P.recruitSystem(this.unit),
-      messages: [{ role: 'user', content: P.recruitUser({ serial, job, grade, character, joined }) }],
-      schema: P.RECRUIT_SCHEMA,
-    });
-    return this.roster.enlist({
-      name: String(out?.name || '무명용사').trim(), sheet: String(out?.sheet || '').trim(),
-      job, grade, character, joined,
-    });
+    // 직무는 이미 배정된 것과 지금 굴리는 중인 것을 같이 본다 — 안 그러면 한 직무에 몰린다.
+    const job = assignJob(this.unit, [...this.roster.soldiers, ...pending], this.rng);
+    const name = this.roster.rollName(this.rng, [...this.roster.soldiers, ...pending].map(x => x.name));
+    const serial = this.roster.takeSerial(joined);
+    return { name, serial, job, grade, character, joined };
+  }
+
+  /** 굴림 하나로 P를 부르고 시트를 받아 온다. 실패해도 사람은 온다 — 시트만 비는 것이다. */
+  async #writeSheet(roll) {
+    try {
+      const out = await this.#gen({
+        label: `전입 병사 생성 · ${roll.name}`,
+        system: P.recruitSystem(this.unit),
+        messages: [{ role: 'user', content: P.recruitUser({
+          ...roll, standing: rankLine(this.unit, roll, this.state.date),
+        }) }],
+        schema: P.RECRUIT_SCHEMA,
+      });
+      return String(out?.sheet || '').trim();
+    } catch {
+      return '';   // 인사기록이 안 왔다. 사람은 왔다
+    }
+  }
+
+  /** 전입 한 명. 굴리고, 쓰고, 명부에 올린다. */
+  async recruitOne(joined = this.state.date) {
+    const roll = this.rollRecruit(joined);
+    return this.roster.enlist({ ...roll, sheet: await this.#writeSheet(roll) });
+  }
+
+  /**
+   * 정원까지 채운다. 부임 첫날의 초기 명부 생성에도, 전역 후 충원에도 쓰인다.
+   *
+   * **호출을 병렬로 돌린다.** 굴림은 순서대로 미리 끝내 놓았으므로 남은 열여섯 개는
+   * 서로를 전혀 안 본다 — 순서대로 돌리면 부임 화면에서 열여섯 번을 줄 서서 기다린다.
+   * 다만 첫 한 건은 **혼자 먼저** 보낸다: 이 열여섯은 system이 바이트 동일해서,
+   * 한꺼번에 쏘면 전부 캐시가 비어 있는 상태로 출발해 접두사를 열여섯 번 재과금한다.
+   * 하나를 먼저 태워 캐시를 깔고 나머지를 병렬로 얹으면 속도와 값을 둘 다 챙긴다.
+   */
+  async fillRoster(joinDates = null, onProgress = null) {
+    const need = this.roster.vacancies();
+    const rolls = [];
+    while (rolls.length < need) {
+      rolls.push(this.rollRecruit(joinDates?.[rolls.length] || this.state.date, rolls));
+    }
+    if (!rolls.length) return [];
+
+    const sheets = new Array(rolls.length);
+    let done = 0;
+    const tick = async (i) => { done++; await onProgress?.(done, rolls[i], rolls.length); };
+
+    // ① 캐시를 까는 한 건
+    sheets[0] = await this.#writeSheet(rolls[0]);
+    await tick(0);
+    // ② 나머지는 병렬로 — 이제 접두사가 캐시에 올라가 있다
+    if (rolls.length > 1) {
+      const rest = rolls.slice(1);
+      const got = await parallelMap(rest, FANOUT, async (roll, i) => {
+        const sheet = await this.#writeSheet(roll);
+        await tick(i + 1);
+        return sheet;
+      });
+      for (let i = 0; i < got.length; i++) sheets[i + 1] = got[i];
+    }
+    return rolls.map((roll, i) => this.roster.enlist({ ...roll, sheet: sheets[i] }));
   }
 
   // ── A. 병영 소음 — 부임 때 한 콜, 그 뒤로는 공짜 ──────
@@ -163,19 +270,6 @@ export class Engine {
     return this.ambient.picks(slotKey, n, this.cosmeticRng);
   }
 
-  /** 정원까지 채운다. 부임 첫날의 초기 명부 생성에도, 전역 후 충원에도 쓰인다. */
-  async fillRoster(joinDates = null, onProgress = null) {
-    const arrivals = [];
-    let i = 0;
-    while (this.roster.vacancies() > 0) {
-      const joined = joinDates?.[i] || this.state.date;
-      arrivals.push(await this.recruitOne(joined));
-      await onProgress?.(arrivals.length, arrivals.at(-1));
-      i++;
-    }
-    return arrivals;
-  }
-
   // ── 하루 한 턴 ─────────────────────────────────────────
   async runDay() {
     if (this.running) throw new Error('이미 하루가 돌고 있다');
@@ -190,8 +284,10 @@ export class Engine {
     const incidents = [];   // 오늘의 사건 기록 (코드 요약용)
 
     try {
-      // 병영 소음이 아직 없으면 여기서 한 번 채운다 (부임 첫날 한 콜).
-      await this.ensureAmbient();
+      // 병영 소음이 아직 없으면 채운다 (부임 첫날 한 콜). **브리핑을 안 기다린다** —
+      // 브리핑은 소음을 안 보고, 소음은 부대 상태를 안 본다. 서로 독립이라 같이 띄운다.
+      // 처음 필요한 자리는 첫 슬롯이므로 그때까지만 도착하면 된다.
+      const ambientReady = this.ensureAmbient();
 
       // 전역 → 전입. 빈 자리는 그날 바로 채워진다.
       const departures = this.roster.discharge(date);
@@ -205,7 +301,8 @@ export class Engine {
           date, weekday: weekdayOf(date), season: seasonOf(date),
           slots: slots.map(x => x.label),
           difficulty: band(effDiff), bands: bandsOf(s.params),
-          yesterday: s.yesterday, arrivals, departures, excerpt,
+          yesterday: s.yesterday,
+          arrivals: this.dressedAll(arrivals), departures, excerpt: this.dressedAll(excerpt),
         }),
       });
       let brief;
@@ -218,6 +315,7 @@ export class Engine {
         this.thread.pop();
         throw e;   // 브리핑 없이는 하루가 못 열린다 — 화면이 재시도를 안내한다
       }
+      await ambientReady;   // 첫 슬롯 전에는 도착해 있어야 한다
       const slotLines = Array.isArray(brief.slots) ? brief.slots.map(x => String(x || '')) : [];
       this.thread.push({ role: 'assistant', content: [brief.briefing, ...slotLines].filter(Boolean).join('\n') });
       await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures });
@@ -267,7 +365,8 @@ export class Engine {
     this.thread.push({
       role: 'user',
       content: P.incidentUser({
-        slotLabel: slot.label, place, tier, event: event.desc, involved, notices: s.notices,
+        slotLabel: slot.label, place, tier, event: event.desc,
+        involved: this.dressedAll(involved), notices: s.notices,
       }),
     });
     let scene;
@@ -347,7 +446,7 @@ export class Engine {
     const felt = { room: band(jitter(p.conflict)), work: band(jitter(p.gara)), mood: band(jitter(p.happy)) };
     const honesty = honestyOf(p.rep);
 
-    const thread = [{ role: 'user', content: P.interviewOpen({ soldier, felt, honesty, question }) }];
+    const thread = [{ role: 'user', content: P.interviewOpen({ soldier: this.dressed(soldier), felt, honesty, question }) }];
     const sysMsg = P.interviewSystem(this.unit);
     const call = () => this.#gen({ label: `면담 · ${soldier.name}`, system: sysMsg, messages: thread });
 

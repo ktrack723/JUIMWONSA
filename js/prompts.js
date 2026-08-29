@@ -92,47 +92,60 @@ ${unit.songs.map(s => `· ${s.title} — ${s.note}`).join('\n')}`;
 // system 조립 — [WORLD][UNIT][ROLE] 순서. 부임 내내 바이트 동일해야 캐시가 붙는다.
 const sys = (unit, role) => `${WORLD}\n\n${unitPrompt(unit)}\n\n${role}`;
 
-// 병사 한 명의 시트 표기 — 사건·면담 프롬프트가 같은 표기를 쓴다.
+// 병사 한 명의 시트 표기 — 사건·면담·브리핑 프롬프트가 같은 표기를 쓴다.
+// standing은 「몇 기 무슨 계급인가」다. 코드가 전입일에서 계산해 넘긴다 (roster.js의 rankLine).
+// 이 한 줄이 이 게임에서 제일 중요한 사회 정보다 — 누가 누구에게 말을 놓는지가 여기서 갈린다.
 export function soldierSheet(s) {
-  return `${s.name} (${s.serial}) · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character} · joined ${s.joined}
+  return `${s.name} (${s.serial})${s.standing ? ` · ${s.standing}` : ''} · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character} · joined ${s.joined}
 ${s.sheet}`;
 }
 
 // ── P. 전입 병사 생성 — 전입 때만 ──────────────────────────
 // 등급은 굴림이 정했고, LLM은 **굴려진 등급에 맞는 인물을 쓰는 일**만 한다.
 // 현재 파라미터도 명부도 이 프롬프트에 없다 — 전입자는 부대 상태와 무관하게 온다.
+// 이름도 굴림이 정한다 — 등급과 같은 자리다 (names.js). LLM에 맡기면 부대가 통째로
+// 「김민준·이서준」으로 수렴해서, 부대마다 이름의 결이 다르다는 사실 자체가 사라진다.
+// 그래서 출력은 sheet 하나뿐이다.
 export const RECRUIT_SCHEMA = {
   type: 'object',
   properties: {
-    name: { type: 'string', description: 'Korean. A plausible full name for this conscript. Nothing else' },
     sheet: {
       type: 'string',
       description: 'Korean. 3-5 sentences: personality, background, verbal tics, attitude toward service. Written flat, like a personnel file with opinions. This exact text rides along on every call where this soldier opens his mouth',
     },
   },
-  required: ['name', 'sheet'],
+  required: ['sheet'],
   additionalProperties: false,
 };
 
 const P_ROLE = `[ROLE — PERSONNEL]
-A new transferee arrives. You write who he is. The grades below were already decided by
-the machine — you do not soften, upgrade or argue them. A bottom duty-grade man is a
-genuine liability; a bottom character-grade man is genuinely unpleasant; an ace is
-actually good at the job. Write a person who unmistakably IS his grades, shaped by this
-unit's culture. Do not mention the grades by name in the sheet — show them.
+A new transferee arrives. His name, his intake cohort, his rank and his grades were all
+already decided by the machine — you do not rename him, soften him, upgrade him or argue
+any of it. You write **who that person is**.
+
+· A bottom duty-grade man is a genuine liability; a bottom character-grade man is
+  genuinely unpleasant; an ace is actually good at the job. Write someone who
+  unmistakably IS his grades, shaped by this unit's culture. Never name the grades in the
+  sheet — show them.
+· His cohort number and rank are his whole social position here: who he has to defer to,
+  who has to defer to him, how many months he has left. Write him as someone who knows
+  exactly where he stands in that line, because everyone here does.
+· The name he was given is the name. Write a person that name fits.
 ${KO}`;
 
 export const recruitSystem = unit => sys(unit, P_ROLE);
 
-export function recruitUser({ serial, job, grade, character, joined }) {
-  return `[NEW TRANSFEREE — already decided by the machine]
+export function recruitUser({ name, serial, standing, job, grade, character, joined }) {
+  return `[NEW TRANSFEREE — every line below was already decided by the machine]
+· name: ${name}
 · serial: ${serial}
+· standing (intake cohort and rank): ${standing}
 · job: ${job}
 · duty-grade (rolled): ${grade}
 · character-grade (rolled): ${character}
 · joined: ${joined}
 
-Write his name and his sheet.`;
+Write his sheet.`;
 }
 
 // ── D · E-1 · E-2 — 하루 한 스레드 ─────────────────────────
