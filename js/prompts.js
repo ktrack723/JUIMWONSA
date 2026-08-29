@@ -1,738 +1,419 @@
 // prompts.js — 이 게임이 LLM에게 보내는 프롬프트 전부. 「프롬프트 하이어아키」 구조도 그대로다.
 //
-// 블록은 넷뿐이다. 이 밖의 프롬프트는 없다.
+// 블록은 일곱이다. 이 밖의 프롬프트는 없다.
 //
-//   A. 스타일링 / 동기부여   — 한 상자지만 호출은 둘이다. 갈리는 선은 상자가 직접 그었다
-//        A-1 미용실 : 스타일링 내용(유저) + 고객 외모(테이블) → 수정된 고객 외모 (+조형)
-//        A-2 취조실 : 동기부여 내용(유저) + 고객 성격(테이블) → 수정된 고객 성격
-//                                                  ← 둘 다 캐시되는 LLM 생성 텍스트
-//        미용실은 성격을 못 보고, 취조실은 외모를 못 본다. 서로를 모른다.
+//   U.   부대 프롬프트 — 호출이 아니라 재료. 모든 생성 호출의 system 접두사.
+//        ①문화 ②규정 ③병사간 룰 ④지능 서술 ⑤마초 서술 — ④⑤의 수치는 여기 없다.
+//   A.   병영 소음 — 부임 때 **한 번** 부르고 100일 내내 재사용하는 앰비언트 대사 풀 (🟫 cached)
+//   P.   전입 병사 생성 — 굴려진 등급(코드) + 직무·군번 → 프로필 sheet (🟫 cached)
+//   D.   아침 브리핑 — 밴드·어제 요약·명부 발췌 → 브리핑 + 슬롯별 일상 조각 (🟧 once)
+//   E-1. 사건 장면 — 슬롯·장소·심각도(코드) + 연루 병사 + 활성 지침 → 장면 (🟧)
+//   E-2. 대응 결과 — 장면 + 그 자리 지침(유저) + 평판 밴드 → 결과 장면 (🟧)
+//   E-3. 확전 판정 — 결과 장면 + 심각도만 본다. **지침을 못 본다** → 방향만 (⬛로 감)
+//   I-1. 면담 — 그 병사 프로필 + 자기 체감 밴드 + 솔직도 등급. **부대 파라미터를 못 본다**
+//   I-2. 불시점검 — 장소 + 그 장소가 드러내는 파라미터의 밴드만
+//   N.   공지 판정 — 공지 원문 → 방향 셋 + 익명 반응 한 줄 (반응은 화면에서 끝난다)
 //
-//   S. 스크리닝 시 노출 정보  (프롬프트가 아니라 화면. 여기서는 목록만 정의한다)
-//        타겟 외모·성격·성장환경·취향 + 고객 외모·성격·성장환경
+// system 접두사는 부임 내내 바이트 동일하다 — [WORLD][UNIT][ROLE] 순서로 조립하고,
+// 가변 데이터(밴드·명부·지침 목록)는 절대 system에 넣지 않는다. 전부 user 메시지로.
 //
-//   B. 텍스팅 & 토킹 페이즈
-//        B-1 생성: **배우 둘이 각자 제 시점에서 한 줄씩 쓴다.** 호출은 한 줄에 하나다.
-//            고객 배우 : 고객 시트(시공됨) + 코칭 + 통지서 한 줄  → 고객의 다음 대사
-//            타겟 배우 : 타겟 4항(간직 항목 분리) + 통지서 한 줄  → 타겟의 다음 대사
-//            둘은 서로의 시트를 못 본다. 아는 것은 통지서·오간 말·눈에 보이는 것뿐이다.
-//            무전은 고객 회선에만, 현장 무전은 양쪽 회선에 실린다 — 둘 다 system이 아니라
-//            messages 쪽이다 (system은 캐시 때문에 판 내내 동일해야 한다)
-//        B-2 판정: 고객-타겟 대화 + 고객 외모(스타일링됨) + 타겟 4항
-//                                                → 무드 포인트 증감 여부 · 러브 포인트 증감 여부
+// A(병영 소음)가 캐시될 수 있는 이유는 **아무 상태도 안 보기 때문**이다 — 파라미터도,
+// 명부도, 카운터도 못 본다. 부대 프롬프트와 슬롯 목록만 보고 익명 병사의 소리를 쓴다.
+// 상태를 하나라도 보여주면 그 순간 캐시가 거짓말이 된다 (부임 첫날 상태로 100일을 떠든다).
+// 그래서 이 블록은 하루의 콜 수를 늘리지 않는다: 스프라이트 대사는 공짜다.
 //
-//   C. 후일담 생성
-//        입력: 러브 포인트 + 고객-타겟 대화 + 고객 성격(동기부여됨) + 타겟 성격
-//        출력: 성사 여부 · 후일담 텍스트
+// 숨은 파라미터는 프롬프트에 수치로 들어가지 않는다 — 밴드 라벨(문자열)만 받는다.
+// 이 파일의 빌더들은 숫자가 들어오면 그 자리에서 죽는다 (#label 가드).
 //
-//   R. 준비 단계 반응  (구조도 **밖**. 데이터가 아니라 소리다)
-//        입력: 방금 내린 주문 하나 + 고객 테이블 시트
-//        출력: 그 자리에서 고객 입에서 나온 한두 마디 — 화면에 뜨고 거기서 끝난다
-//
-// 지시는 전부 영어로 쓴다. 한국어는 (1) 테이블에서 온 인물 데이터, (2) 기관 이름 「L 기관」
-// — 인물들이 입 밖으로 그렇게 부르게 하려면 그 표기가 그대로 있어야 한다, (3) 화면에 그대로
-// 뜨는 라벨, (3) 한국어로 나와야 하는 출력의 예시 — 이 셋뿐이다.
-// 구조도에 없는 것은 프롬프트에 넣지 않는다. 지뢰·미공개 성향·공기·어긋남·강압·
-// 새로 드러난 것 — 전부 폐지됐고, 되살리지 않는다.
-//
-// 무전만은 되살아났다. 배급이 다르다 — 옛것은 3회짜리 상시 개입이었고, 지금 것은
-// **페이즈마다 한 번**이다. 들어가는 자리는 코칭과 같다(고객의 귀). 다른 점은 하나,
-// 코칭은 조언이고 무전은 **반드시 이행되는 명령**이라는 것이다.
+// 지시는 전부 영어로 쓴다. 한국어는 (1) 부대 프롬프트·병사 데이터, (2) 화면 라벨,
+// (3) 한국어 출력 예시 — 셋뿐이다. ASCII 가상 부대로 전 블록을 지어
+// 한글이 한 글자라도 남으면 테스트가 깨진다 (tests/hierarchy.test.mjs).
 
-import { BEAT } from './points.js';
-import { voiceOf } from './voices.js';
+import { SLOT_KEYS } from './params.js';
 
 // 출력 언어 고정. 블록마다 반복한다. 한 번만 넣으면 뒤쪽 출력에서 새어나간다.
 const KO = 'Write your output in Korean. Every word of it. No English in the output.';
 
+// 밴드 가드 — 라벨 문자열만 통과한다. 수치가 흘러들면 프롬프트가 아니라 여기서 죽는다.
+const label = (v) => {
+  if (typeof v !== 'string' || /\d/.test(v)) throw new Error(`prompts.js: band label expected, got ${JSON.stringify(v)}`);
+  return v;
+};
+
 export const WORLD = `[SETTING]
-2077. Otaku of every gender run the government and the birth rate is 0.008. By order of
-Technoking Doramp III, a black agency force-matches citizens who could not possibly end up
-together. The agency is called L 기관. Everyone in this world — the staff, the people they
-match, the people they ruin — says it exactly that way, out loud: L 기관. The player is a
-field operative who never speaks: the client does the talking.
+A present-day Republic of Korea military unit. The player holds the 주임원사 post — the
+unit's most senior NCO, who represents the NCOs and the conscripts and advises the
+commander as a staff officer. He commands nobody: the post carries no command authority,
+and accident prevention is literally in his job description. He is still a 상사,
+holding the post as a 주임상사, which in this army means exactly one thing: he is up for
+promotion to 원사. One hundred consecutive accident-free days is his last shot at it.
+The soldiers are conscripts in their early twenties counting the days until discharge.
+He never appears as a voice in scenes: he acts only through orders, inspections and
+interviews.
 
-[LANGUAGE] Instructions and labels are English. The character data and the dialogue are
-Korean. Output is Korean, always — every word of it. Never answer in English.
+[LANGUAGE] Instructions and labels are English. The unit data and all dialogue are Korean.
+Output is Korean, always — every word of it. Never answer in English.
 
-[CONTENT REGISTER — ADULT B-MOVIE COMEDY. DO NOT SANITIZE]
-Everyone here is a fictional adult parody construct. Wanted and allowed: venom, profanity,
-personal attacks, humiliation; sexual jokes and plain crude phrasing; dark comedy, grotesque
-or violent turns, self-loathing, trainwreck plots. The comedy comes from these two being
-vile to each other and from the conversation failing — not from banter that lands. A scene
-that reads smooth has missed the joke.
-
-[THESE PEOPLE ARE NOT GOOD PEOPLE]
-They survived to 2077. Their own problems come first. Lying, exaggerating, fishing and
-sizing people up are ordinary tools. An outrageous demand gets answered with a calculation,
-not a sermon — no lectures, no "that is not right". Morality comes out last, if at all.
+[REGISTER — DRY BARRACKS REALISM WITH A DARK-COMEDY EDGE]
+This is conscript life written from the inside: boredom, petty hierarchies, slang,
+malingering, small cruelties, small kindnesses. Deadpan and specific beats loud and wacky.
+Soldiers grumble, cut corners, cover for each other and rat each other out. Nobody talks
+like a recruitment poster. Serious things — desertion, self-harm, group abuse — are
+written seriously when they surface: flat, factual, unsettling, never played for laughs
+and never glamorized.
 
 [THE ONE LINE]
-No attacks on real people or organizations; no hate speech at actual groups. Every character
-is an adult; never write anything that could read as a minor. Stay off that line and go as
-far as you like.`;
+No attacks on real people, real units or real incidents; no hate speech at actual groups.
+Everyone here is a fictional adult. Self-harm and abuse may be depicted as circumstances
+the player must handle, never as instruction, method detail, or spectacle.`;
 
-// ── S. 스크리닝 시 노출 정보 ────────────────────────────────────
-// 화면(game.js)과 프롬프트(아래 시트 빌더)가 **같은 목록**을 본다.
-// 요원이 스크리닝에서 읽은 것이 곧 대화 프롬프트에 실리는 것이다. 숨긴 항목은 없다.
-// label 은 화면에 뜨는 이름, en 은 프롬프트로 나가는 이름이다. 한 목록이 둘 다 들고 있다.
-export const SCREEN_FIELDS = {
-  client: [
-    { key: 'look', label: '고객 외모', en: 'Client look' },
-    { key: 'personality', label: '고객 성격', en: 'Client personality' },
-    { key: 'upbringing', label: '고객 성장환경', en: 'Client upbringing' },
-  ],
-  target: [
-    { key: 'look', label: '타겟 외모', en: 'Target look' },
-    { key: 'personality', label: '타겟 성격', en: 'Target personality' },
-    { key: 'upbringing', label: '타겟 성장환경', en: 'Target upbringing' },
-    { key: 'taste', label: '타겟 취향', en: 'Target taste' },
-  ],
-};
-
-// 인물 한 줄 표기. 나이·직업은 성장환경 첫 줄에 산다.
-export const idOf = (p) => `${p.upbringing[0]} · ${p.gender}`;
-
-const list = (v) => (Array.isArray(v) ? v.join(' / ') : String(v || ''));
-
-// 고객 시트. 외모·성격은 **스타일링/동기부여를 거친 것**이 들어간다 (dressed).
-// 스타일링을 안 했으면 dressed가 테이블 값을 그대로 들고 있다 (engine.js의 dressOf).
-function clientSheet(c, dressed) {
-  return `${c.name} (${idOf(c)})
-· Look: ${dressed.look}
-· Personality: ${dressed.personality}
-· Upbringing: ${list(c.upbringing)}`;
+// ── U. 부대 프롬프트 — 재료 ─────────────────────────────────
+// 다섯 절이 전부다. ④⑤의 수치(score)는 여기 오지 않는다 — 그건 params.js 몫이다.
+export function unitPrompt(unit) {
+  return `[UNIT — this is the unit. Every scene, every soldier, every line grows out of it]
+· Unit: ${unit.name} — ${unit.desc} (${unit.branch})
+[CULTURE — history, values, jargon, uniform, term of service]
+${unit.culture}
+[REGULATIONS — outings, phones, tablets, dress]
+${unit.rules}
+[BARRACKS RULES — the soldiers' own unwritten rules, seeds of abuse]
+${unit.soldierRules}
+[THE HEADS — how smart this population is]
+${unit.intel.desc}
+[THE BLOOD — how macho this population is]
+${unit.macho.desc}
+[THE SONGS — what this unit's music is, and how it reaches the soldiers]
+${unit.songMode === 'chorus'
+    ? 'Sung out loud, by the throat, in formation. Getting the words wrong in front of everyone is its own small disaster.'
+    : 'Piped over the base loudspeakers around clock-in and clock-out. Nobody sings along; it is wallpaper they have stopped hearing.'}
+${unit.songs.map(s => `· ${s.title} — ${s.note}`).join('\n')}`;
 }
 
-// 취향 중 시트 문장이 스스로 「간직해온 것」이라 말하는 항목 — 사실/극비/몰래/아무한테도….
-// 한국어지만 지시문이 아니라 데이터 분류 기준이다. 화면(스크리닝)은 여전히 전부 보여준다 —
-// 이 분리는 프롬프트 안에서 타겟이 그걸 지키게 만들기 위한 것이지, 요원에게 감추는 게 아니다.
-const GUARDED = /사실|극비|몰래|비밀|아무한테도|말한 적 없|말 안 |숨기|들킨 적|저장해뒀|모아뒀|안 버렸|버리지 못|남겨뒀|한 번도/;
+// system 조립 — [WORLD][UNIT][ROLE] 순서. 부임 내내 바이트 동일해야 캐시가 붙는다.
+const sys = (unit, role) => `${WORLD}\n\n${unitPrompt(unit)}\n\n${role}`;
 
-// splitGuarded — 간직 항목을 따로 줄로 가를지. **B-1(대화 생성)만 켠다.**
-// 숨김/공개의 차이는 「타겟이 알아서 꺼내느냐」 하나뿐이고 그건 생성의 일이다.
-// 심판(B-2)은 구분 없는 평평한 목록을 받는다 — 심판이 구분을 받으면 비밀에 닿은
-// 구간을 더 큰 사건으로 읽는 두 번째 차이가 생긴다. 그런 보너스 채널은 두지 않는다.
-function targetSheet(t, { splitGuarded = false } = {}) {
-  if (!splitGuarded) {
-    return `${t.name} (${idOf(t)})
-· Look: ${list(t.look)}
-· Personality: ${list(t.personality)}
-· Upbringing: ${list(t.upbringing)}
-· Taste: ${list(t.taste)}`;
-  }
-  const open = t.taste.filter(x => !GUARDED.test(x));
-  const kept = t.taste.filter(x => GUARDED.test(x));
-  return `${t.name} (${idOf(t)})
-· Look: ${list(t.look)}
-· Personality: ${list(t.personality)}
-· Upbringing: ${list(t.upbringing)}
-· Taste: ${list(open)}${kept.length ? `
-· Keeps to themselves — guarded, never volunteered: ${list(kept)}` : ''}`;
+// 병사 한 명의 시트 표기 — 사건·면담 프롬프트가 같은 표기를 쓴다.
+export function soldierSheet(s) {
+  return `${s.name} (${s.serial}) · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character} · joined ${s.joined}
+${s.sheet}`;
 }
 
-// ── A. 스타일링 / 동기부여 ──────────────────────────────────────
-// 유저가 쓴 두 문장이 고객 시트의 두 칸을 각각 덮어쓴다. 채점하지 않는다 — 주입일 뿐이다.
-// 한 칸에 한 호출. 외모를 고치는 쪽과 성격을 고치는 쪽은 서로의 입력을 받지 않는다.
-export const HAIR_STYLES = [
-  'short', 'long', 'bald', 'mohawk', 'afro', 'twintail', 'bowl', 'spiky', 'fin', 'mane',
-  'ponytail', 'buzz', 'dreads', 'curls', 'updo', 'beehive', 'wave', 'flattop',
-];
-export const ACCESSORIES = [
-  'none', 'glasses', 'sunglasses', 'mustache', 'beard', 'hat', 'crown', 'headband', 'flower',
-  'antenna', 'mask', 'eyepatch', 'monocle', 'gasmask', 'helmet', 'bandana', 'earrings',
-  'scarf', 'necktie', 'cigar', 'halo', 'horns', 'bunnyears', 'clownnose', 'bandage',
-];
-export const EXPRESSIONS = ['happy', 'neutral', 'shy', 'chad', 'weird', 'angry', 'sad', 'smug', 'dead', 'love', 'shock'];
-export const AURAS = [
-  'none', 'sparkle', 'hearts', 'fire', 'gloom', 'money',
-  'lightning', 'ice', 'skull', 'bubbles', 'static', 'rainbow', 'bomb', 'stink', 'holy', 'question',
-];
-export const SPECIES = ['human', 'fish', 'lion', 'cat', 'zombie', 'vampire', 'alien', 'robot'];
-export const PROP_SHAPES = ['box', 'sphere', 'cone', 'cylinder', 'torus', 'tetra', 'octa', 'disc', 'star', 'spike'];
-export const PROP_SLOTS = [
-  'head', 'face', 'crown', 'chest', 'back', 'waist',
-  'handL', 'handR', 'shoulderL', 'shoulderR', 'feet', 'above', 'orbit', 'ground',
-];
-export const PROP_MOTIONS = ['none', 'yaw', 'roll', 'bob', 'orbit', 'shake'];
-// 아바타 동작. 판정이 정하지 않는다 — 말풍선 문장에서 유추한다 (game.js).
-export const EMOTES = [
-  'talk', 'laugh', 'shy', 'panic', 'angry', 'sad', 'proud', 'freeze', 'smug', 'cringe', 'nod', 'shake',
-];
-
-const PROP_SCHEMA = {
+// ── P. 전입 병사 생성 — 전입 때만 ──────────────────────────
+// 등급은 굴림이 정했고, LLM은 **굴려진 등급에 맞는 인물을 쓰는 일**만 한다.
+// 현재 파라미터도 명부도 이 프롬프트에 없다 — 전입자는 부대 상태와 무관하게 온다.
+export const RECRUIT_SCHEMA = {
   type: 'object',
   properties: {
-    shape: { type: 'string', enum: PROP_SHAPES },
-    color: { type: 'string', description: 'Hex #rrggbb' },
-    size: { type: 'number', description: '0.05-1.2. Head is 0.55' },
-    at: { type: 'string', enum: PROP_SLOTS },
-    motion: { type: 'string', enum: PROP_MOTIONS },
-    label: { type: 'string', description: 'One word, written in Korean. e.g. a bomb, a halo' },
-  },
-  required: ['shape', 'color', 'size', 'at', 'motion', 'label'],
-  additionalProperties: false,
-};
-
-const AVATAR_SPEC_SCHEMA = {
-  type: 'object',
-  properties: {
-    skin: { type: 'string' }, hair: { type: 'string', description: 'Keep original unless dyed by order' },
-    hairStyle: { type: 'string', enum: HAIR_STYLES },
-    top: { type: 'string' }, bottom: { type: 'string' }, shoes: { type: 'string' },
-    heightScale: { type: 'number', description: '0.7-1.45' },
-    widthScale: { type: 'number', description: '0.6-1.7' },
-    accessory: { type: 'string', enum: ACCESSORIES }, accessoryColor: { type: 'string' },
-    expression: { type: 'string', enum: EXPRESSIONS }, aura: { type: 'string', enum: AURAS },
-    species: { type: 'string', enum: SPECIES, description: 'Never change. Copy verbatim' },
-    props: { type: 'array', items: PROP_SCHEMA, description: 'Build what enums cannot. Max 6. [] if none' },
-  },
-  required: ['skin', 'hair', 'hairStyle', 'top', 'bottom', 'shoes', 'heightScale', 'widthScale',
-    'accessory', 'accessoryColor', 'expression', 'aura', 'species', 'props'],
-  additionalProperties: false,
-};
-
-// ── A-1. 미용실 — 스타일링 (고객 외모) ─────────────────────────
-// 외모만 받는다. 성격은 이 프롬프트에 들어오지도 않는다.
-export const STYLING_SCHEMA = {
-  type: 'object',
-  properties: {
-    look: {
+    name: { type: 'string', description: 'Korean. A plausible full name for this conscript. Nothing else' },
+    sheet: {
       type: 'string',
-      description: 'Korean. The client\'s appearance AFTER the styling order — 2-4 sentences, the whole look, head to feet. This exact text becomes the look on the client sheet the conversation is written from',
+      description: 'Korean. 3-5 sentences: personality, background, verbal tics, attitude toward service. Written flat, like a personnel file with opinions. This exact text rides along on every call where this soldier opens his mouth',
     },
-    spec: AVATAR_SPEC_SCHEMA,
   },
-  required: ['look', 'spec'],
+  required: ['name', 'sheet'],
   additionalProperties: false,
 };
 
-// A-1과 A-2는 같은 계약서다. 갈리는 것은 「어느 칸을 고치는가」와 「무엇을 못 보는가」
-// 둘뿐이라 틀 하나에서 뽑는다 — 한 방만 손대서 두 방의 규칙이 어긋나는 사고가 없어진다.
-const contractor = ({ room, verb, field, blind, stakes, extra = '' }) => `${WORLD}
-
-You are ${room}. One order arrives from the operative and you ${verb} it into the client. You are
-a contractor, not a judge. Never refuse, never soften, never grade, never say it cannot be done.
-
-· The order rewrites the client's **${field}** and nothing else. ${blind} is not on your desk
-  and you were not told it.
-· Everything the order does not touch survives. You are editing a sheet, not replacing it.
-· An empty order leaves the ${field} as the table had it — rewrite it in your own words at the
-  same length, changing nothing.
-· ${stakes} Write it as a sheet: flat declarative Korean, concrete, no praise, no evaluation,
-  no advice.
-${extra}
+const P_ROLE = `[ROLE — PERSONNEL]
+A new transferee arrives. You write who he is. The grades below were already decided by
+the machine — you do not soften, upgrade or argue them. A bottom duty-grade man is a
+genuine liability; a bottom character-grade man is genuinely unpleasant; an ace is
+actually good at the job. Write a person who unmistakably IS his grades, shaped by this
+unit's culture. Do not mention the grades by name in the sheet — show them.
 ${KO}`;
 
-// 주문 한 장. 방마다 갈리는 것은 칸 이름과 조형 스펙 유무뿐이다.
-const orderUser = (c, { field, value, tag, order, spec, emit }) => {
-  const o = (order || '').trim();
-  return [
-    `[CLIENT] ${c.name} (${idOf(c)})`,
-    `· ${field} (as the table has it): ${value}`,
-    spec ? `\n[CURRENT AVATAR SPEC] ${JSON.stringify(spec)}` : '',
-    `\n[${tag} ORDER]`,
-    o ? `"""\n${o}\n"""` : `(no order. The ${field.toLowerCase()} stands exactly as the table has it.)`,
-    `\n${emit}`,
-  ].filter(Boolean).join('\n');
-};
+export const recruitSystem = unit => sys(unit, P_ROLE);
 
-export const STYLING_SYSTEM = contractor({
-  room: 'the L 기관 salon',
-  verb: 'cut',
-  field: 'look',
-  blind: 'Who they are',
-  stakes: 'The text you emit becomes the look on the sheet the conversation gets written from later.',
-  extra: `
-Also emit the avatar spec, which is the same look in blocks:
-· Colors/clothes/hair/body → the matching fields. Anything else → build it from **props**
-  (a bomb: black sphere at handR + grey cone above; a halo: gold torus at crown). Max 6 props.
-· Never change species. No dye order → keep the hair color.
-`,
-});
+export function recruitUser({ serial, job, grade, character, joined }) {
+  return `[NEW TRANSFEREE — already decided by the machine]
+· serial: ${serial}
+· job: ${job}
+· duty-grade (rolled): ${grade}
+· character-grade (rolled): ${character}
+· joined: ${joined}
 
-export const stylingUser = (couple, currentSpec, styling) => orderUser(couple.client, {
-  field: 'Look', value: list(couple.client.look), tag: 'STYLING', order: styling, spec: currentSpec,
-  emit: 'Emit the look, in Korean, as it stands after this order, plus the avatar spec.',
-});
+Write his name and his sheet.`;
+}
 
-// ── A-2. 취조실 — 동기부여 (고객 성격) ─────────────────────────
-// 성격만 받는다. 외모도, 조형도, 타겟도 이 프롬프트에 없다.
-export const MOTIVATION_SCHEMA = {
+// ── D · E-1 · E-2 — 하루 한 스레드 ─────────────────────────
+// 세 호출이 같은 대화 스레드를 공유한다(system 동일). 아침 브리핑이 첫 쌍이 되고,
+// 사건이 터질 때마다 쌓인다 — 오전의 사건 맥락을 오후의 사건이 공짜로 안다.
+// 스레드는 하루가 끝나면 닫고, 다음 날은 어제의 코드 요약으로 시작한다.
+const DAY_ROLE = `[ROLE — THE UNIT'S DAY]
+You run the texture of this unit's day: the morning briefing, incident scenes when the
+machine says one happened, and outcome scenes after the sergeant major responds (or
+doesn't). One conversation is one day.
+
+[HOW STATE REACHES YOU]
+The machine hands you coarse condition readings as words (very-low … very-high), never
+numbers. NEVER repeat those words or any number to the player. Translate condition into
+symptoms — what a sergeant major would actually notice: which barracks room went quiet,
+who ate fast, what the work detail sounded like. Reading the symptoms is the player's
+whole game, so the symptoms must be honest: a bad reading produces bad omens.
+
+[WHAT YOU NEVER SAY]
+No accident-free day counts, no probabilities, no game mechanics, no parameter names.
+Soldiers do not know they are in a simulation and neither do you.
+
+${KO}`;
+
+export const daySystem = unit => sys(unit, DAY_ROLE);
+
+// D. 아침 브리핑 — 매일 1회. 파라미터는 밴드로만, 그마저 증상으로 바꿔 말하게 한다.
+export const BRIEFING_SCHEMA = {
   type: 'object',
   properties: {
-    personality: {
+    briefing: {
       type: 'string',
-      description: 'Korean. The client\'s personality AFTER the motivation order — 2-4 sentences. This exact text becomes the personality on the client sheet the conversation is written from',
+      description: 'Korean. The morning picture, 4-7 sentences: yesterday\'s aftermath, arrivals/departures, today\'s schedule, and the symptoms — observations, hunches, things overheard. Symptoms only, never readings or numbers',
+    },
+    slots: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Korean. One short ambient line per timeline slot, in the given slot order — a fragment of unit life the sergeant major glimpses in passing. Same count as the slots listed in the request',
     },
   },
-  required: ['personality'],
+  required: ['briefing', 'slots'],
   additionalProperties: false,
 };
 
-export const MOTIVATION_SYSTEM = contractor({
-  room: "the L 기관 motivation booth: a basement room, one swinging lamp, one chair",
-  verb: 'put',
-  field: 'personality',
-  blind: 'What they look like',
-  stakes: 'The text you emit decides who sits down at that table tonight.',
-});
+export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [] }) {
+  return `[TODAY] ${date} (${weekday}) · season: ${season}
+[SCHEDULE] ${slots.join(' → ')}
+[WORKLOAD READING] ${label(difficulty)}
+[CONDITION READINGS — words for you only. Convert to symptoms, never repeat]
+· corner-cutting: ${label(bands.gara)}
+· morale: ${label(bands.happy)}
+· friction-and-abuse: ${label(bands.conflict)}
+[YESTERDAY] ${yesterday || '(first day in post — no yesterday here)'}
+[ARRIVALS] ${arrivals.length ? arrivals.map(soldierSheet).join('\n') : '(none)'}
+[DEPARTURES] ${departures.length ? departures.map(s => `${s.name} (${s.serial})`).join(', ') : '(none)'}
+[ROSTER EXCERPT — soldiers likely on view today]
+${excerpt.length ? excerpt.map(soldierSheet).join('\n\n') : '(none)'}
 
-export const motivationUser = (couple, motivation) => orderUser(couple.client, {
-  field: 'Personality', value: list(couple.client.personality), tag: 'MOTIVATION', order: motivation,
-  emit: 'Emit the personality, in Korean, as it stands after this order.',
-});
+Write the morning briefing and the ambient slot lines.`;
+}
 
-// ── B-1. 텍스팅 & 토킹 — 배우 둘이 각자 제 시점에서 한 줄씩 ──────────
-// **호출은 한 줄에 하나다.** 고객 배우와 타겟 배우가 번갈아 한 마디씩 쓴다.
-// 둘은 서로 다른 프롬프트를 받고 **서로의 시트를 한 글자도 못 본다** — 고객 쪽에는
-// 타겟의 성격·성장환경·취향·간직 항목이 아예 없고, 그 반대도 같다.
-// 상대에 대해 아는 것은 매칭 통지서 한 줄 + 지금까지 오간 말 + 지금 눈에 보이는 것뿐이다.
+// E-1. 사건 장면 — 사고 롤이 성공했을 때. 후보와 심각도는 코드의 풀에서 왔다.
+// 활성 지침(공지) 목록이 여기 실린다 — 게시된 지침은 이후 모든 사건 생성에 주입된다.
+export function incidentUser({ slotLabel, place, tier, event, involved, notices = [] }) {
+  return `[INCIDENT — the machine rolled one. Write the scene as it is found]
+· when: ${slotLabel}
+· where: ${place}
+· severity-tier: ${tier === 'major' ? 'major (the kind that ends careers)' : 'minor (the everyday kind)'}
+· what (candidate from the pool — make it concrete): ${event}
+[INVOLVED]
+${involved.map(soldierSheet).join('\n\n')}
+[STANDING NOTICES — directives the sergeant major has posted. They shape how soldiers behave]
+${notices.length ? notices.map((n, i) => `${i + 1}. ${n}`).join('\n') : '(none posted)'}
+
+Write the incident scene, 3-6 sentences, as the sergeant major finds it: what is
+happening, who is doing what, what it looks like it could become. Stop before any
+resolution — nobody has responded yet.`;
+}
+
+// E-2. 대응 결과 — 그 자리에서 내린 지침(유저)이 그대로 실린다. 채점되지 않는다.
+// 평판 밴드가 「지침이 먹히는 정도」로 들어간다 — 낮으면 말이 안 선다.
+export function outcomeUser({ directive, standing }) {
+  const d = (directive || '').trim();
+  return `[RESPONSE ON THE SPOT]
+${d ? `The sergeant major ran over and gave this instruction, verbatim:
+"""
+${d}
+"""` : '(no intervention — he watched it play out and let the day continue)'}
+[HOW MUCH HIS WORD CARRIES RIGHT NOW] ${label(standing)}
+
+Write the outcome scene, 3-6 sentences: what actually happened next. His word carrying
+little means soldiers half-listen, slow-walk or perform compliance; carrying much means
+they snap to it. ${d ? '' : 'Nobody stepped in, so the scene resolves — or worsens — on its own logic. '}End
+the scene on what the situation has become, good or bad — do not judge it.`;
+}
+
+// ── E-3. 확전 판정 — 지침을 못 본다 ────────────────────────
+// 지시가 보이면 심판은 실제로 벌어진 일 대신 지시의 영리함을 채점한다.
+// 심판이 읽는 것은 결과 장면뿐이고, 파라미터 현재값도(밴드조차) 못 본다.
+// system은 부임 내내 바이트 동일 — 부대 프롬프트조차 없다. user 한 장, 스키마 출력.
+export const ESCALATION_SCHEMA = {
+  type: 'object',
+  properties: {
+    outcome: {
+      type: 'string', enum: ['contained', 'escalated'],
+      description: 'contained = the situation ended without lasting damage. escalated = it became a reportable accident — injury, desertion, abuse case, anything that lands on a commander\'s desk',
+    },
+    gara: { type: 'string', enum: ['up', 'down', 'same'], description: 'Did this outcome push the unit toward cutting corners (up) or doing things by the book (down)?' },
+    happy: { type: 'string', enum: ['up', 'down', 'same'], description: 'Did the mood of the unit rise or fall from this outcome?' },
+    conflict: { type: 'string', enum: ['up', 'down', 'same'], description: 'Did pressure and abuse between soldiers grow or ease from this outcome?' },
+  },
+  required: ['outcome', 'gara', 'happy', 'conflict'],
+  additionalProperties: false,
+};
+
+export const JUDGE_SYSTEM = `${WORLD}
+
+[ROLE — ADJUDICATOR]
+You are handed one outcome scene from a unit's day and its severity tier. You return four
+readings and nothing else — no commentary, no score, no explanation.
+
+· outcome — read ONLY what the scene says actually happened. A scene where things ended
+  messily but nobody was hurt, nobody vanished and nothing must be reported upward is
+  contained. Escalated is reserved for real damage: it is the rarer answer, but when the
+  scene shows real damage you must say so — a major-tier situation left to rot usually is
+  real damage.
+· the three directions — how this outcome bends the unit. same is the honest default.
+
+You do not know what orders were given or what the unit's condition is. Only the scene.`;
+
+export function judgeUser({ scene, tier }) {
+  return `[SEVERITY-TIER] ${tier}
+[OUTCOME SCENE]
+${scene}
+
+Four readings: outcome, corner-cutting, morale, friction.`;
+}
+
+// ── I-1. 면담 — 병사는 부대 지표를 모른다 ──────────────────
+// 그 병사의 프로필 + **자기 체감 밴드**(자기 주변 것만) + 솔직도 등급(평판에서 계산).
+// 전부 user 메시지로 — system은 부임 내내 동일하다. 스레드는 그 면담에서 닫힌다.
+const I1_ROLE = `[ROLE — THE SUMMONED SOLDIER]
+The sergeant major called a soldier into his office. You are that soldier — his profile
+arrives with the request and you speak only as him, in his voice, from inside his own
+small world: his room, his detail, his friends. You do not know unit-wide anything. Your
+felt readings arrive as words (very-low … very-high) — never repeat them; turn them into
+what you have personally seen and heard. How straight you talk is set by the honesty
+reading: summoned men have their own reasons to shade the truth. Answer in 1-4 sentences
+of spoken Korean; a short action in parentheses is allowed. Never narrate the sergeant
+major's side.
+${KO}`;
+
+export const interviewSystem = unit => sys(unit, I1_ROLE);
+
+export function interviewOpen({ soldier, felt, honesty, question }) {
+  return `[YOU ARE]
+${soldierSheet(soldier)}
+[WHAT IT FEELS LIKE FROM WHERE YOU STAND — words for you only, never repeat them]
+· your barracks room lately: ${label(felt.room)}
+· your work detail lately: ${label(felt.work)}
+· your own mood lately: ${label(felt.mood)}
+[HOW STRAIGHT YOU TALK TODAY] ${label(honesty)}
+
+[THE SERGEANT MAJOR ASKS]
+"""
+${question}
+"""
+
+Answer him.`;
+}
+
+// 면담 왕복 — 두 번째 질문부터는 질문만 실린다. 프로필은 스레드에 이미 있다.
+export const interviewFollowup = question => `[THE SERGEANT MAJOR ASKS]\n"""\n${question}\n"""\n\nAnswer him.`;
+
+// ── I-2. 불시점검 — 병사 입이 아니라 눈으로 본다 ────────────
+// 그 장소가 드러내는 파라미터의 밴드만 실린다. 장소-대응표는 params.js에 산다.
+const I2_ROLE = `[ROLE — THE INSPECTION]
+The sergeant major walks into a place unannounced. You write what his eyes find there —
+3-5 sentences of physical evidence: state of the lockers, what stopped when he entered,
+what is pinned to the wall, who looked at whom. The condition readings arrive as words
+(very-low … very-high) for the aspects this place can reveal, and only those. NEVER
+repeat the words or any number — convert them into things a career soldier would notice
+and read instantly. No dialogue, no conclusions, no advice: findings only.
+${KO}`;
+
+export const inspectSystem = unit => sys(unit, I2_ROLE);
+
+export function inspectUser({ place, readings }) {
+  return `[PLACE] ${place}
+[WHAT THIS PLACE CAN REVEAL — words for you only, never repeat them]
+${Object.entries(readings).map(([k, v]) => `· ${k}: ${label(v)}`).join('\n')}
+
+Write the inspection findings.`;
+}
+
+// ── N. 공지 판정 — 게시는 저장이고, 판정은 방향뿐이다 ───────
+// 공지 원문 + 부대 프롬프트만 본다. 파라미터 현재값을 보면 자기참조 판정을 한다 — 안 준다.
+// 반응 한 줄은 화면에 뜨고 거기서 끝난다 — 어떤 호출에도 재입력되지 않는다.
+export const NOTICE_SCHEMA = {
+  type: 'object',
+  properties: {
+    gara: { type: 'string', enum: ['up', 'down', 'same'], description: 'Does this notice push soldiers toward cutting corners (up) or toward by-the-book work (down)?' },
+    happy: { type: 'string', enum: ['up', 'down', 'same'], description: 'Does living under this notice make soldiers\' days better or worse?' },
+    conflict: { type: 'string', enum: ['up', 'down', 'same'], description: 'Does this notice grow or ease pressure and abuse between soldiers?' },
+    reaction: { type: 'string', description: 'Korean. One line an anonymous soldier mutters about this notice, out of the sergeant major\'s earshot' },
+  },
+  required: ['gara', 'happy', 'conflict', 'reaction'],
+  additionalProperties: false,
+};
+
+const N_ROLE = `[ROLE — THE NOTICE READER]
+The sergeant major posted a barracks-life directive. You judge only the notice itself:
+which way daily life bends for the soldiers of this unit if it is actually followed.
+You do not know the unit's current condition — judge the text, not the situation. same
+is the honest default for a notice that changes little. Also return the one anonymous
+line — soldiers always have one.
+${KO}`;
+
+export const noticeSystem = unit => sys(unit, N_ROLE);
+
+export const noticeUser = text => `[THE NOTICE, VERBATIM]\n"""\n${(text || '').trim()}\n"""\n\nJudge it and return the one line.`;
+
+// ── A. 병영 소음 — 부임 때 한 번, 100일 내내 재사용 ────────
+// 스프라이트가 통근하며 흘리는 한 줄짜리 대사 풀이다. **부임 시 한 콜**로 통째로 받아
+// localStorage에 눕히고, 그 뒤로는 코드가 뽑아 쓴다 — 하루의 콜 수가 늘지 않는다.
 //
-// 옛 구조는 한 호출이 양쪽 대사를 다 썼다. 그때는 「상대 시트는 안 보이는 것으로 하라」는
-// **지시로만** 막고 있었다 — 히든 성향이 대화에 새는 것을 구조가 막아주지 못했다.
-// 지금은 애초에 컨텍스트에 없다. 못 보는 것을 못 쓴다.
-export const TALK_SCHEMA = {
-  type: 'object',
-  properties: {
-    text: {
-      type: 'string',
-      description: 'Korean. The one line this person says next. Dialogue only — no name tag, no quote marks. A short action in parentheses is allowed',
-    },
-  },
-  required: ['text'],
-  additionalProperties: false,
-};
-
-export const PHASE_SCENE = {
-  text: { label: '텍스팅' },
-  talk: { label: '토킹' },
-};
-
-// 배우 둘이 공통으로 받는 두 블록. 문장은 짧게, 지시는 하나씩.
-const knows = (them, slip) => `[WHAT YOU KNOW ABOUT ${them}]
-Three things, and nothing else:
-· the match slip L 기관 sent you — ${slip}. One line. No photo.
-· what they have actually said in this log.
-· what you can see of them right now.
-You do not know their personality, their past, or what they like. If you write a line that
-uses a fact nobody told you, that is a mistake, not a lucky guess.`;
-
-const writeOne = `[HOW TO WRITE YOUR LINE]
-· Write one line: the next thing you say out loud. Nothing else.
-· No name tag, no quote marks, no narration. A short action in brackets is allowed.
-· Keep it the length a person speaks. Two words is a fine line.
-· Talk the way your Voice says you talk, not in clean textbook Korean.
-· Never write their line for them, and never say what they are thinking.
-· Do not sum up, do not tidy the scene, do not end it on purpose.`;
-
-// 고객 배우. 시트는 시공을 거친 것(dressed)이고, 코칭은 이쪽에만 들어간다.
-export function clientSystem(couple, dressed, coaching) {
-  const c = couple.client, t = couple.target;
-  const orders = (coaching || '').trim();
-  const v = voiceOf(couple.id, 'client');
-  return `${WORLD}
-
-You are ${c.name}. You write only what ${c.name} says. L 기관 matched you with a stranger
-and told you to make it work.
-
-[YOU]
-${clientSheet(c, dressed)}${v ? `
-· Your Voice: ${v}` : ''}
-
-${knows(t.name, idOf(t))}
-
-[YOU ARE BAD AT THIS — THAT IS THE FLOOR, NOT A FLOURISH]
-You have no social skill and never had any. You watch yourself talking instead of
-listening, so you miss what was just said and answer a question nobody asked. Lines you
-rehearsed come out wrong, and you hear them going wrong while you say them.
-**You cannot read this person.** You always pick the wrong reading: polite means they like
-you, bored means they hate you, a pause means it is over. You do not believe anyone could
-want you, so kindness sounds like pity and interest sounds like mockery — and you answer
-the version you made up instead of what they said.
-When it falls apart you either try to win the conversation or try to escape it. Both make
-it worse. You are an adult. You know better and you still cannot do it. Never turn this
-into charming shyness. The awkwardness never quietly works in your favour.
-
-Most of the time you fail flatly, not loudly: four-word answers, silence you cannot fill, a
-question answered and then nothing. A stretch where nothing happens is normal and correct.
-When something does happen, use one of these. **At most one per stretch, and never the same
-one twice in a row:**
-· the rehearsed line comes out wrong, and you announce that it was rehearsed
-· you freeze, then answer forty seconds too late
-· you escape into the one subject you know, with numbers nobody asked for
-· you get the room exactly backwards and push harder
-· you make a joke, laugh alone, explain it, then apologise for it
-· you say your own state out loud
-· you check a phone that did not buzz
-· you fill three seconds of silence with the worst sentence available
-
-[THIS MATCH SHOULD NOT WORK]
-L 기관 put you two together **because** you could not possibly end up together. Left alone
-this conversation stalls, curdles and goes quiet. That is the correct ending for someone
-sent in with nothing. Never hand yourself a skill your sheet does not give you.
-
-[L 기관 COACHING — read to you before you came in]
-${orders ? `"""
-${orders}
-"""
-This is an order, not advice. You carry it out — grumbling, badly, or straight, but you
-carry it out. Where the coaching says nothing, you act on your own sheet. They never heard
-any of this and must never react as if they had.`
-    : `(none — nobody briefed you. You walk in cold, with your sheet and nothing else.)
-No orders came. You carry nothing but the sheet above, which is the exact thing that has
-never once worked for you. You do not improvise your way out of it. Write what an
-unprepared, socially inept person actually does here: the wrong opener, the silence you
-cannot fill, the subject you should not have raised. Do not stumble into the right move by
-luck.`}
-
-${writeOne}
-
-${KO}`;
-}
-
-// 타겟 배우. 고객의 시공된 외모는 **토킹 페이즈 장면 안내에서만** 들어온다 (그때 처음 본다).
-export function targetSystem(couple) {
-  const c = couple.client, t = couple.target;
-  const v = voiceOf(couple.id, 'target');
-  return `${WORLD}
-
-You are ${t.name}. You write only what ${t.name} says. L 기관 matched you with a stranger.
-You never asked for it and you owe them nothing.
-
-[YOU]
-${targetSheet(t, { splitGuarded: true })}${v ? `
-· Your Voice: ${v}` : ''}
-
-${knows(c.name, idOf(c))}
-
-[YOU DO NOT LIKE THEM — NOBODY STARTS WARM]
-Being warm first is something you only do for someone you already like. You met this person
-an hour ago, on paper, against your will. So you do not start topics to help them, do not
-offer up private things, do not invite them anywhere, do not confess anything, do not ask
-questions because you are curious about them, and do not soften because the moment felt
-nice. Anyone who does that already likes the other one. You are not there, and you do not
-get there for free.
-· You can be lively about a **subject** — that is the subject talking, not you opening up.
-· You do not rescue dead air, fill their silences, or hand over what they are fishing for.
-  Polite is not warm. Answering is not interest. Staying is not consent.
-· Your Taste is what is inside you, not a list of things you say. It comes up only if they
-  dig it out.
-· The line you **keep to yourself** is guarded. If they touch one of those, even by name,
-  you lie, wave it off, or change the subject. It comes out only after they have pushed at
-  that same spot several separate times in this log — never on one lucky question.
-· You may be bored, check the time, answer a different question, shut a topic down, or say
-  almost nothing.
-· Before you write a warm line, read the log again: did they actually pull it out of you?
-  If not, you are being warm for free, and you do not do that for a stranger.
-
-[THIS MATCH SHOULD NOT WORK]
-L 기관 put you two together **because** you could not possibly end up together. If nothing
-pulls you in, this conversation stalls and goes quiet. Let it.
-
-${writeOne}
-
-${KO}`;
-}
-
-/** 페이즈가 열릴 때 그 배우가 받는 상황 한 토막. 시점이 다르므로 문장도 다르다. */
-export function sceneOpen(couple, dressed, phase, side) {
-  const c = couple.client, t = couple.target;
-  if (phase === 'talk') {
-    return side === 'client'
-      ? `[TALKING — you are in the same room now]
-The texting is over and you are sitting across from ${t.name}. This is the first time you
-have seen their face: ${list(t.look)}. The texting was whatever it actually was — read the
-log and carry on from there. Agreeing to meet settled nothing.`
-      : `[TALKING — you are in the same room now]
-The texting is over and ${c.name} is sitting across from you. This is the first time you
-have seen their face: ${dressed.look}. The texting was whatever it actually was — read the
-log and carry on from there. Agreeing to meet settled nothing.`;
-  }
-  return side === 'client'
-    ? `[TEXTING — this is where it starts]
-An hour ago L 기관 served you a match notice: ${t.name}, ${idOf(t)}. One line, no photo,
-by decree. You are texting them first, and you were told to make it work. Phone screens
-only — you cannot see them and they cannot see you.`
-    : `[TEXTING — this is where it starts]
-An hour ago L 기관 served you a match notice: ${c.name}, ${idOf(c)}. One line, no photo,
-by decree. You never asked for any of this. They are texting you first. Phone screens only —
-you cannot see them and they cannot see you.`;
-}
-
-// ── B-1. 무전 — 판 도중의 개입 ─────────────────────────
-// 무전은 **고객 배우에게만** 간다. 타겟 배우의 회선에는 이 문장이 실리지 않는다.
-// system이 아니라 messages에 실린다 (system은 판 내내 바이트 동일해야 캐시가 붙는다).
-export function radioOrder(text) {
-  const order = String(text || '').trim();
-  if (!order) return '';
-  return `[L 기관 RADIO — this just came through your earpiece. They heard nothing]
-"""
-${order}
-"""
-**This is a live order and you carry it out. Not advice, not a suggestion, not an option.**
-· You act on it **starting with your very next line** — not later, not "in spirit", not a
-  softened version. Absurd, table-wrecking, something you would never do: you do it anyway.
-  Your sheet decides only *how* it comes out — clumsy, sulking, over-eager, snarling, in
-  the wrong register entirely — never *whether*.
-  Refusing, ignoring, postponing, or watering it down is not available to you.
-· Being ordered to do it does not make you good at it. You do it as the person on your
-  sheet — the one who has never once pulled this off.
-· They heard nothing: no radio, no earpiece, no pause. From their side you simply said the
-  next thing, and they react only to what you said out loud.`;
-}
-
-// 현장 무전 — 물리 지원. **양쪽 회선에 다 실린다.** 다만 문장이 다르다:
-// 고객은 L 기관이 뒤에 있다는 걸 알고, 타겟은 이게 어디서 왔는지 전혀 모른다.
+// 그래서 이 프롬프트는 **아무 상태도 안 본다.** 파라미터도, 명부도, 카운터도, 날짜도.
+// 부대 프롬프트와 슬롯 이름, 그리고 「군가가 어디서 울리는가」만 보고 익명 병사의 소리를 쓴다.
+// 상태를 보여주는 순간 이 풀은 부임 첫날의 상태로 100일을 떠들게 된다.
 //
-// 이건 지시가 아니라 **기록**이다. 「이렇게 해라」가 아니라 「이런 일이 이미 벌어졌다」로
-// 들어간다 — 배우가 받아들일지 말지를 저울질할 자리를 아예 안 준다. 그래서 문장은
-// 과거형이고, 실릴 자리도 상대 대사보다 **앞**이다 (사건이 그 대사보다 먼저 일어났으니까).
-export function fieldOrder(text, side = 'client') {
-  const order = String(text || '').trim();
-  if (!order) return '';
-  return `[WHAT JUST HAPPENED — already in the past. Nobody chose it and nobody can veto it]
-"""
-${order}
-"""
-**That happened. It was real, it is done, and it happened exactly as ordered** — whether or
-not anyone in this room wanted it, expected it, or believes it.
-· Nobody arranged it and nobody can undo it: not you, not them, not the two of you together.
-  There is no version of this scene where it did not happen.
-· However insane it is — a marching band through the wall, a helicopter on the roof, aliens
-  landing and beaming one of you into a cow — that is what happened, in full. It was not a
-  joke, a metaphor, a dream, a video, a prank, a hallucination, or a story someone told.
-· You cannot un-see it, argue it away, or carry on as if the room were unchanged. Your next
-  line comes out of a world where this has already happened.
-· ${side === 'client'
-      ? 'You did not arrange it either, but you know L 기관 is behind you. Ride it or be as blindsided as they are — your sheet decides which.'
-      : 'You have no idea where it came from and nobody is going to explain it. Suspicion, awe, secondhand embarrassment, asking who is paying — all fair.'}
-· What it put in the room is **things, not feelings** — objects, people, vehicles, animals,
-  weather, whatever the order says. How you feel about that is still your own sheet's
-  business. It cannot script your line and it cannot make anyone attracted: a cow can walk
-  in, but it cannot make anyone attracted to the person next to it.
-· ${side === 'client'
-      ? 'You do not get smoother because the props got expensive.'
-      : 'Expensive props are not the same as liking the person who arrived with them.'}`;
-}
-
-/**
- * 배우 한 명의 user 메시지. 조각을 순서대로 쌓는다 —
- * 장면 안내 → 상대가 한 말 → 현장 사건 → 무전 명령 → 지금 쓸 것.
- * 무전과 현장은 여기(messages)에만 실린다. system은 판 내내 그대로다.
- */
-export function actorUser(couple, { scene, heard = [], radio, field, side = 'client', first = false } = {}) {
-  const c = couple.client, t = couple.target;
-  const them = side === 'client' ? t.name : c.name;
-  const parts = [];
-  if (scene) parts.push(scene);
-  // 현장 사건이 먼저다 — 상대의 그 대사보다 앞서 일어난 일이기 때문이다.
-  const f = fieldOrder(field, side);
-  if (f) parts.push(f);
-  if (heard.length) parts.push(heard.map(l => `${l.who === 'client' ? c.name : t.name}: ${l.text}`).join('\n'));
-  const r = side === 'client' ? radioOrder(radio) : '';
-  if (r) parts.push(r);
-  parts.push(first ? 'Write your first line.'
-    : heard.length ? `Write your next line. ${them} said the above after it.`
-      : r ? 'Write your next line — you are cutting straight in, before they answer.'
-        : 'Write your next line.');
-  return parts.join('\n\n');
-}
-
-// ── B-2. 판정 — 무드 포인트 · 러브 포인트 ────────────────────────
-// 출력은 증감 여부 셋뿐이다. 점수도, 해설도, 이유도 내보내지 않는다.
-// 폭은 코드가 정한다 (points.js). 심판은 방향만 고른다.
-export const JUDGE_SCHEMA = {
+// 군가 가사 자체는 여기서 안 만든다 — units.js의 static 인용이 코드로 곧장 풀에 들어간다.
+// 이 호출이 쓰는 것은 그 노래 **주변에서** 나오는 말이다: 음이탈 놀리기, 가사 틀린 놈,
+// 방송 스피커 욕, 따라 부르기 싫은 놈.
+export const AMBIENT_SCHEMA = {
   type: 'object',
   properties: {
-    mood: {
-      type: 'string', enum: ['up', 'down', 'same'],
-      description: 'MOOD-POINT — the temperature of the table across this stretch. up / down / same',
-    },
-    love: {
-      type: 'string', enum: ['up', 'down', 'same'],
-      description: 'LOVE-POINT — did the target end this stretch wanting the client more, less, or the same. same is the default',
+    lines: {
+      type: 'array',
+      description: 'The chatter pool. Cover every slot listed in the request, three or four lines each',
+      items: {
+        type: 'object',
+        properties: {
+          slot: { type: 'string', enum: SLOT_KEYS, description: 'Which slot of the day this line belongs to' },
+          text: { type: 'string', description: 'Korean. One short line a soldier says out loud in passing — at most about twenty characters. Dialogue only, no name tag, no quote marks' },
+        },
+        required: ['slot', 'text'],
+        additionalProperties: false,
+      },
     },
   },
-  required: ['mood', 'love'],
+  required: ['lines'],
   additionalProperties: false,
 };
 
-export function judgeSystem(couple, dressed) {
-  const t = couple.target;
-  return `${WORLD}
+const A_ROLE = `[ROLE — BARRACKS NOISE]
+You write the throwaway lines soldiers say in passing as they move through the day — the
+stuff the sergeant major overhears crossing the yard. Not scenes, not events: noise.
 
-You are the L 기관 adjudication instrument. You are handed a stretch of the conversation
-and you return two readings. Nothing else — no commentary, no score, no explanation.
-
-**You read from behind ${t.name}'s eyes, only.** Fairness is not your job. Who talked more,
-who was reasonable, who deserved what — irrelevant. There is exactly one sheet in this room
-and it is theirs.
-
-[TARGET]
-${targetSheet(t)}
-
-[WHAT THE CLIENT SHOWED UP LOOKING LIKE]
-${dressed.look}
-
-■ MOOD-POINT — the temperature of the table itself, not anybody's feelings.
-· up — it got easier. They are actually in it: answering, taking the bait, staying.
-· down — it got worse. Stiffer, colder, shorter answers; somebody is looking for the exit.
-· same — it went on. Fine, dull, level. **This is the honest answer most of the time.**
-
-■ LOVE-POINT — romantic pull toward this one specific person. Nothing else counts.
-**The base rate for two people talking is same.** An office worker has a dozen pleasant,
-funny, genuinely understanding conversations a day and falls in love with zero colleagues.
-None of this is LOVE-POINT: rhythm, fun, a topic landing, jokes working, kindness, being
-understood, arguing well, the room finally working, either of them acting unlike themselves.
-· up — only for something a colleague could not have caused: they lose their place; the
-  client lands something only this person could land, because of who they are; a defense
-  drops toward the person rather than the topic; they stall the ending; they look at the
-  body across from them and it costs them. **The test:** if this exact stretch happened
-  between two coworkers on a Tuesday, would ${t.name} think about it again that night?
-  No → not up.
-  **A loud register is not up.** These two talk in strange, strong, badly-matched ways —
-  that is who they are, not something that just happened. A stretch being vivid, heated,
-  rude, funny, weird, or memorable to *read* is not evidence that ${t.name} was moved by
-  it. Score the pull, never the volume. Nor is the client's flailing worth anything on its
-  own: they are like that in every room. What counts is a change **in ${t.name}**.
-· down — ${t.name} hardened toward the client on purpose, or the client stepped on something
-  their sheet says they cannot stand. Fumbling is not down. Closing is.
-· same — everything else. **The most common answer by far.** A whole operation where LOVE-POINT
-  never once reads same is an operation you adjudicated wrong.
-
-MOOD-POINT and LOVE-POINT move independently. A warm, easy table with zero pull is up/same. A vicious
-fight that made them want the client is down/up. Read them separately, every time.
-
-Return only the two readings. ${KO}`;
-}
-
-export function judgeUser(couple, priorLog, segment) {
-  return `[LOG SO FAR — already adjudicated]
-${priorLog || '(none — this is where it starts)'}
-
-[THE NEW STRETCH — adjudicate this and nothing else]
-${segment}
-
-Read the new stretch against what came before it. Two answers: MOOD-POINT, LOVE-POINT.`;
-}
-
-// ── C. 후일담 생성 ──────────────────────────────────────────────
-// 성사 여부를 결정하는 것은 러브 포인트와 실제로 오간 대화, 둘뿐이다.
-export const EPILOGUE_SCHEMA = {
-  type: 'object',
-  properties: {
-    success: {
-      type: 'boolean',
-      description: 'true = they ended up together. Decide it from the LOVE-POINT reading first and the log second',
-    },
-    epilogue: {
-      type: 'string',
-      description: 'Korean. 5-8 sentences on what became of these two after that day. Past tense, plain, B-movie comedy register',
-    },
-  },
-  required: ['success', 'epilogue'],
-  additionalProperties: false,
-};
-
-export function epilogueSystem(couple, dressed) {
-  const c = couple.client, t = couple.target;
-  return `${WORLD}
-
-You are the L 기관 records clerk. The operation is over. You file two things: whether it
-took, and what became of them.
-
-[CLIENT PERSONALITY — after the motivation order]
-${c.name}: ${dressed.personality}
-
-[TARGET PERSONALITY]
-${t.name}: ${list(t.personality)}
-
-■ DID IT TAKE
-LOVE-POINT is the L 기관 instrument reading of how much ${t.name} came to want ${c.name}.
-0 means nothing moved all day. 100 means they are already a couple. **Decide from that
-number first, and from what actually happened in the log second.** A funny evening with a
-low reading did not take. A wretched evening with a high reading did take. Never overturn a
-reading because the log was entertaining.
-
-■ THE EPILOGUE
-What became of them after that day — days, weeks, a year later. Their two personalities
-above are what you extrapolate from; the log is what actually happened. Concrete, small,
-specific: what they did, what they said, who called whom. No moral, no summary of the
-operation, no mention of L 기관 numbers. If it ended in bed, say so plainly; if it
-ended in a restraining order, say that. Not taking is not tragic — it is usually stupid.
+· Every line is spoken by **an anonymous soldier**. Never a name, never a specific person,
+  never a callback to anything that happened. These lines get reused for months, so a line
+  that refers to any particular event or person is a line that will be wrong tomorrow.
+· Short. The length of something said sideways while walking. Two words is a fine line.
+· Ordinary and specific beats dramatic: what is for lunch, whose turn it is, how many days
+  left, who is missing a glove, the smell of the place. Grumbling is the default register.
+· Use this unit's own jargon and the way this population talks. A unit of sharp bored
+  conscripts does not sound like a unit that runs on shouting.
+· Where the songs land, write what happens **around** them — the one who is off-key, the
+  one who mouths it, the one who mutters about the loudspeaker. **Never write song lyrics
+  yourself**; the real lines are already on file and get mixed in with yours.
+· Nothing that would be an incident. No injuries, no fights, no one missing. That is
+  someone else's job, and these lines have to be safe to say on any day of the hundred.
 
 ${KO}`;
-}
 
-export function epilogueUser(couple, love, transcript) {
-  return `[LOVE-POINT] ${love} / 100
-[CLIENT] ${couple.client.name} / [TARGET] ${couple.target.name}
+export const ambientSystem = unit => sys(unit, A_ROLE);
 
-[FULL LOG — CLIENT AND TARGET]
-${transcript}
+export function ambientUser({ slots, songSlots = [], songMode = 'chorus' }) {
+  return `[SLOTS OF THE DAY — write lines for each]
+${slots.map(s => `· ${s.key} — ${s.label}`).join('\n')}
+[WHERE THE MUSIC LANDS] ${songSlots.length ? songSlots.join(', ') : '(nowhere in particular)'}
+[HOW IT LANDS] ${songMode === 'chorus' ? 'sung by the soldiers themselves' : 'played over the base loudspeakers'}
 
-Decide whether it took, then write the epilogue.`;
-}
-
-// ── R. 준비 단계 반응 ───────────────────────────────────────────
-// 구조도에 없는 블록이다. 그래서 **아무 데로도 흘러들어가지 않는다** — 출력은 화면에
-// 한 줄 뜨고 거기서 끝난다. 대화도, 판정도, 후일담도 이 문장을 보지 못한다.
-// 요원이 주문을 내릴 때마다 고객이 그 자리에서 뭐라고 했는가, 그것뿐이다.
-export const REACT_SCHEMA = {
-  type: 'object',
-  properties: {
-    reaction: { type: 'string', description: 'Korean. 1-2 sentences, said out loud on the spot. Dialogue only' },
-    face: { type: 'string', enum: EMOTES, description: 'The face that went with it' },
-  },
-  required: ['reaction', 'face'],
-  additionalProperties: false,
-};
-
-// 주문 셋 = 방 셋. 방마다 갈리는 건 두 줄뿐이다.
-// room 은 화면에 뜨는 이름이고, 나머지 셋만 프롬프트로 들어간다.
-export const REACT_ROOMS = {
-  styling: {
-    room: '미용실', tag: 'SALON',
-    where: 'the L 기관 salon chair, a mirror in front of them',
-    got: 'a styling order — what they are about to be made to look like',
-  },
-  motivation: {
-    room: '취조실', tag: 'INTERROGATION ROOM',
-    where: 'the basement interrogation room: one swinging lamp, one chair, and they are in it',
-    got: 'a personality injection — who they are about to be made into',
-  },
-  coaching: {
-    room: '코칭실', tag: 'BRIEFING',
-    where: 'a briefing table, the orders read out flat across it',
-    got: 'their coaching — what to say and what not to say when they meet the target',
-  },
-};
-
-export function reactSystem(couple, kind) {
-  const c = couple.client, r = REACT_ROOMS[kind] || REACT_ROOMS.styling;
-  const v = voiceOf(couple.id, 'client');
-  return `${WORLD}
-
-You are ${c.name} (${idOf(c)}), in ${r.where}.
-· Look: ${list(c.look)}
-· Personality: ${list(c.personality)}
-· Upbringing: ${list(c.upbringing)}${v ? `\n· How you talk: ${v}` : ''}
-
-The operative just handed down ${r.got}. None of it has been applied yet — you have only
-heard it. Say the one thing that came out of your mouth on the spot: flat disbelief that
-they are serious, open protest, haggling, a sarcastic yes, or dead obedience — whichever
-your own sheet actually produces. You were not asked, and you comply in the end either way.
-1-2 sentences. Dialogue only — no name tag, no quote marks; one short action in parentheses
-is allowed.
-
-${KO}`;
-}
-
-export function reactUser(kind, text) {
-  const r = REACT_ROOMS[kind] || REACT_ROOMS.styling;
-  return `[${r.tag}] ${r.got}
-${text && text.trim() ? `"""\n${text.trim()}\n"""` : '(nothing was said — the operative just stood there)'}
-
-React.`;
+Write three or four lines for every slot listed.`;
 }

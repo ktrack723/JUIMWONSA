@@ -64,7 +64,7 @@ function readStored() {
     if (q && PACE_STEPS.some(s => s.key === q)) return q;
   } catch { /* location이 없는 환경 */ }
   try {
-    const v = localStorage.getItem('cupid_pace');
+    const v = localStorage.getItem('csm_pace');
     if (v && PACE_STEPS.some(s => s.key === v)) return v;
   } catch { /* 스토리지 차단 */ }
   return DEFAULT_PACE;
@@ -76,7 +76,7 @@ export function paceMult() { return stepOf(getPace()).mult; }
 export function setPace(key) {
   if (!PACE_STEPS.some(s => s.key === key)) return getPace();
   current = key;
-  try { localStorage.setItem('cupid_pace', key); } catch { /* 스토리지 차단 */ }
+  try { localStorage.setItem('csm_pace', key); } catch { /* 스토리지 차단 */ }
   for (const fn of listeners) { try { fn(key); } catch { /* 리스너 실패는 무시 */ } }
   skipNow();   // 느려지든 빨라지든, 지금 기다리는 줄은 바로 풀어준다
   return key;

@@ -1,4 +1,4 @@
-// boot.js — 단말 개방 화면. 요원명과 인증키를 받아 회선을 여는 데까지가 전부다.
+// boot.js — 단말 개방 화면. 주임원사명과 인증키를 받아 회선을 여는 데까지가 전부다.
 //
 // 업자 선택란은 없다. **키 접두사가 곧 업자다** (llm.js의 detectProvider) —
 // 판별되는 순간 회선 표시와 모형 목록이 그 업자 것으로 갈린다.
@@ -11,12 +11,10 @@ import { sfx, startBgm, unlockAudio } from './audio.js';
 const CUSTOM_MODEL = '__custom';
 let bootProvider = null;
 
-const modelKey = id => `cupid_model_${id}`;
+const modelKey = id => `csm_model_${id}`;
 function savedModelFor(id) {
   const mine = sget('localStorage', modelKey(id));
-  if (mine) return mine;
-  const legacy = sget('localStorage', 'cupid_model');
-  return legacy && modelFitsProvider(legacy, id) ? legacy : null;
+  return mine && modelFitsProvider(mine, id) ? mine : null;
 }
 
 function fillModels(id) {
@@ -65,13 +63,13 @@ function chosenModel() {
 /**
  * 화면을 매단다. 게임 쪽에서 넘겨주는 것은 셋뿐이다 —
  *   llm      : 키·모형이 실제로 꽂히는 곳
- *   onBooted : 인증이 통과했을 때 갈 곳 (요원명을 들려 보낸다)
+ *   onBooted : 인증이 통과했을 때 갈 곳 (주임원사명을 들려 보낸다)
  *   onFailed : 인증이 깨졌을 때 화면을 되돌리는 법
  */
 export function initBoot({ llm, onBooted, onFailed, errMsg }) {
-  const saved = sget('localStorage', 'cupid_key') || sget('sessionStorage', 'cupid_key');
+  const saved = sget('localStorage', 'csm_key') || sget('sessionStorage', 'csm_key');
   if (saved) $('#key-input').value = saved;
-  $('#agent-name').value = sget('localStorage', 'cupid_agent_name') || '';
+  $('#agent-name').value = sget('localStorage', 'csm_name') || '';
   renderProvider($('#key-input').value.trim());
 
   $('#key-input').addEventListener('input', e => renderProvider(e.target.value.trim()));
@@ -80,22 +78,22 @@ export function initBoot({ llm, onBooted, onFailed, errMsg }) {
   $('#btn-boot').addEventListener('click', async () => {
     unlockAudio(); sfx.click();
     const name = $('#agent-name').value.trim();
-    if (!name) return bootError('요원명 없이는 서류를 못 만든다. 아무거나 적어라.');
+    if (!name) return bootError('성명 없이는 부임 명령지를 못 만든다. 아무거나 적어라.');
     const key = $('#key-input').value.trim();
     const provider = renderProvider(key);
     if (!provider) return bootError('그건 API 키가 아니라 그냥 문자열이다. Anthropic(sk-ant-...) · OpenAI(sk-...) · OpenRouter(sk-or-v1-...) 중 하나를 내놔라.');
     const model = chosenModel();
     if (!model) return bootError('모형 id를 비워 두면 아무 데도 못 보낸다. 업자 문서에 적힌 id를 적어라.');
 
-    sset('localStorage', 'cupid_agent_name', name);
+    sset('localStorage', 'csm_name', name);
 
     llm.apiKey = key;        // 업자는 이 한 줄에서 정해진다
     llm.model = model;
     sset('localStorage', modelKey(provider), model);
-    sset('sessionStorage', 'cupid_key', key);
-    sset('localStorage', 'cupid_key', $('#remember-key').checked ? key : null);
+    sset('sessionStorage', 'csm_key', key);
+    sset('localStorage', 'csm_key', $('#remember-key').checked ? key : null);
     try {
-      await withLoading(`L 기관 회선 연결 중... (${providerOf(provider).label} 키 인증)`, () => llm.ping());
+      await withLoading(`국방망 회선 연결 중... (${providerOf(provider).label} 키 인증)`, () => llm.ping());
       startBgm();
       onBooted(name);
     } catch (e) {
