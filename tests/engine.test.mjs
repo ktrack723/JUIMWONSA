@@ -203,6 +203,99 @@ test('fillRoster는 빈 자리 수만큼 P를 부르고, 군번이 전부 다르
   assert.ok(!JSON.stringify(anyP.messages).includes('시트1'), 'P가 명부를 봤다');
 });
 
+// 게이트 LLM — 콜을 붙잡아 두고 밖에서 하나씩 놓아준다. 동시성(몇 콜이 함께 떠 있나)을 재는 용도.
+function gatedLLM() {
+  const llm = new FakeLLM();
+  const orig = llm.call.bind(llm);
+  const gates = [];
+  llm.call = req => new Promise((resolve, reject) => {
+    gates.push({ label: req.label, open: () => resolve(orig(req)), fail: e => reject(e) });
+  });
+  return { llm, gates };
+}
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+test('fillRoster는 첫 콜로 캐시를 데운 뒤 나머지 15콜을 병렬로 쏜다', async () => {
+  const { llm, gates } = gatedLLM();
+  const roster = new Roster(unit, { storage: memStorage() });
+  const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
+  const progress = [];
+  const done = engine.fillRoster(null, n => progress.push(n));
+
+  await tick();
+  assert.equal(gates.length, 1, '첫 콜은 홀로 나가야 한다 — 캐시 예열 중에 뒤가 따라붙었다');
+  gates.shift().open();
+  await tick();
+  assert.equal(gates.length, 15, '예열이 끝나면 나머지 15콜이 한꺼번에 떠 있어야 한다');
+  while (gates.length) gates.shift().open();
+
+  const arrivals = await done;
+  assert.equal(arrivals.length, 16);
+  assert.equal(new Set(arrivals.map(a => a.serial)).size, 16, '병렬 채번에서 군번이 겹쳤다');
+  assert.equal(roster.soldiers.length, 16);
+  assert.deepEqual(progress, Array.from({ length: 16 }, (_, i) => i + 1), '진행 콜백이 완료 수를 세지 못했다');
+  // 직무 균형 — 선굴림이 병렬 대기분을 못 세면 한 직무로 몰린다 (4직무 × 4명)
+  const counts = {};
+  for (const a of arrivals) counts[a.job] = (counts[a.job] || 0) + 1;
+  assert.deepEqual(Object.values(counts).sort(), [4, 4, 4, 4], '직무가 균형을 잃었다');
+});
+
+test('병렬 전입 중 하나가 실패해도 나머지는 명부에 오르고, 오류는 다 가라앉은 뒤 던진다', async () => {
+  const { llm, gates } = gatedLLM();
+  const roster = new Roster(unit, { storage: memStorage() });
+  const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
+  const done = engine.fillRoster();
+  await tick(); gates.shift().open();   // 예열 콜 통과
+  await tick();
+  gates.shift().fail(new Error('회선 두절'));
+  while (gates.length) gates.shift().open();
+  await assert.rejects(done, /회선 두절/);
+  assert.equal(roster.soldiers.length, 15, '성공분이 명부에 안 올랐다');
+  assert.equal(roster.vacancies(), 1, '재시도가 채울 빈 자리는 하나여야 한다');
+});
+
+test('부임 첫날 소음 콜은 브리핑과 나란히 난다 — 직렬 대기가 없다', async () => {
+  const { llm, gates } = gatedLLM();
+  const ambient = new AmbientPool(unit, { storage: memStorage() });
+  const roster = new Roster(unit, { storage: memStorage() });
+  for (let i = 0; i < 16; i++) {
+    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+  }
+  const engine = new Engine(llm, {
+    unit, roster, ambient, state: Engine.newCampaign(unit, '2026-08-26'), rng: seqRng(), handlers: {},
+  });
+  const done = engine.runDay();
+  await tick();
+  assert.deepEqual(gates.map(g => g.label), ['병영 소음 생성', '아침 브리핑'], '소음과 브리핑이 동시에 떠 있지 않다 — 직렬로 돌아갔다');
+  while (gates.length) gates.shift().open();
+  await done;
+  assert.ok(ambient.ready(), '소음 풀이 안 채워졌다');
+});
+
+test('브리핑이 죽어 하루를 다시 열어도, 떠 있는 소음 콜을 또 쏘지 않는다', async () => {
+  const { llm, gates } = gatedLLM();
+  const ambient = new AmbientPool(unit, { storage: memStorage() });
+  const roster = new Roster(unit, { storage: memStorage() });
+  for (let i = 0; i < 16; i++) {
+    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+  }
+  const engine = new Engine(llm, {
+    unit, roster, ambient, state: Engine.newCampaign(unit, '2026-08-26'), rng: seqRng(), handlers: {},
+  });
+  const day1 = engine.runDay();
+  await tick();
+  gates.pop().fail(new Error('회선 두절'));   // 브리핑만 죽인다 — 소음 콜은 아직 떠 있다
+  await assert.rejects(day1, /회선 두절/);
+
+  const day2 = engine.runDay();   // 재시도
+  await tick();
+  const noiseCalls = gates.filter(g => g.label === '병영 소음 생성');
+  assert.equal(noiseCalls.length, 1, '재시도가 소음 콜을 중복 발사했다');
+  while (gates.length) gates.shift().open();
+  await day2;
+  assert.ok(ambient.ready(), '재시도 후에도 소음 풀이 안 채워졌다');
+});
+
 // ── 개입 셋 — 전부 평판 −1, 그날 회복 없음 ──────────────
 test('면담: 평판 −1, 왕복 가능, 프롬프트에는 그 병사와 체감 밴드만', async () => {
   const { llm, engine, state } = fixture();

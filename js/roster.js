@@ -87,11 +87,21 @@ export class Roster {
   vacancies() { return Math.max(0, ROSTER_SIZE - this.soldiers.length); }
 
   /**
-   * 전입 — 굴려진 등급과 LLM이 쓴 인물(name·sheet)을 받아 명부에 올린다.
-   * 군번은 여기서 채번된다. P 호출은 engine.js가 한다 — 명부는 프롬프트를 모른다.
+   * 군번 예약 — 채번만 하고 명부에는 안 올린다. 병렬 전입이 서로 같은 번호를
+   * 미리보기하지 않도록, P 호출을 쏘기 전에 여기서 하나씩 따 간다.
+   * 예약 후 전입이 실패하면 그 번호는 결번이 된다 — 군번은 유일하기만 하면 된다.
    */
-  enlist({ name, sheet, job, grade, character, joined }) {
-    const serial = makeSerial(this.unit, joined, this.seq++);
+  reserveSerial(joined) {
+    return makeSerial(this.unit, joined, this.seq++);
+  }
+
+  /**
+   * 전입 — 굴려진 등급과 LLM이 쓴 인물(name·sheet)을 받아 명부에 올린다.
+   * 군번은 여기서 채번된다 — 예약분(serial)을 들고 오면 그걸 쓴다.
+   * P 호출은 engine.js가 한다 — 명부는 프롬프트를 모른다.
+   */
+  enlist({ name, sheet, job, grade, character, joined, serial = null }) {
+    serial = serial || makeSerial(this.unit, joined, this.seq++);
     const soldier = { name, serial, job, grade, character, sheet, joined };
     this.soldiers.push(soldier);
     this.save();
