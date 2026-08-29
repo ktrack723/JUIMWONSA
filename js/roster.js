@@ -139,32 +139,36 @@ export class Roster {
   vacancies() { return Math.max(0, ROSTER_SIZE - this.soldiers.length); }
 
   /**
-   * 전입 — 굴려진 것들(이름·등급·직무)과 LLM이 쓴 sheet를 받아 명부에 올린다.
-   * 군번은 여기서 채번된다. P 호출은 engine.js가 한다 — 명부는 프롬프트를 모른다.
-   * 이름을 안 주면 여기서 굴린다(부대 결에 맞게, 명부에 없는 것으로).
+   * 군번 예약 — 채번만 하고 명부에는 안 올린다. 병렬 전입이 서로 같은 번호를
+   * 미리보기하지 않도록, P 호출을 쏘기 전에 여기서 하나씩 따 간다.
+   * 예약 후 전입이 실패하면 그 번호는 결번이 된다 — 군번은 유일하기만 하면 된다.
    */
-  enlist({ name, sheet, job, grade, character, joined, serial, rng = Math.random }) {
-    const s = serial || makeSerial(this.unit, joined, this.seq++);
-    const soldier = {
-      name: name || this.rollName(rng),
-      serial: s, job, grade, character, sheet, joined,
-    };
-    this.soldiers.push(soldier);
-    this.save();
-    return soldier;
+  reserveSerial(joined) {
+    return makeSerial(this.unit, joined, this.seq++);
   }
 
   /**
    * 이 부대 결의 이름 하나. 명부에 이미 있는 이름은 피한다.
-   * extraTaken은 「아직 명부에 안 올렸지만 이번에 같이 굴리는 중인」 이름들이다 —
+   * extraTaken은 「아직 명부에 안 올랐지만 이번에 같이 굴리는 중인」 이름들이다 —
    * 병렬 전입에서 열여섯을 미리 굴릴 때 자기들끼리 겹치는 것을 막는다.
    */
   rollName(rng = Math.random, extraTaken = []) {
     return rollUniqueName(this.unit.nameStyle, [...this.soldiers.map(x => x.name), ...extraTaken], rng);
   }
 
-  /** 군번 하나를 미리 떼어 온다. 전입을 병렬로 돌릴 때 번호를 먼저 잡아 두는 자리다. */
-  takeSerial(joinedIso) { return makeSerial(this.unit, joinedIso, this.seq++); }
+  /**
+   * 전입 — 굴려진 것들(이름·등급·직무·군번)과 LLM이 쓴 sheet를 받아 명부에 올린다.
+   * 예약분(serial)을 들고 오면 그걸 쓰고, 없으면 여기서 채번한다.
+   * 이름을 안 주면 여기서 굴린다(부대 결에 맞게, 명부에 없는 것으로).
+   * P 호출은 engine.js가 한다 — 명부는 프롬프트를 모른다.
+   */
+  enlist({ name, sheet, job, grade, character, joined, serial = null, rng = Math.random }) {
+    serial = serial || makeSerial(this.unit, joined, this.seq++);
+    const soldier = { name: name || this.rollName(rng), serial, job, grade, character, sheet, joined };
+    this.soldiers.push(soldier);
+    this.save();
+    return soldier;
+  }
 
   /** 복무기간이 찬 병사들을 전역시킨다. 돌려주는 것은 전역자 명단이다. */
   discharge(dateIso) {

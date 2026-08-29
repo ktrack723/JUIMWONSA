@@ -167,10 +167,10 @@ test('이름을 안 주면 명부가 부대 결로 굴린다 — 동명이인 �
   for (const n of names) assert.match(n, /^[가-힣]{2,4}$/);
 });
 
-test('군번을 미리 떼어 올 수 있다 — 병렬 전입이 번호를 먼저 잡는 자리다', () => {
+test('군번을 미리 예약할 수 있다 — 병렬 전입이 번호를 먼저 잡는 자리다', () => {
   const r = new Roster(unit, { storage: memStorage() });
-  const a = r.takeSerial('2026-01-01');
-  const b = r.takeSerial('2026-01-01');
+  const a = r.reserveSerial('2026-01-01');
+  const b = r.reserveSerial('2026-01-01');
   assert.notEqual(a, b, '미리 뗀 군번이 겹쳤다');
   // 떼어 온 번호를 그대로 써서 올릴 수 있다
   const s = r.enlist({ serial: a, sheet: 's', job: 'a', grade: 'B', character: '중', joined: '2026-01-01' });
