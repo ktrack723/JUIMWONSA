@@ -13,6 +13,7 @@ import { Engine } from '../js/engine.js';
 import { Roster } from '../js/roster.js';
 import { AmbientPool } from '../js/ambient.js';
 import { TUNING } from '../js/params.js';
+import { RECRUIT_SCHEMA as P_RECRUIT } from '../js/prompts.js';
 
 // ── 가짜 LLM — label로 갈라 결정적 응답을 준다 ──────────
 class FakeLLM {
@@ -25,7 +26,7 @@ class FakeLLM {
     // messages 배열은 엔진이 계속 밀어 넣는 살아 있는 참조다 — 호출 시점의 모습을 얼려 둔다.
     this.calls.push({ ...req, messages: structuredClone(req.messages || []) });
     const l = req.label || '';
-    if (l.startsWith('전입')) return { name: `병사${this.calls.length}`, sheet: `시트${this.calls.length}` };
+    if (l.startsWith('전입')) return { sheet: `시트${this.calls.length}` };
     if (l.startsWith('병영 소음')) return { lines: [{ slot: 'reveille', text: '또 아침이네' }, { slot: 'amwork', text: '장갑 한 짝 어디 갔냐' }] };
     if (l.startsWith('아침 브리핑')) return { briefing: '브리핑본문', slots: Array.from({ length: 9 }, (_, i) => `조각${i}`) };
     if (l.startsWith('사건 장면')) return '사건장면텍스트';
@@ -51,7 +52,9 @@ const unit = {
   id: 'probe', name: '표식부대', branch: '표식군', desc: '감사용',
   culture: 'CULT표식', rules: 'REGS표식', soldierRules: 'SRULES표식',
   intel: { score: 5, desc: '보통 머리' }, macho: { score: 5, desc: '보통 피' },
-  difficulty: 5, serviceMonths: 18, serial: { tag: 'PR', pad: 7 }, jobs: ['a', 'b', 'c', 'd'],
+  difficulty: 5, serviceMonths: 18, serial: { branchCode: '3', seqBase: 70000000 },
+  cohort: { base: 1300, at: '2023-11' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
+  jobs: ['a', 'b', 'c', 'd'],
   songMode: 'chorus', songSlots: ['reveille'],
   songs: [{ title: '군가표식', note: '감사용 곡', lines: ['군가소절표식'] }],
 };
@@ -219,8 +222,8 @@ test('fillRoster는 첫 콜로 캐시를 데운 뒤 나머지 15콜을 병렬로
   const { llm, gates } = gatedLLM();
   const roster = new Roster(unit, { storage: memStorage() });
   const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
-  const progress = [];
-  const done = engine.fillRoster(null, n => progress.push(n));
+  const progress = [], totals = [];
+  const done = engine.fillRoster(null, (n, _roll, total) => { progress.push(n); totals.push(total); });
 
   await tick();
   assert.equal(gates.length, 1, '첫 콜은 홀로 나가야 한다 — 캐시 예열 중에 뒤가 따라붙었다');
@@ -234,6 +237,8 @@ test('fillRoster는 첫 콜로 캐시를 데운 뒤 나머지 15콜을 병렬로
   assert.equal(new Set(arrivals.map(a => a.serial)).size, 16, '병렬 채번에서 군번이 겹쳤다');
   assert.equal(roster.soldiers.length, 16);
   assert.deepEqual(progress, Array.from({ length: 16 }, (_, i) => i + 1), '진행 콜백이 완료 수를 세지 못했다');
+  assert.deepEqual([...new Set(totals)], [16], '진행 콜백에 전체 수가 안 실렸다');
+  assert.equal(new Set(arrivals.map(a => a.name)).size, 16, '병렬 굴림에서 동명이인이 생겼다');
   // 직무 균형 — 선굴림이 병렬 대기분을 못 세면 한 직무로 몰린다 (4직무 × 4명)
   const counts = {};
   for (const a of arrivals) counts[a.job] = (counts[a.job] || 0) + 1;
@@ -428,4 +433,43 @@ test('연출은 게임 롤을 밀어내지 않는다 — 말풍선 수가 사고
   assert.deepEqual(a.params, b.params);
   // 그리고 그 하루에는 실제로 사건이 있었다 — 빈 하루끼리 비교해 놓고 통과한 게 아니다
   assert.ok(a.labels.includes('사건 장면'), '사건이 없는 하루로 비교했다');
+});
+
+// ── 이름·계급·기수 — 굴림은 코드가 한다 ─────────────────
+test('병렬로 굴려도 직무가 한쪽에 안 몰린다 — 굴림은 순서대로 끝내 놓기 때문이다', async () => {
+  const llm = new FakeLLM();
+  const roster = new Roster(unit, { storage: memStorage() });
+  const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
+  const arrivals = await engine.fillRoster();
+  const counts = {};
+  for (const a of arrivals) counts[a.job] = (counts[a.job] || 0) + 1;
+  const n = Object.values(counts);
+  assert.equal(Object.keys(counts).length, 4, '직무 넷을 다 안 썼다');
+  assert.ok(Math.max(...n) - Math.min(...n) <= 1, `직무가 몰렸다: ${JSON.stringify(counts)}`);
+});
+
+test('P는 굴려진 이름·기수·계급을 받는다 — LLM은 이름을 안 짓는다', async () => {
+  const llm = new FakeLLM();
+  const roster = new Roster(unit, { storage: memStorage() });
+  const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
+  const [one] = await engine.fillRoster(['2026-01-10']);
+  const user = llm.byLabel('전입')[0].messages[0].content;
+  assert.ok(user.includes(`name: ${one.name}`), 'P에 굴려진 이름이 안 실렸다');
+  assert.ok(/standing[^\n]*\d+기 (이병|일병|상병|병장)/.test(user), 'P에 기수·계급이 안 실렸다');
+  assert.deepEqual(Object.keys(P_RECRUIT.properties), ['sheet'], 'P가 아직 이름을 내보낸다');
+});
+
+test('프롬프트로 나가는 병사에는 그날의 기수·계급이 붙는다', async () => {
+  const { llm, engine } = fixture();
+  await engine.runDay();
+  const user = llm.byLabel('아침 브리핑')[0].messages[0].content;
+  assert.match(user, /\d+기 (이병|일병|상병|병장)/, '명부 발췌에 기수·계급이 없다');
+});
+
+test('계급과 기수는 저장되지 않는다 — 날이 가면 계급이 오른다', async () => {
+  const { roster } = fixture();
+  for (const s of roster.soldiers) {
+    assert.ok(!('rank' in s), '계급이 저장됐다 — 100일 내내 같은 계급이 된다');
+    assert.ok(!('cohort' in s), '기수가 저장됐다');
+  }
 });

@@ -21,6 +21,23 @@
 //     그 한 콜은 하루 스레드와 독립이라 아침 브리핑과 **나란히** 난다 — 직렬 대기가 없다.
 //   · 전입(P)은 서로 독립이라 병렬로 받는다. 단 첫 콜만 홀로 내보내 recruitSystem 캐시를
 //     데운 뒤 나머지를 일제히 쏜다 — 16콜 동시 발사는 전부 캐시 미스라 오히려 비싸다.
+//
+// ── 캐시 breakpoint를 왜 안 쪼갰는가 ──────────────────
+// 블록 여섯(A·P·D·I-1·I-2·N)의 system은 [WORLD+UNIT](≈1.4k tok) + [ROLE]이고, 공통 접두사가
+// 블록마다 통째로 다시 캐시된다. 「공통 접두사에 breakpoint를 하나 더 걸어 여섯이 나눠 쓰게
+// 하면 싸지지 않나」가 자연스러운 생각인데, **재 보면 손해다.**
+//   · 아끼는 것: 공통 접두사 기록 6번 → 1번. 1.4k × 5 × (1.25 − 0.1) ≈ 8k 토큰어치.
+//   · 잃는 것: [ROLE]이 캐시 밖으로 나간다. 조각이 220~630 tok이라 Anthropic의 최소 캐시
+//     단위(1024 tok)에 못 미쳐 두 번째 breakpoint가 아예 안 붙기 때문이다.
+//     그러면 D·E-1·E-2처럼 하루에도 여러 번 나가는 블록이 매 호출마다 [ROLE]을 정가로 낸다 —
+//     D 하나만 100일치로 38k 토큰어치다.
+// 자주 불리는 블록일수록 기록 비용이 잘 상각된다. 지금처럼 **system 전체에 하나**가 맞다.
+//
+// 대신 실제로 값이 되는 자리는 따로 있고, 거기를 손봤다:
+//   · 전입 열여섯은 서로를 안 본다 → 병렬. 다만 첫 한 건은 캐시를 깔러 혼자 먼저 간다
+//     (한꺼번에 쏘면 열여섯이 전부 캐시 미스로 출발해 접두사를 열여섯 번 재과금한다).
+//   · 병영 소음과 아침 브리핑도 서로를 안 본다 → 같이 띄운다.
+//   · 확전 판정(E-3)은 결과 장면을 화면에 흘리는 동안 뒤에서 날아온다.
 
 import * as P from './prompts.js';
 import {
@@ -29,10 +46,11 @@ import {
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, PLACES, TUNING,
 } from './params.js';
-import { assignJob } from './roster.js';
+import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
 
 const clamp10 = v => Math.max(0, Math.min(10, v));
+
 const SAME = { outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' };
 
 // 밴드 뭉치 — 프롬프트로 나가는 것은 언제나 이 라벨들이다. 수치는 못 나간다.
@@ -87,6 +105,15 @@ export class Engine {
     };
   }
 
+  /**
+   * 프롬프트로 나갈 병사 표기. 저장된 필드에 **그날의 기수·계급**을 얹는다.
+   * 계급은 날이 갈수록 오르므로 저장돼 있지 않다 — 나갈 때마다 계산한다.
+   */
+  dressed(soldier) {
+    return { ...soldier, standing: rankLine(this.unit, soldier, this.state.date) };
+  }
+  dressedAll(list) { return (list || []).map(s => this.dressed(s)); }
+
   snapshot() {
     const s = this.state;
     return {
@@ -115,31 +142,34 @@ export class Engine {
     });
   }
 
-  // ── P. 전입 — 등급은 코드가 굴리고, LLM은 인물만 쓴다 ──
-  // 코드 결정분(등급·직무·군번)과 LLM 호출을 가른다. 결정은 순서에 민감하고(난수·채번·
-  // 직무 균형) 호출은 서로 독립이라, 결정을 먼저 전부 굴려 두면 호출은 병렬로 쏠 수 있다.
+  // ── P. 전입 — 굴림은 코드가, 인물은 LLM이 ────────────
+  // 코드 결정분(이름·등급·직무·군번)과 LLM 호출을 가른다. 결정은 순서에 민감하고(난수·채번·
+  // 직무 균형·동명이인 회피) 호출은 서로 독립이라, 결정을 먼저 전부 굴려 두면 호출은 병렬로 쏠 수 있다.
 
   /** 전입 명세 하나를 굴린다 — 난수 소비와 군번 채번이 전부 여기서, 호출 전에 끝난다. */
   #recruitSpec(joined, pending = []) {
     const { grade, character } = rollGrades(this.unit, this.rng);
-    // 직무 균형은 아직 명부에 안 오른 병렬 대기분(pending)까지 세어야 한 직무로 몰리지 않는다.
-    const job = assignJob(this.unit, [...this.roster.soldiers, ...pending], this.rng);
+    // 직무 균형과 동명이인 회피는 아직 명부에 안 오른 병렬 대기분(pending)까지 세어야 한다.
+    const waiting = [...this.roster.soldiers, ...pending];
+    const job = assignJob(this.unit, waiting, this.rng);
+    // 이름도 굴림이 정한다 — 등급과 같은 자리다(names.js). LLM에 맡기면 부대가 통째로
+    // 「김민준·이서준」으로 수렴해서, 부대마다 이름의 결이 다르다는 사실 자체가 사라진다.
+    const name = this.roster.rollName(this.rng, waiting.map(x => x.name));
     const serial = this.roster.reserveSerial(joined);
-    return { serial, job, grade, character, joined };
+    return { name, serial, job, grade, character, joined };
   }
 
-  /** 명세대로 P를 불러 인물을 받아 명부에 올린다 — 이 부분만이 병렬로 돈다. */
-  async #writeRecruit({ serial, job, grade, character, joined }) {
+  /** 명세대로 P를 불러 시트를 받아 명부에 올린다 — 이 부분만이 병렬로 돈다. */
+  async #writeRecruit(spec) {
     const out = await this.#gen({
       label: '전입 병사 생성',
       system: P.recruitSystem(this.unit),
-      messages: [{ role: 'user', content: P.recruitUser({ serial, job, grade, character, joined }) }],
+      messages: [{ role: 'user', content: P.recruitUser({
+        ...spec, standing: rankLine(this.unit, spec, this.state.date),
+      }) }],
       schema: P.RECRUIT_SCHEMA,
     });
-    return this.roster.enlist({
-      name: String(out?.name || '무명용사').trim(), sheet: String(out?.sheet || '').trim(),
-      job, grade, character, joined, serial,
-    });
+    return this.roster.enlist({ ...spec, sheet: String(out?.sheet || '').trim() });
   }
 
   async recruitOne(joined = this.state.date) {
@@ -208,7 +238,7 @@ export class Engine {
     let done = 0;
     const write = async (spec, i) => {
       arrivals[i] = await this.#writeRecruit(spec);
-      await onProgress?.(++done, arrivals[i]);
+      await onProgress?.(++done, arrivals[i], specs.length);
     };
     await write(specs[0], 0);   // 캐시 예열 — 이 한 콜만 직렬이다
     const rest = await Promise.allSettled(specs.slice(1).map((sp, i) => write(sp, i + 1)));
@@ -248,7 +278,8 @@ export class Engine {
           date, weekday: weekdayOf(date), season: seasonOf(date),
           slots: slots.map(x => x.label),
           difficulty: band(effDiff), bands: bandsOf(s.params),
-          yesterday: s.yesterday, arrivals, departures, excerpt,
+          yesterday: s.yesterday,
+          arrivals: this.dressedAll(arrivals), departures, excerpt: this.dressedAll(excerpt),
         }),
       });
       let brief;
@@ -261,6 +292,7 @@ export class Engine {
         this.thread.pop();
         throw e;   // 브리핑 없이는 하루가 못 열린다 — 화면이 재시도를 안내한다
       }
+      await ambientJob;   // 첫 슬롯이 대사를 뽑기 전에는 도착해 있어야 한다
       const slotLines = Array.isArray(brief.slots) ? brief.slots.map(x => String(x || '')) : [];
       this.thread.push({ role: 'assistant', content: [brief.briefing, ...slotLines].filter(Boolean).join('\n') });
       await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures });
@@ -313,7 +345,8 @@ export class Engine {
     this.thread.push({
       role: 'user',
       content: P.incidentUser({
-        slotLabel: slot.label, place, tier, event: event.desc, involved, notices: s.notices,
+        slotLabel: slot.label, place, tier, event: event.desc,
+        involved: this.dressedAll(involved), notices: s.notices,
       }),
     });
     let scene;
@@ -393,7 +426,7 @@ export class Engine {
     const felt = { room: band(jitter(p.conflict)), work: band(jitter(p.gara)), mood: band(jitter(p.happy)) };
     const honesty = honestyOf(p.rep);
 
-    const thread = [{ role: 'user', content: P.interviewOpen({ soldier, felt, honesty, question }) }];
+    const thread = [{ role: 'user', content: P.interviewOpen({ soldier: this.dressed(soldier), felt, honesty, question }) }];
     const sysMsg = P.interviewSystem(this.unit);
     const call = () => this.#gen({ label: `면담 · ${soldier.name}`, system: sysMsg, messages: thread });
 

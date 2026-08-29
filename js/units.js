@@ -25,6 +25,8 @@
 //
 // 스키마 검증 — 로드 시 돈다. 스키마 밖 필드가 있으면 죽는다.
 
+import { NAME_STYLES } from './names.js';
+
 export const UNITS = [
   {
     id: 'marine-fort',
@@ -57,7 +59,17 @@ export const UNITS = [
     macho: { score: 9, desc: '다치는 걸 자랑으로 아는 놈들' },
     difficulty: 8,          // 일과 난이도 — static. 주임원사가 못 건드린다
     serviceMonths: 18,      // 복무기간 (①의 수치판 — 전역 판정은 코드가 한다)
-    serial: { tag: '해병', pad: 7 },   // 군번 채번 형식 — 코드가 채운다
+    // 군번은 전 군 공통으로 「입대연도 두 자리 + 여덟 자리」다. 군을 가르는 것은 표기가
+    // 아니라 군 코드(육군 1 · 해군/해병 3 · 공군 5)이고, 화면에는 실제로 찍히는 형태만 쓴다.
+    serial: { branchCode: '3', seqBase: 70000000 },
+    // 기수 — 해병대는 창설 이래 입대순으로 번호를 매기고 2012년부터 월 1개 기수다.
+    // 1300기가 2023년 11월 입대 — 이 한 점만 있으면 나머지는 달수로 계산된다.
+    cohort: { base: 1300, at: '2023-11' },
+    // 계급 진급 누적 개월 [일병, 상병, 병장]. 최저복무기간 2·6·6이 만드는 눈금이다.
+    // 18개월 복무면 병장으로 4개월 — 실제 해병대와 같다.
+    rankMonths: [2, 8, 14],
+    // 이름의 결. 해병문학 밈의 작명법으로 뽑는다 (names.js).
+    nameStyle: 'marine-meme',
     jobs: ['해안 경계병', '통신병', '조리병', '운전병', '보급병', '의무병', '화기관리병', '행정병'],
     // 군가 — 목으로 부른다. 점호 후 구보와 집합에서.
     songMode: 'chorus',
@@ -99,7 +111,14 @@ export const UNITS = [
     macho: { score: 2, desc: '체력 검정이 최대 위기' },
     difficulty: 3,
     serviceMonths: 21,
-    serial: { tag: '공군', pad: 7 },
+    serial: { branchCode: '5', seqBase: 20000000 },
+    // 공군도 창설 이래 입대순 기수제다. 가끔 한 달에 두 기수가 들어가는 「쌍둥이 기수」가
+    // 있지만(804/805기, 814/815기), 대체로 월 1개다. 815기가 2020년 6월 입대.
+    cohort: { base: 815, at: '2020-06' },
+    // 21개월 복무면 병장으로 7개월이다.
+    rankMonths: [2, 8, 14],
+    // 이름의 결. 흔한 성에 요즘 이십대 이름 — 「수능 다시 보러 온 것 같은 놈들」과 같은 곳을 가리킨다.
+    nameStyle: 'elite',
     jobs: ['정보체계관리병', '네트워크운용병', '행정병', '군사경찰', '조리병', '시설관리병', '수송병', '보급병'],
     // 군가 — 목이 아니라 기지방송이다. 출근·퇴근 시간 전후로 흘러나온다.
     songMode: 'broadcast',
@@ -119,6 +138,7 @@ export const UNIT_FIELDS = new Set([
   'id', 'name', 'branch', 'desc', 'culture', 'rules', 'soldierRules',
   'intel', 'macho', 'difficulty', 'serviceMonths', 'serial', 'jobs',
   'songMode', 'songSlots', 'songs',
+  'cohort', 'rankMonths', 'nameStyle',
 ]);
 
 export const SONG_MODES = new Set(['chorus', 'broadcast']);
@@ -139,7 +159,15 @@ for (const u of UNITS) {
   }
   if (typeof u.difficulty !== 'number' || u.difficulty < 0 || u.difficulty > 10) throw new Error(`units.js: ${u.id} 일과 난이도는 0~10이어야 한다`);
   if (!(u.serviceMonths >= 12)) throw new Error(`units.js: ${u.id} 복무기간이 이상하다`);
-  if (!u.serial?.tag || !(u.serial.pad >= 4)) throw new Error(`units.js: ${u.id} 군번 형식 누락`);
+  if (!/^[135]$/.test(u.serial?.branchCode || '')) throw new Error(`units.js: ${u.id} 군 코드는 1·3·5 중 하나여야 한다`);
+  if (!(u.serial.seqBase >= 0)) throw new Error(`units.js: ${u.id} 군번 시작 번호 누락`);
+  if (!(u.cohort?.base >= 1) || !/^\d{4}-\d{2}$/.test(u.cohort?.at || '')) throw new Error(`units.js: ${u.id} 기수 기준점이 이상하다`);
+  if (!Array.isArray(u.rankMonths) || u.rankMonths.length !== 3) throw new Error(`units.js: ${u.id} 진급 눈금은 셋이어야 한다 [일병·상병·병장]`);
+  for (let i = 1; i < u.rankMonths.length; i++) {
+    if (!(u.rankMonths[i] > u.rankMonths[i - 1])) throw new Error(`units.js: ${u.id} 진급 눈금이 거꾸로다`);
+  }
+  if (!(u.serviceMonths > u.rankMonths.at(-1))) throw new Error(`units.js: ${u.id} 복무기간 안에 병장이 될 수 없다`);
+  if (!NAME_STYLES.has(u.nameStyle)) throw new Error(`units.js: ${u.id} 모르는 이름 결 「${u.nameStyle}」`);
   if (!(u.jobs?.length >= 4)) throw new Error(`units.js: ${u.id} 직무 슬롯이 4개 미만이다`);
   if (new Set(u.jobs).size !== u.jobs.length) throw new Error(`units.js: ${u.id} 직무 중복`);
 

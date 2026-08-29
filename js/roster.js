@@ -1,15 +1,21 @@
-// roster.js — 병사 명부. 저장·군번 채번·전입/전역 수명주기.
+// roster.js — 병사 명부. 저장·군번 채번·계급·기수·전입/전역 수명주기.
 //
 // 프로필은 다섯 필드 + 전입일이다 (기획서 §3):
 //   { name, serial, job, grade, character, sheet, joined }
-// 등급 둘(grade·character)은 params.js가 굴리고, sheet는 P 호출(LLM)이 쓴다.
+// 등급 둘(grade·character)은 params.js가, 이름은 names.js가 굴리고, sheet는 P 호출(LLM)이 쓴다.
 // 여기는 그 결과를 **보관하고 순환시키는** 일만 한다 — LLM도 프롬프트도 모른다.
+//
+// **계급과 기수는 저장하지 않는다.** 둘 다 전입일에서 계산되는 것이라 저장하면 거짓말이 된다:
+//   · 계급은 날이 갈수록 오른다. 어제 일병이던 놈이 오늘 상병이다 — 저장하면 100일 내내 일병이다.
+//   · 기수는 안 변하지만 전입일에서 나오는 값이라 따로 들고 있을 이유가 없다.
+// 저장되는 것은 「언제 왔는가」뿐이고, 나머지는 그때그때 계산한다 (rankOf · cohortOf).
 //
 // 만들어진 병사는 localStorage에 저장되어 재사용된다. 사고로 카운터가 리셋되어도
 // 병사 데이터는 유지된다 — 어제 싸운 두 놈은 0일차에도 여전히 서로를 노려보고 있다.
 // 저장소는 주입식이다 — node 테스트는 Map 흉내를 꽂는다.
 
 import { TUNING } from './params.js';
+import { rollUniqueName } from './names.js';
 
 const monthsAdd = (iso, months) => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -19,14 +25,59 @@ const monthsAdd = (iso, months) => {
 
 export const ROSTER_SIZE = TUNING.roster.size;
 
-/** 군번 채번 — 군별 형식으로 코드가 채운다. 예: 해병24-0001207 */
+/**
+ * 군번 채번. 실제 병 군번은 **입대연도 두 자리 + 여덟 자리**다 (1991년부터 이 체계).
+ * 군을 가르는 것은 표기가 아니라 별도의 군 코드다 — 육군 1 · 해군/해병 3 · 공군 5를
+ * 앞에 붙인다고 생각하면 전 군에서 겹치지 않는다. 화면에는 실제로 찍히는 형태만 쓴다.
+ *   예) 26-70001207
+ */
 export function makeSerial(unit, joinedIso, seq) {
   const yy = joinedIso.slice(2, 4);
-  return `${unit.serial.tag}${yy}-${String(seq).padStart(unit.serial.pad, '0')}`;
+  return `${yy}-${String(seq).padStart(SERIAL_DIGITS, '0')}`;
 }
+export const SERIAL_DIGITS = 8;
 
 /** 전역일 — 전입일 + 복무기간(부대 프롬프트 ①의 수치판). */
 export const dischargeDate = (unit, joinedIso) => monthsAdd(joinedIso, unit.serviceMonths);
+
+// ── 계급 ────────────────────────────────────────────────
+// 병 계급 넷. 진급은 최저복무기간이 차면 자동이다 — 법이 정한 눈금이라 코드가 든다.
+// 2019년 9월부터 이병 2개월 · 일병 6개월 · 상병 6개월로 단축됐고, 그 결과 누적
+// 진급 시점이 일병 2개월차 · 상병 8개월차 · 병장 14개월차다. 병장은 남는 기간 전부 —
+// 해병대 18개월이면 병장 4개월, 공군 21개월이면 병장 7개월이다.
+// 눈금은 부대 데이터(rankMonths)가 들고 있다. 코드는 어느 군인지 모른다.
+export const RANKS = ['이병', '일병', '상병', '병장'];
+
+/** 두 날짜 사이의 개월 수 (날짜까지 본다 — 하루 모자라면 아직 그 달이 안 찬 것이다). */
+export function monthsBetween(fromIso, toIso) {
+  const a = new Date(`${fromIso}T00:00:00Z`), b = new Date(`${toIso}T00:00:00Z`);
+  let m = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+  if (b.getUTCDate() < a.getUTCDate()) m -= 1;
+  return m;
+}
+
+/** 그날 그 병사의 계급. 전입일과 오늘만 있으면 나온다 — 저장하지 않는 이유다. */
+export function rankOf(unit, joinedIso, todayIso) {
+  const served = monthsBetween(joinedIso, todayIso);
+  const marks = unit.rankMonths;   // [일병, 상병, 병장] 진급 누적 개월
+  let i = 0;
+  while (i < marks.length && served >= marks[i]) i++;
+  return RANKS[Math.min(i, RANKS.length - 1)];
+}
+
+// ── 기수 ────────────────────────────────────────────────
+// 해병대와 공군은 육군과 달리 한 훈련소에서 같이 훈련받아, 선후임을 「X월 군번」이 아니라
+// **기수**로 가린다. 둘 다 창설 이래 입대순으로 번호를 매기고 지금은 대체로 월 1개 기수다.
+// 부대 데이터가 「언제가 몇 기였는가」 하나를 들고 있으면 나머지는 달수로 계산된다.
+export function cohortOf(unit, joinedIso) {
+  const { base, at } = unit.cohort;
+  return base + monthsBetween(`${at}-01`, `${joinedIso.slice(0, 7)}-01`);
+}
+
+/** 화면과 프롬프트가 같이 쓰는 표기. 「1333기 상병」 */
+export function rankLine(unit, soldier, todayIso) {
+  return `${cohortOf(unit, soldier.joined)}기 ${rankOf(unit, soldier.joined, todayIso)}`;
+}
 
 /** 부임 시점 초기 명부의 전입일들 — 복무기간에 고르게 흩뿌려 전역이 몰리지 않게 한다. */
 export function staggeredJoinDates(unit, startIso, n = ROSTER_SIZE, rng = Math.random) {
@@ -60,7 +111,8 @@ export class Roster {
     this.storage = storage;
     this.key = key;
     this.soldiers = [];
-    this.seq = 1000 + Math.floor(Math.random() * 9000);   // load()가 저장값으로 덮는다
+    // 군번 뒷자리. 부대마다 다른 대역에서 시작한다 — load()가 저장값으로 덮는다.
+    this.seq = unit.serial.seqBase + Math.floor(Math.random() * 90000);
   }
 
   load() {
@@ -96,13 +148,23 @@ export class Roster {
   }
 
   /**
-   * 전입 — 굴려진 등급과 LLM이 쓴 인물(name·sheet)을 받아 명부에 올린다.
-   * 군번은 여기서 채번된다 — 예약분(serial)을 들고 오면 그걸 쓴다.
+   * 이 부대 결의 이름 하나. 명부에 이미 있는 이름은 피한다.
+   * extraTaken은 「아직 명부에 안 올랐지만 이번에 같이 굴리는 중인」 이름들이다 —
+   * 병렬 전입에서 열여섯을 미리 굴릴 때 자기들끼리 겹치는 것을 막는다.
+   */
+  rollName(rng = Math.random, extraTaken = []) {
+    return rollUniqueName(this.unit.nameStyle, [...this.soldiers.map(x => x.name), ...extraTaken], rng);
+  }
+
+  /**
+   * 전입 — 굴려진 것들(이름·등급·직무·군번)과 LLM이 쓴 sheet를 받아 명부에 올린다.
+   * 예약분(serial)을 들고 오면 그걸 쓰고, 없으면 여기서 채번한다.
+   * 이름을 안 주면 여기서 굴린다(부대 결에 맞게, 명부에 없는 것으로).
    * P 호출은 engine.js가 한다 — 명부는 프롬프트를 모른다.
    */
-  enlist({ name, sheet, job, grade, character, joined, serial = null }) {
+  enlist({ name, sheet, job, grade, character, joined, serial = null, rng = Math.random }) {
     serial = serial || makeSerial(this.unit, joined, this.seq++);
-    const soldier = { name, serial, job, grade, character, sheet, joined };
+    const soldier = { name: name || this.rollName(rng), serial, job, grade, character, sheet, joined };
     this.soldiers.push(soldier);
     this.save();
     return soldier;

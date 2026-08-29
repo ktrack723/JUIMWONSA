@@ -11,7 +11,7 @@
 import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
-import { Roster, staggeredJoinDates, ROSTER_SIZE } from './roster.js';
+import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
 import { PLACES, slotsFor, weekdayOf, dayFraction } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
@@ -131,9 +131,10 @@ async function startCampaign(unitId, savedState) {
   if (state.roster.vacancies() > 0) {
     const dates = staggeredJoinDates(unit, state.engine.state.startDate, state.roster.vacancies());
     try {
+      // 전입 호출은 병렬로 나간다 — 도착 순서가 뒤죽박죽이라 이름이 아니라 진척만 센다.
       await withLoading('부임 전 인수인계 — 병력 기록 수령 중', () =>
-        state.engine.fillRoster(dates, (n, s) => {
-          $('#loading-text').textContent = `병력 기록 수령 중 (${n}/${ROSTER_SIZE}) — ${s.name} ${s.serial}`;
+        state.engine.fillRoster(dates, (n, roll, total) => {
+          $('#loading-text').textContent = `병력 기록 수령 중 — ${n}/${total || ROSTER_SIZE}명`;
         }));
     } catch (e) {
       toast(errMsg(e));
@@ -243,13 +244,21 @@ function speak(chatter) {
 }
 
 function renderRoster() {
-  $('#roster-list').innerHTML = state.roster.soldiers.map(s =>
-    `<details class="roster-row"><summary>${escapeHtml(s.name)} <span class="dim">${escapeHtml(s.serial)} · ${escapeHtml(s.job)} · ${escapeHtml(s.grade)}/${escapeHtml(s.character)}</span></summary>
-      <p>${escapeHtml(s.sheet)}</p><p class="dim small">전입 ${escapeHtml(s.joined)}</p></details>`).join('')
+  const unit = state.unit, today = state.engine.state.date;
+  // 기수·계급은 저장돼 있지 않다 — 그날 날짜로 계산해 그린다. 날이 가면 여기 표기가 오른다.
+  // 기수 오름차순(= 짬 순)으로 세운다. 명부를 보는 눈이 곧 서열을 보는 눈이다.
+  const rows = state.roster.soldiers
+    .map(s => ({ s, cohort: cohortOf(unit, s.joined), rank: rankOf(unit, s.joined, today) }))
+    .sort((a, b) => a.cohort - b.cohort);
+  $('#roster-list').innerHTML = rows.map(({ s, cohort, rank }) =>
+    `<details class="roster-row"><summary><span class="rk rk-${rank}">${escapeHtml(rank)}</span> ${escapeHtml(s.name)}
+      <span class="dim">${cohort}기 · ${escapeHtml(s.job)} · ${escapeHtml(s.grade)}/${escapeHtml(s.character)}</span></summary>
+      <p>${escapeHtml(s.sheet) || '<span class="dim">인사기록 미도착</span>'}</p>
+      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)}</p></details>`).join('')
     || '<p class="dim">병력 없음</p>';
-  // 면담 대상 목록도 같은 원장에서
-  $('#interview-who').innerHTML = state.roster.soldiers.map(s =>
-    `<option value="${escapeHtml(s.serial)}">${escapeHtml(s.name)} (${escapeHtml(s.job)})</option>`).join('');
+  // 면담 대상 목록도 같은 원장에서 — 부를 때도 기수·계급이 보여야 한다
+  $('#interview-who').innerHTML = rows.map(({ s, cohort, rank }) =>
+    `<option value="${escapeHtml(s.serial)}">${cohort}기 ${escapeHtml(rank)} ${escapeHtml(s.name)} (${escapeHtml(s.job)})</option>`).join('');
 }
 
 function renderNotices() {
@@ -283,8 +292,9 @@ function makeHandlers() {
       renderHud(); renderRoster(); renderTimeline(-1);
       stageTo(slotsFor(date)[0], []);
       await addEntry('briefing', `[아침 브리핑 · ${date}]\n${briefing}`);
-      for (const d of departures || []) await addEntry('sys', `${d.name} ${d.serial} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
-      for (const a of arrivals || []) await addEntry('sys', `${a.name} ${a.serial} 전입 신고 (${a.job}).`, { typed: false });
+      const st = x => rankLine(state.unit, x, date);
+      for (const d of departures || []) await addEntry('sys', `${st(d)} ${d.name} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
+      for (const a of arrivals || []) await addEntry('sys', `${st(a)} ${a.name} 전입 신고 — ${a.job}, 군번 ${a.serial}.`, { typed: false });
     },
     slot: async ({ index, slot, line, chatter }) => {
       renderTimeline(index);
@@ -409,7 +419,8 @@ async function doInterview() {
   try {
     const h = await withLoading('병사 호출 중', () => state.engine.interview(serial, q));
     state.interviewHandle = h;
-    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(h.soldier.name)}: ${escapeHtml(h.reply)}</p>`;
+    const who = `${rankLine(state.unit, h.soldier, state.engine.state.date)} ${h.soldier.name}`;
+    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who)}: ${escapeHtml(h.reply)}</p>`;
     $('#interview-more').classList.remove('hidden');
     saveCampaign();
   } catch (e) {
@@ -425,7 +436,8 @@ async function doInterviewMore() {
   $('#interview-q2').value = '';
   try {
     const out = await withLoading('면담 중', () => h.ask(q));
-    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(h.soldier.name)}: ${escapeHtml(out)}</p>`;
+    const who = `${rankLine(state.unit, h.soldier, state.engine.state.date)} ${h.soldier.name}`;
+    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who)}: ${escapeHtml(out)}</p>`;
   } catch (e) { toast(errMsg(e)); }
 }
 

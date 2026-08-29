@@ -33,7 +33,9 @@ const unit = {
   culture: M.cult, rules: M.regs, soldierRules: M.srules,
   intel: { score: 7, desc: M.intelDesc },
   macho: { score: 9, desc: M.machoDesc },
-  difficulty: 8, serviceMonths: 18, serial: { tag: 'PR', pad: 7 }, jobs: ['j'],
+  difficulty: 8, serviceMonths: 18, serial: { branchCode: '3', seqBase: 70000000 },
+  cohort: { base: 1300, at: '2023-11' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
+  jobs: ['j'],
   songMode: 'chorus', songSlots: ['reveille'],
   songs: [{ title: 'SONGTITLE표식', note: 'SONGNOTE표식', lines: ['SONGLINE표식'] }],
 };
@@ -46,7 +48,10 @@ const U = P.unitPrompt(unit);
 const A = P.ambientSystem(unit) + '\n' + P.ambientUser({
   slots: [{ key: 'reveille', label: 'SLOT표식' }], songSlots: ['reveille'], songMode: 'chorus',
 });
-const Pb = P.recruitSystem(unit) + '\n' + P.recruitUser({ serial: soldier.serial, job: soldier.job, grade: soldier.grade, character: soldier.character, joined: soldier.joined });
+const Pb = P.recruitSystem(unit) + '\n' + P.recruitUser({
+  name: soldier.name, serial: soldier.serial, standing: 'STANDING표식',
+  job: soldier.job, grade: soldier.grade, character: soldier.character, joined: soldier.joined,
+});
 const D = P.daySystem(unit) + '\n' + P.briefingUser({
   date: 'DATE표식', weekday: 'WD표식', season: 'SEASON표식', slots: ['SLOT표식'],
   difficulty: M.bandDiff, bands, yesterday: M.yesterday,
@@ -130,10 +135,12 @@ test('U는 모든 생성 계열 system의 접두사다 — 판정(E-3)에는 없
 });
 
 // ── P. 전입 병사 생성 ───────────────────────────────────
-test('P는 굴려진 등급·직무·군번을 받는다 — LLM은 인물만 쓴다', () => {
-  for (const k of ['GRADE표식', 'CHAR표식', 'JOB표식', 'PRXX-표식', 'JOINED표식']) {
+test('P는 굴려진 이름·등급·직무·군번·기수계급을 받는다 — LLM은 시트만 쓴다', () => {
+  for (const k of ['병사표식', 'GRADE표식', 'CHAR표식', 'JOB표식', 'PRXX-표식', 'JOINED표식', 'STANDING표식']) {
     assert.ok(has(Pb, k), `P에 ${k}가 없다`);
   }
+  // 이름은 굴림이 정한다 — 출력에 이름이 있으면 부대가 통째로 「김민준」으로 수렴한다
+  assert.deepEqual(Object.keys(P.RECRUIT_SCHEMA.properties), ['sheet']);
 });
 
 test('P는 현재 파라미터·명부를 못 본다 — 전입자는 부대 상태와 무관하게 온다', () => {
@@ -269,18 +276,20 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
     id: 'ascii', name: 'Fort Probe', branch: 'Navy', desc: 'a probe unit',
     culture: 'old and proud', rules: 'no phones', soldierRules: 'juniors clean',
     intel: { score: 5, desc: 'sharp enough' }, macho: { score: 5, desc: 'mild' },
-    difficulty: 5, serviceMonths: 18, serial: { tag: 'AS', pad: 7 }, jobs: ['cook'],
+    difficulty: 5, serviceMonths: 18, serial: { branchCode: '5', seqBase: 20000000 },
+    cohort: { base: 800, at: '2020-01' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
+    jobs: ['cook'],
     songMode: 'chorus', songSlots: ['reveille'],
     songs: [{ title: 'Onward', note: 'written in 1949', lines: ['onward to the sea'] }],
   };
-  const aSoldier = { name: 'Kim', serial: 'AS26-0000001', job: 'cook', grade: 'B', character: 'ok', sheet: 'a quiet man', joined: '2026-01-01' };
+  const aSoldier = { name: 'Kim', serial: '26-20000001', standing: 'cohort 812, corporal', job: 'cook', grade: 'B', character: 'ok', sheet: 'a quiet man', joined: '2026-01-01' };
   const aBands = { gara: 'mid', happy: 'low', conflict: 'high' };
   const built = {
     U: P.unitPrompt(ascii),
     'U(방송)': P.unitPrompt({ ...ascii, songMode: 'broadcast' }),
     A: P.ambientSystem(ascii) + P.ambientUser({ slots: [{ key: 'reveille', label: 'reveille' }], songSlots: ['reveille'], songMode: 'chorus' }),
     'A(방송·군가없는자리)': P.ambientUser({ slots: [{ key: 'lunch', label: 'lunch' }], songSlots: [], songMode: 'broadcast' }),
-    P: P.recruitSystem(ascii) + P.recruitUser({ serial: 'AS26-1', job: 'cook', grade: 'B', character: 'ok', joined: '2026-01-01' }),
+    P: P.recruitSystem(ascii) + P.recruitUser({ name: 'Kim', serial: '26-20000001', standing: 'cohort 812, corporal', job: 'cook', grade: 'B', character: 'ok', joined: '2026-01-01' }),
     D: P.daySystem(ascii) + P.briefingUser({ date: '2026-08-29', weekday: 'Sat', season: 'summer', slots: ['reveille'], difficulty: 'high', bands: aBands, yesterday: 'quiet day', arrivals: [aSoldier], departures: [aSoldier], excerpt: [aSoldier] }),
     'D(첫날)': P.briefingUser({ date: 'd', weekday: 'w', season: 's', slots: [], difficulty: 'mid', bands: aBands, yesterday: '' }),
     'E-1': P.incidentUser({ slotLabel: 'work', place: 'yard', tier: 'minor', event: 'a fall', involved: [aSoldier], notices: ['no soccer'] }),
