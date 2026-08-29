@@ -1019,3 +1019,57 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 
 /* 무전 패널 안의 고객/현장 구획 구분선 */
 .radio-sep { border: none; border-top: 1px dashed var(--dlg-edge); margin: var(--s3) 0; }
+
+/* ══════════ 무사고 100일: 주임원사 — 새 화면 ══════════ */
+
+/* 부대 선택 */
+.unit-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--s4); max-width: 900px; margin: 0 auto; }
+.unit-card h3 { margin-bottom: var(--s1); }
+.unit-stats { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-mid); margin: var(--s3) 0; line-height: 1.7; }
+.unit-card .radio-btns { flex-direction: column; align-items: stretch; }
+
+/* 하루 화면 */
+.day-grid { display: grid; grid-template-columns: 320px 1fr; gap: var(--s4); align-items: start; }
+.day-left { display: flex; flex-direction: column; gap: var(--s3); }
+.hud-date { font-family: var(--font-mono); font-size: var(--fs-md); font-weight: 600; margin-bottom: var(--s2); }
+.hud-row { display: flex; justify-content: space-between; gap: var(--s2); padding: 2px 0; }
+.hud-k { color: var(--ink-soft); font-size: var(--fs-sm); }
+.hud-v { font-family: var(--font-mono); }
+.hud-v.big { font-size: var(--fs-lg); font-weight: 700; color: var(--stamp-deep); }
+
+.timeline-slots { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; }
+.timeline-slots li {
+  font-family: var(--font-mono); font-size: var(--fs-xs); padding: 3px 7px;
+  background: var(--dlg-dim); border: 1px solid var(--ink-soft); color: var(--ink-soft);
+}
+.timeline-slots li.done { opacity: .45; text-decoration: line-through; }
+.timeline-slots li.now { background: var(--stamp); color: #fff; border-color: var(--stamp-deep); font-weight: 600; }
+
+.roster-list { max-height: 260px; overflow-y: auto; font-size: var(--fs-sm); }
+.roster-row summary { cursor: pointer; padding: 2px 0; }
+.roster-row p { margin: var(--s1) 0 var(--s2) var(--s3); color: var(--ink-mid); }
+
+.notice-list { list-style: none; font-size: var(--fs-sm); }
+.notice-list li { padding: 3px 0; border-bottom: 1px dashed var(--ink-soft); display: flex; justify-content: space-between; gap: var(--s2); align-items: center; }
+
+.day-window { min-height: 340px; max-height: 56vh; overflow-y: auto; padding: var(--s3); }
+.day-entry { white-space: pre-wrap; margin-bottom: var(--s3); padding: var(--s2) var(--s3); font-size: var(--fs-md); }
+.day-entry.briefing { background: var(--dlg-lit); border-left: 4px solid var(--file); }
+.day-entry.slot { color: var(--ink-mid); font-size: var(--fs-sm); padding: 2px var(--s3); }
+.day-entry.incident { background: #f6e6e4; border-left: 4px solid var(--stamp); font-weight: 500; }
+.day-entry.outcome { background: var(--dlg-lit); border-left: 4px solid var(--ink-soft); }
+.day-entry.inspect { background: var(--dlg-lit); border-left: 4px solid #8a6d1a; }
+.day-entry.stamp { font-family: var(--font-mono); font-weight: 700; }
+.day-entry.sys { color: var(--ink-soft); font-size: var(--fs-sm); }
+
+.intervene-tabs { display: flex; gap: var(--s2); margin: var(--s2) 0; }
+.iv-body { padding: var(--s2) 0; }
+.iv-body label { display: block; margin-bottom: var(--s2); }
+.iv-log { margin-top: var(--s3); max-height: 220px; overflow-y: auto; }
+.iv-log .iv-q { color: var(--ink-soft); font-size: var(--fs-sm); margin: var(--s1) 0; }
+.iv-log .iv-a { background: var(--dlg-lit); padding: var(--s2); margin-bottom: var(--s2); white-space: pre-wrap; }
+#btn-hold.armed { background: var(--stamp); color: #fff; }
+
+@media (max-width: 900px) {
+  .day-grid { grid-template-columns: 1fr; }
+}

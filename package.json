@@ -1,16 +1,12 @@
 {
-  "name": "ministry-of-love",
-  "version": "4.0.0",
+  "name": "musago-100-csm",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Ministry of Love — 2077, three.js + LLM API(Anthropic·OpenAI·OpenRouter) B급 병맛 데이팅 공작 게임 (GitHub Pages 정적 사이트)",
+  "description": "무사고 100일: 주임원사 — LLM 텍스트 부대 운영 시뮬레이터 (일일 턴제, GitHub Pages 정적 사이트)",
   "scripts": {
-    "test": "node --test tests/points.test.mjs tests/couples.test.mjs tests/schema.test.mjs tests/llm.test.mjs tests/pacing.test.mjs tests/engine.test.mjs tests/orders.test.mjs",
-    "browser": "node tests/browser.mjs",
-    "responsive": "node tests/responsive.mjs",
+    "test": "node --test tests/params.test.mjs tests/units.test.mjs tests/roster.test.mjs tests/schema.test.mjs tests/llm.test.mjs tests/pacing.test.mjs tests/hierarchy.test.mjs tests/engine.test.mjs",
     "live": "node tests/live.mjs",
-    "serve": "python3 -m http.server 8000",
-    "audit": "bash tests/audit.sh",
-    "calibrate": "node tests/calibrate.mjs"
+    "serve": "python3 -m http.server 8000"
   }
 }
