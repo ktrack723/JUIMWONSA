@@ -1,0 +1,168 @@
+// units.js — 부대 프롬프트 대장. couples.js 포지션 — 전부 손으로 쓴 고정 데이터다.
+//
+// 군마다 다른 것은 단 하나, 이 부대 프롬프트다. 다섯 절(①문화 ②규정 ③병사간 룰
+// ④지능 ⑤마초)이 병사의 생활을 뽑아내는 엔진의 재료로 들어가고, 신규 전입 병사의
+// 프로필을 뽑을 때도 들어간다.
+//
+// ④·⑤는 수치+서술 한 쌍이다 — **서술은 프롬프트로, 수치는 코드로** 간다.
+// 지능·마초는 생성 텍스트의 말투를 정하는 동시에 사고 확률 공식(params.js)의 입력이다.
+// 같은 원천에서 한 번만 정의한다. 수치가 프롬프트 문자열에 새면 테스트가 깨진다.
+//
+// 셋째 군은 이 파일에 항목 하나를 더하는 것으로 끝나야 한다.
+// **코드 어디에도 특정 부대를 아는 분기를 두지 않는다.**
+//
+// ── 고증 ──────────────────────────────────────────────
+// 여기 적힌 규정·용어·상징은 지어낸 것이 아니라 확인된 것이다. 근거와 「무엇을 고쳤는가」는
+// docs/research.md에 출처와 함께 남겨 뒀다. **출처 없는 설정은 이 파일에 들어오지 않는다.**
+// 특히 크게 고친 것 둘:
+//   · 휴대폰 — 군별로 다르지 않다. 전군 공통 「일과 후」다(2024.8 국방부 현행 유지 결정).
+//     갈리는 것은 **제한 사유**다 — 경계·당직·대규모 훈련 중에는 소지 자체가 제한된다.
+//   · 기수열외 — 「잔존 문화」가 아니라 **금지된 악습이고 처벌 규정이 있다**(빨간명찰 박탈·전출).
+//
+// 군가는 한 소절씩만 싣는다. 병사가 실제로 입 밖에 내는 만큼이고, 저작권이 살아 있는 곡들이라
+// 전문은 싣지 않는다. songMode가 부르는 방식을 가른다 — 목으로 부르느냐(chorus),
+// 기지방송으로 듣느냐(broadcast). 공군이 군가를 방송으로 트는 것은 실제 관행이다.
+//
+// 스키마 검증 — 로드 시 돈다. 스키마 밖 필드가 있으면 죽는다.
+
+export const UNITS = [
+  {
+    id: 'marine-fort',
+    name: '해병 성채',
+    branch: '해병대',
+    desc: '서해 최전방 도서 방어 대대',
+    // ① 문화 — 핵심가치·군 역사·분위기. 창설 서사, 전용 용어, 복식, 복무기간
+    culture: `귀신 잡는 해병의 전통을 이어받았다고 전원이 믿는다. 기수(期數)가 뼛속까지 박혀 있어
+자기 기수와 상대 기수를 먼저 계산하고 말을 꺼낸다. 상륙 서사를 술자리마다 왼다.
+팔각모는 화랑도 오계에 삼금을 더한 팔계, 그리고 "지구상 어디든지 가서 싸우면 승리한다"는
+팔극을 뜻한다 — 각이 여덟인 데 이유가 있고, 병사들이 그걸 외우고 있다.
+오른쪽 가슴의 빨간명찰은 교육훈련단 6주차 극기주를 마쳐야 달아준다. 그걸 단 날을 다들 기억한다.
+두발은 상륙돌격형(돌격머리), 말은 다나까로 끝낸다. 실수는 "찐빠"다.
+복무기간 18개월. "해병은 태어나는 것이 아니라 만들어진다"가 정문에 새겨져 있다.`,
+    // ② 규정 — 기본 군 규정
+    rules: `휴대폰은 전군 공통으로 평일 일과 후 18~21시, 휴일 08:30~21:00에만 쓴다.
+다만 이 부대는 해안 경계근무와 당직이 촘촘해 그 시간대가 근무에 통째로 먹히는 날이 잦다 —
+경계·당직·대규모 훈련 중에는 소지 자체가 제한되기 때문이다. 규정상 시간과 실제 쓰는 시간이 다르다.
+개인 태블릿 불허. 실외 탈모 금지. 출타 승인이 짜다.
+일과의 중심은 해안 경계 근무와 진지 공사다.`,
+    // ③ 병사간 룰 — 자체 룰 (부조리의 씨앗)
+    soldierRules: `이병은 BX 이용 금지, 일병 이하는 사이버지식정보방 주말 한정 — 규정에 없는 자체 룰이다.
+기수열외(특정인을 기수 위계에서 통째로 제외해 없는 사람 취급하는 것)는 2011년 해안소초 총기난사
+이후 명시적으로 금지됐고, 가담자는 빨간명찰을 일정 기간 떼이고 사령부 직권으로 타 부대 전출된다.
+그래서 아무도 그 이름으로 부르지 않는다 — 대신 "말 안 섞는다", "저 기수는 계산에서 뺀다"로 남아 있다.
+악기바리(토할 때까지 먹이기)도 같은 방식으로 살아 있다: 친목이라는 이름으로.`,
+    // ④ 지능 — 수치는 코드로(사고 공식), 서술은 프롬프트로(말투)
+    intel: { score: 4, desc: '머리보다 몸이 먼저 나간다' },
+    // ⑤ 마초 — 위와 같다
+    macho: { score: 9, desc: '다치는 걸 자랑으로 아는 놈들' },
+    difficulty: 8,          // 일과 난이도 — static. 주임원사가 못 건드린다
+    serviceMonths: 18,      // 복무기간 (①의 수치판 — 전역 판정은 코드가 한다)
+    serial: { tag: '해병', pad: 7 },   // 군번 채번 형식 — 코드가 채운다
+    jobs: ['해안 경계병', '통신병', '조리병', '운전병', '보급병', '의무병', '화기관리병', '행정병'],
+    // 군가 — 목으로 부른다. 점호 후 구보와 집합에서.
+    songMode: 'chorus',
+    songSlots: ['reveille', 'amwork', 'taps'],
+    songs: [
+      {
+        title: '나가자 해병대',
+        note: '1949년 신영철 작사·김형래 작곡. 해병 장병들이 직접 뽑은 최고의 군가 1위',
+        lines: ['나가자 서북으로 푸른 바다로', '천지를 진동하는 대한해병혼'],
+      },
+      {
+        title: '팔각모 사나이',
+        note: '홍승용 작사·김강섭 작곡. 해병의 상징 팔각모가 소재다',
+        lines: ['팔각모 얼룩무늬 바다의 사나이', '우리는 멋쟁이 팔각모 사나이'],
+      },
+    ],
+  },
+
+  {
+    id: 'airforce-sys',
+    name: '공군 체계단',
+    branch: '공군',
+    desc: '후방 정보체계 관리 부대',
+    culture: `신사적인 분위기를 스스로 자랑한다. 창설 이래 무사고 전통이 부대 자부심의 전부다.
+전용 용어: 찐빠(하나 빼먹는 종류의 실수 — 점호 인원이 안 맞거나, 재고 숫자가 안 맞거나,
+배치가 꼬여 근무에 사람이 비는 것), 짬찌(짬이 안 찬 막내).
+아침 출근 시간과 저녁 퇴근 시간 전후로 기지방송에서 군가 메들리가 흘러나온다.
+아무도 따라 부르지 않고 그냥 배경음으로 듣는다.
+복무기간 21개월. 약모를 쓰고, 전투복보다 근무복을 입는 날이 많다.
+"우리는 조용히 이긴다"가 복도에 걸려 있는데 아무도 어디서 이겼는지 모른다.`,
+    rules: `휴대폰은 전군 공통으로 평일 일과 후 18~21시, 휴일 08:30~21:00에만 쓴다.
+이 부대는 경계근무가 거의 없어 규정상 시간을 그대로 다 쓴다 — 21시에 정확히 반납한다.
+개인 태블릿 허용. 두발 규정이 느슨해 파마를 하고 오는 병사도 있다. 출타가 자유로운 편이다.
+일과의 중심은 서버 점검과 문서 작업이다.`,
+    soldierRules: `병사간 자체 룰이 거의 없다 — 대신 은근한 따돌림형 부조리가 취약점이다.
+단체 채팅방에서 한 명만 빼고 방을 새로 파는 식이라 표가 안 난다.
+겉으로는 전원이 존댓말을 쓰고, 그래서 무슨 일이 있어도 소리가 밖으로 안 샌다.`,
+    intel: { score: 8, desc: '수능 다시 보러 온 것 같은 놈들' },
+    macho: { score: 2, desc: '체력 검정이 최대 위기' },
+    difficulty: 3,
+    serviceMonths: 21,
+    serial: { tag: '공군', pad: 7 },
+    jobs: ['정보체계관리병', '네트워크운용병', '행정병', '군사경찰', '조리병', '시설관리병', '수송병', '보급병'],
+    // 군가 — 목이 아니라 기지방송이다. 출근·퇴근 시간 전후로 흘러나온다.
+    songMode: 'broadcast',
+    songSlots: ['reveille', 'dinner'],
+    songs: [
+      {
+        title: '빨간 마후라',
+        note: '1964년 동명 영화 주제가. 고등비행 수료식에서 빨간 마후라를 수여하고, 기본군사훈련단 필수 암기곡이다',
+        lines: ['빨간 마후라는 하늘의 사나이', '하늘의 사나이는 빨간 마후라'],
+      },
+    ],
+  },
+];
+
+// ── 검증 — 스키마 밖의 필드가 생기거나 절이 비면 로드 자체가 죽는다 ──────
+export const UNIT_FIELDS = new Set([
+  'id', 'name', 'branch', 'desc', 'culture', 'rules', 'soldierRules',
+  'intel', 'macho', 'difficulty', 'serviceMonths', 'serial', 'jobs',
+  'songMode', 'songSlots', 'songs',
+]);
+
+export const SONG_MODES = new Set(['chorus', 'broadcast']);
+
+const seenId = new Set();
+for (const u of UNITS) {
+  for (const f of Object.keys(u)) if (!UNIT_FIELDS.has(f)) throw new Error(`units.js: ${u.id}에 스키마 밖 필드 「${f}」`);
+  for (const f of UNIT_FIELDS) if (u[f] === undefined) throw new Error(`units.js: ${u.id}에 ${f}가 없다`);
+  if (!u.id || seenId.has(u.id)) throw new Error(`units.js: id 중복 또는 누락 — ${u.id}`);
+  seenId.add(u.id);
+  for (const f of ['culture', 'rules', 'soldierRules']) {
+    if (typeof u[f] !== 'string' || u[f].trim().length < 20) throw new Error(`units.js: ${u.id}.${f} 절이 부실하다`);
+  }
+  for (const f of ['intel', 'macho']) {
+    const v = u[f];
+    if (!v || typeof v.score !== 'number' || v.score < 0 || v.score > 10) throw new Error(`units.js: ${u.id}.${f}.score는 0~10이어야 한다`);
+    if (typeof v.desc !== 'string' || v.desc.length < 2) throw new Error(`units.js: ${u.id}.${f}.desc 서술이 없다`);
+  }
+  if (typeof u.difficulty !== 'number' || u.difficulty < 0 || u.difficulty > 10) throw new Error(`units.js: ${u.id} 일과 난이도는 0~10이어야 한다`);
+  if (!(u.serviceMonths >= 12)) throw new Error(`units.js: ${u.id} 복무기간이 이상하다`);
+  if (!u.serial?.tag || !(u.serial.pad >= 4)) throw new Error(`units.js: ${u.id} 군번 형식 누락`);
+  if (!(u.jobs?.length >= 4)) throw new Error(`units.js: ${u.id} 직무 슬롯이 4개 미만이다`);
+  if (new Set(u.jobs).size !== u.jobs.length) throw new Error(`units.js: ${u.id} 직무 중복`);
+
+  // 군가 — 부르는 방식과 자리, 그리고 인용 한 소절씩.
+  if (!SONG_MODES.has(u.songMode)) throw new Error(`units.js: ${u.id}.songMode는 chorus 또는 broadcast여야 한다`);
+  if (!(u.songSlots?.length >= 1)) throw new Error(`units.js: ${u.id} 군가가 울리는 슬롯이 없다`);
+  if (!(u.songs?.length >= 1)) throw new Error(`units.js: ${u.id} 군가가 없다`);
+  for (const s of u.songs) {
+    for (const f of Object.keys(s)) if (!['title', 'note', 'lines'].includes(f)) throw new Error(`units.js: ${u.id} 군가에 스키마 밖 필드 「${f}」`);
+    if (!s.title || !s.note) throw new Error(`units.js: ${u.id} 군가 제목/출처 누락`);
+    if (!(s.lines?.length >= 1)) throw new Error(`units.js: ${u.id}.${s.title} 인용 소절이 없다`);
+    // 인용은 한 소절씩이다. 전문을 싣지 않는다 — 저작권이 살아 있는 곡들이다.
+    if (s.lines.length > 3) throw new Error(`units.js: ${u.id}.${s.title} 인용이 3소절을 넘는다 — 한 소절씩만 싣는다`);
+    for (const l of s.lines) {
+      if (typeof l !== 'string' || l.length < 2) throw new Error(`units.js: ${u.id}.${s.title} 빈 소절`);
+      if (l.length > 40) throw new Error(`units.js: ${u.id}.${s.title} 소절이 너무 길다 — 한 소절만 싣는다`);
+    }
+  }
+}
+
+export const UNIT_BY_ID = Object.fromEntries(UNITS.map(u => [u.id, u]));
+
+/** 이 부대의 군가 인용 전부를 한 줄씩 펴서 돌려준다. 앰비언트 풀과 프롬프트가 같이 쓴다. */
+export function songLines(unit) {
+  return unit.songs.flatMap(s => s.lines.map(text => ({ title: s.title, text })));
+}

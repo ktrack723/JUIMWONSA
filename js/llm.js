@@ -37,7 +37,7 @@ export const PROVIDERS = {
     dialect: 'anthropic',
     freeModel: false,   // 목록에 없는 모델을 직접 적을 수 있는가
     models: [
-      ['claude-opus-5', 'L 기관 권장'],
+      ['claude-opus-5', '본부 권장'],
       ['claude-sonnet-5', '표준'],
       ['claude-haiku-4-5', '예산 절감'],
     ],
@@ -51,7 +51,7 @@ export const PROVIDERS = {
     dialect: 'openai',
     freeModel: true,
     models: [
-      ['gpt-5', 'L 기관 권장'],
+      ['gpt-5', '본부 권장'],
       ['gpt-5-mini', '표준'],
       ['gpt-5-nano', '예산 절감'],
       ['gpt-4.1', '구형'],
@@ -67,7 +67,7 @@ export const PROVIDERS = {
     dialect: 'openai',
     freeModel: true,
     models: [
-      ['anthropic/claude-opus-4.5', 'L 기관 권장'],
+      ['anthropic/claude-opus-4.5', '본부 권장'],
       ['anthropic/claude-sonnet-4.5', '표준'],
       ['openai/gpt-5', 'GPT'],
       ['openai/gpt-5-mini', 'GPT · 예산 절감'],
@@ -315,7 +315,7 @@ export class LlmClient {
     if (this.provider === 'openrouter') {
       // OpenRouter 순위표에 뜨는 출처 표기. 없어도 호출은 된다.
       h['HTTP-Referer'] = typeof location !== 'undefined' ? location.origin : 'https://github.com/ktrack723/BRS';
-      h['X-Title'] = 'Operation Cupid 2077';
+      h['X-Title'] = 'Musago 100 Days: CSM Simulator';
     }
     return h;
   }
@@ -375,7 +375,7 @@ export class LlmClient {
         }
         entry.status = 'error'; entry.error = `${type}: ${msg}`; entry.ms = now() - started;
         this.#emit(entry);
-        if (errStatus === 401 || errStatus === 403) throw new Error(`API 키가 틀렸다. L 기관 인증 실패! (${prov.label})`);
+        if (errStatus === 401 || errStatus === 403) throw new Error(`API 키가 틀렸다. 국방망 인증 실패! (${prov.label})`);
         throw new Error(`${type}: ${msg}`);
       }
       if (!data) { lastErr = new Error('응답 본문 파싱 불가'); continue; }
@@ -439,7 +439,7 @@ export class LlmClient {
   // 부팅 시 키 검증용 초소형 호출
   async ping() {
     return this.call({
-      label: 'L 기관 인증',
+      label: '국방망 인증',
       system: 'Answer in one word.',
       messages: [{ role: 'user', content: 'Comms check. Reply with 이상무 and nothing else.' }],
       maxTokens: 1000, effort: 'low',
