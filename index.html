@@ -86,8 +86,20 @@
               무너진 병사가 있으면 탈영·자해급 사고의 문이 열린다. 그 눈금 자리는 <b>부대 전우애</b>가 정한다 —
               끈끈한 부대는 웬만한 갈등을 자기들끼리 삼키고, 서로 남인 부대는 작은 마찰도 그대로 번진다.</p>
           </div>
-          <div class="panel95 timeline" data-title="일과 타임라인">
-            <ol id="timeline-slots" class="timeline-slots"></ol>
+          <!-- 가라 내역 — 계기판의 「가라 N」이 실제로 무엇 N개인가.
+               개수는 계기판이 말하고 정체는 여기가 말한다. 그 사이의 틈이 이 게임에 남은
+               마지막 안개다 — 틈을 좁히는 유일한 수단이 불시점검이다. -->
+          <div class="panel95 gara-panel" data-title="가라 내역 · 확인된 것만">
+            <div id="gara-tally" class="gara-tally"></div>
+            <ul id="gara-known" class="gara-list"></ul>
+            <div id="gara-banned-box" class="gara-banned-box hidden">
+              <div class="gara-sub">지침으로 막아 놓은 것</div>
+              <ul id="gara-banned" class="gara-list banned"></ul>
+            </div>
+            <div class="gara-sub">자리별 마지막 확인</div>
+            <div id="gara-seen" class="gara-seen"></div>
+            <p class="meter-note">이 명부는 <b>확인한 그날의 사실</b>이지 지금의 사실이 아니다.
+              안 가 본 자리는 낡고, 머리 좋은 부대는 들이닥쳐도 절반쯤 숨긴다.</p>
           </div>
           <div class="panel95 roster-panel" data-title="병력 현황">
             <div id="roster-list" class="roster-list"></div>
@@ -111,6 +123,9 @@
               <span id="stage-clock" class="stage-clock"></span>
               <span id="stage-slot" class="stage-slot"></span>
             </div>
+            <!-- 일과 타임라인은 진행 표시다. 결정에 쓰는 자료가 아니라 「지금 어디쯤인가」라서
+                 시계 바로 밑, 무대와 같은 채널에 붙인다. -->
+            <ol id="timeline-slots" class="timeline-slots"></ol>
           </div>
           <div class="pace-bar">
             <span class="pace-tag">재생 속도</span>
@@ -146,16 +161,19 @@
             </div>
             <div id="iv-inspect" class="iv-body hidden">
               <label>들이닥칠 장소 <select id="inspect-where"></select></label>
-              <p class="dim small">들이닥치면 일은 각이 잡히고(<b>가라 −1</b>) 분위기는 가라앉는다(<b>행복 −1</b>).
-                <b>효과는 어디를 골라도 같다.</b> 갈리는 것은 소견이다 — 장소 이름 옆에 적힌 것이
-                그 장소가 드러내는 파라미터고, 소견은 그것만 보여준다.</p>
+              <p class="dim small"><b>가라 내역을 사는 유일한 창구</b>다. 그 자리에서 돌던 관행이
+                적발되면 명부에 오르고, 적발된 것부터 그 자리에서 멎는다(<b>가라 −1</b>) —
+                대신 분위기는 가라앉는다(<b>행복 −1</b>). 전부 걸리지는 않는다: <b>머리 좋은 부대일수록 잘 숨긴다.</b><br>
+                장소 이름 옆에 적힌 것은 그 자리에 무엇이 돌고 있고 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
               <div class="radio-btns">
                 <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1 · 평판 −1)</button>
               </div>
             </div>
             <div id="iv-notice" class="iv-body hidden">
-              <textarea id="notice-input" rows="3" placeholder="예: 금일부로 일과 후 족구 금지. 위반 시 주말 사지방 통제."></textarea>
-              <p class="dim small">게시되는 순간부터 모든 생활·사건 생성에 주입된다. 판정은 방향뿐 — 점수는 없다.</p>
+              <textarea id="notice-input" rows="3" placeholder="예: 금일부로 취침 전 휴대폰은 전량 수거함에 투입한다. 내가 직접 개수를 센다."></textarea>
+              <p class="dim small">게시되는 순간부터 모든 생활·사건 생성에 주입된다. 판정은 방향뿐 — 점수는 없다.<br>
+                <b>관행을 콕 집어 막으면 그 가라가 끊긴다.</b> 무엇을·무엇에·어떤 자리에서인지가 문장에 있어야 한다 —
+                「군기를 잡아라」류는 아무것도 못 막는다. 지침이 서 있는 한 그 관행은 다시 안 생긴다.</p>
               <div class="radio-btns">
                 <button id="btn-notice-post" class="btn95" type="button">게시한다 (평판 −1)</button>
               </div>

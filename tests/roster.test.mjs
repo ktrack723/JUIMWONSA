@@ -176,3 +176,83 @@ test('군번을 미리 예약할 수 있다 — 병렬 전입이 번호를 먼�
   const s = r.enlist({ serial: a, sheet: 's', job: 'a', grade: 'B', character: '중', joined: '2026-01-01' });
   assert.equal(s.serial, a);
 });
+
+// ── 부재 — 사고가 데려간 사람 (입원·이탈) ────────────────
+// 명부에 있다는 것과 부대에 있다는 것은 다르다. 제적이 아니라 부재다.
+test('부재자는 명부에 남고 부대에서만 빠진다 — 자리는 안 채워진다', () => {
+  const r = new Roster(unit, { storage: memStorage() });
+  for (let i = 0; i < ROSTER_SIZE; i++) r.enlist(soldier({ name: `병${i}` }));
+  assert.equal(r.vacancies(), 0);
+
+  const man = r.soldiers[3];
+  const gone = r.sendAway(man, { kind: 'hospital', days: 7, since: '2026-06-01' });
+  assert.equal(gone, man);
+  assert.equal(man.away.until, '2026-06-08', '복귀일이 굳지 않았다');
+  assert.equal(r.soldiers.length, ROSTER_SIZE, '부재가 병사를 지웠다 — 제적이 아니다');
+  assert.equal(r.present.length, ROSTER_SIZE - 1, '부재자가 아직 부대에 있다');
+  assert.deepEqual(r.absent.map(s => s.name), ['병3']);
+  // **요점** — 빈 자리를 정원으로 세지 않는다. 입원한 놈 자리에 신병이 오지 않는다
+  assert.equal(r.vacancies(), 0, '부재로 빈 자리가 충원 대상이 됐다');
+});
+
+test('없는 놈이 또 사라지지는 않는다 — 두 번째 부재는 무시된다', () => {
+  const r = new Roster(unit, { storage: memStorage() });
+  const man = r.enlist(soldier());
+  r.sendAway(man, { kind: 'awol', days: 5, since: '2026-06-01' });
+  assert.equal(r.sendAway(man, { kind: 'hospital', days: 30, since: '2026-06-02' }), null);
+  assert.equal(man.away.until, '2026-06-06', '첫 복귀일이 덮어써졌다');
+});
+
+test('복귀일이 되면 돌아온다 — 하루 전에는 안 돌아온다', () => {
+  const r = new Roster(unit, { storage: memStorage() });
+  const a = r.enlist(soldier({ name: '입원' }));
+  const b = r.enlist(soldier({ name: '이탈' }));
+  r.sendAway(a, { kind: 'hospital', days: 3, since: '2026-06-01' });   // → 06-04
+  r.sendAway(b, { kind: 'awol', days: 9, since: '2026-06-01' });       // → 06-10
+
+  assert.deepEqual(r.returnFrom('2026-06-03'), [], '복귀일 전에 돌아왔다');
+  const back = r.returnFrom('2026-06-04');
+  assert.deepEqual(back.map(s => s.name), ['입원']);
+  assert.equal(back[0].away.kind, 'hospital', '어디에 있었는지가 복귀 명단에 없다');
+  assert.equal(a.away, undefined, '돌아온 놈에게 부재가 남아 있다');
+  assert.deepEqual(r.present.map(s => s.name), ['입원']);
+  // 나머지 하나는 아직 밖이다
+  assert.deepEqual(r.returnFrom('2026-06-10').map(s => s.name), ['이탈']);
+  assert.equal(r.absent.length, 0);
+});
+
+test('부재자는 전역도 못 하고 브리핑 표본에도 안 뜬다 — 돌아와야 나간다', () => {
+  const r = new Roster(unit, { storage: memStorage() });
+  const stay = r.enlist(soldier({ name: '재직', joined: '2026-01-10' }));
+  const away = r.enlist(soldier({ name: '입원중', joined: '2024-01-10' }));   // 복무 18개월 — 이미 만기
+  r.sendAway(away, { kind: 'hospital', days: 20, since: '2026-06-01' });
+
+  assert.deepEqual(r.discharge('2026-06-02'), [], '부재자가 전역 신고를 했다');
+  assert.equal(r.soldiers.length, 2);
+  assert.deepEqual(r.sample(5, () => 0).map(s => s.name), ['재직'], '없는 사람이 무대에 섰다');
+  // 돌아온 날, 전역일이 이미 지나 있으면 그날 나간다
+  r.returnFrom('2026-06-21');
+  assert.deepEqual(r.discharge('2026-06-21').map(s => s.name), ['입원중']);
+  assert.equal(stay.away, undefined);
+});
+
+test('부재는 저장에 실려 다니고, 복귀일 없는 옛 저장분은 부대로 되돌아온다', () => {
+  const storage = memStorage();
+  const r = new Roster(unit, { storage });
+  const man = r.enlist(soldier({ name: '후송' }));
+  r.sendAway(man, { kind: 'hospital', days: 4, since: '2026-06-01' });
+
+  const again = new Roster(unit, { storage });
+  again.load();
+  assert.equal(again.absent.length, 1, '부재가 저장 안 됐다');
+  assert.equal(again.absent[0].away.until, '2026-06-05');
+
+  // 깨진 저장분 — 복귀일이 없으면 영원히 안 돌아온다. 그건 명부가 아니라 무덤이다
+  const broken = memStorage();
+  broken.setItem(`csm_roster_${unit.id}`, JSON.stringify({
+    soldiers: [{ ...soldier({ name: '깨짐' }), serial: '26-00000001', away: { kind: 'awol' } }], seq: 5,
+  }));
+  const fixed = new Roster(unit, { storage: broken });
+  fixed.load();
+  assert.equal(fixed.present.length, 1, '복귀일 없는 부재가 그대로 남았다');
+});

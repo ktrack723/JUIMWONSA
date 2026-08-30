@@ -451,3 +451,143 @@ test('멘탈이 같으면 짬 순이다 — 굴리지 않는다', () => {
   // 두 번 불러도 같다 — 마지막 밤은 굴리는 자리가 아니다
   assert.deepEqual(PM.pickSendoff(men, 'grand'), PM.pickSendoff(men, 'grand'));
 });
+
+// ══════════════════════════════════════════════════════════
+// 가라 내역 — 게이지 눈금에 붙은 내용물
+//
+// 이 표가 지키는 계약은 하나다: **수치가 원본이고 목록이 따라간다.**
+// 「가라 4」는 관행 넷이 돌고 있다는 뜻이고, 그 넷이 무엇인지는 플레이어가 사야 하는 정보다.
+// ══════════════════════════════════════════════════════════
+
+test('가라 대장은 모든 자리에 최소 하나씩 깔린다 — 점검으로 영원히 못 보는 관행이 없게', () => {
+  for (const key of Object.keys(PM.PLACES)) {
+    assert.ok(PM.GARA_POOL.some(g => g.place === key), `${key}에서 볼 수 있는 가라가 하나도 없다`);
+  }
+  assert.equal(new Set(PM.GARA_IDS).size, PM.GARA_IDS.length, 'id가 겹친다');
+  // 수치 눈금(0~10)보다 대장이 길어야 가라가 만점까지 오를 수 있다
+  assert.ok(PM.GARA_POOL.length >= PM.SCALE.max, '대장이 눈금보다 짧다 — 가라가 만점을 못 찍는다');
+});
+
+test('대장의 한국어 표기와 영어 표기는 갈려 있다 — 화면과 프롬프트는 다른 언어를 쓴다', () => {
+  const HANGUL = /[가-퟿]/;
+  for (const g of PM.GARA_POOL) {
+    assert.ok(HANGUL.test(g.label) && HANGUL.test(g.desc), `${g.id}의 화면 표기가 한국어가 아니다`);
+    assert.ok(!HANGUL.test(g.en), `${g.id}의 en에 한글이 있다 — §9.4가 깨진다`);
+    assert.ok(!/\d/.test(g.en), `${g.id}의 en에 숫자가 있다`);
+  }
+});
+
+test('목록 길이는 언제나 수치를 따라간다 — 가라 4는 관행 넷이다', () => {
+  let list = [];
+  for (const n of [4, 7, 2, 0, 10]) {
+    list = PM.syncGaraList(list, n, { rng: seq([0.1, 0.4, 0.7, 0.2, 0.9, 0.3, 0.5, 0.6, 0.05, 0.8]) });
+    assert.equal(list.length, n, `가라 ${n}인데 목록이 ${list.length}개다`);
+    assert.equal(new Set(list).size, list.length, '같은 관행이 두 번 돈다');
+  }
+});
+
+test('줄어도 남는 놈은 그대로 남는다 — 목록이 매번 새로 굴려지지 않는다', () => {
+  const four = PM.syncGaraList([], 4, { rng: seq([0.1, 0.4, 0.7, 0.2]) });
+  const three = PM.syncGaraList(four, 3, { rng: seq([0.5]) });
+  assert.equal(three.length, 3);
+  assert.equal(three.filter(id => four.includes(id)).length, 3, '남은 셋이 새로 굴려졌다');
+});
+
+test('줄일 때 무엇이 멎는지는 아무도 못 고른다 — 점검은 정체를 사고, 끊는 것은 지침의 일이다', () => {
+  // 「적발한 것부터 멎게 한다」를 넣었다가 물린 자리다. 한 자리에 도는 관행이 평균 한 건이라
+  // 산 정보가 같은 개입의 부수효과에 지워졌다(실측: 털고 나면 명부가 언제나 비었다).
+  const list = PM.syncGaraList([], 4, { rng: seq([0.1, 0.4, 0.7, 0.2]) });
+  const dropped = new Set();
+  for (const r of [0, 0.3, 0.6, 0.99]) {
+    const after = PM.syncGaraList(list, 3, { rng: seq([r]) });
+    assert.equal(after.length, 3);
+    list.filter(id => !after.includes(id)).forEach(id => dropped.add(id));
+  }
+  assert.ok(dropped.size > 1, '난수를 바꿔도 언제나 같은 놈이 멎는다 — 무작위가 아니다');
+});
+
+test('지침으로 막힌 관행은 돌지도, 새로 생기지도 않는다', () => {
+  const banned = PM.GARA_IDS.slice(0, 3);
+  // 이미 돌고 있었어도 막히면 빠진다
+  const list = PM.syncGaraList(banned.slice(), 3, { banned, rng: seq([0.1, 0.4, 0.7]) });
+  for (const id of banned) assert.ok(!list.includes(id), `막힌 ${id}가 아직 돈다`);
+  // 몇 번을 다시 채워도 막힌 것은 안 들어온다
+  const filled = PM.syncGaraList([], 9, { banned, rng: Math.random });
+  for (const id of banned) assert.ok(!filled.includes(id), `막힌 ${id}가 새로 생겼다`);
+});
+
+test('금지가 늘수록 가라의 천장이 내려간다 — 지침이 가라를 「제한」한다는 것이 이것이다', () => {
+  assert.equal(PM.garaCap([]), PM.GARA_POOL.length);
+  assert.equal(PM.garaCap(PM.GARA_IDS.slice(0, 4)), PM.GARA_POOL.length - 4);
+  assert.equal(PM.garaCap(PM.GARA_IDS), 0, '전부 막으면 가라가 아예 못 돈다');
+  // 천장이 목표보다 낮으면 목록이 천장에서 멈춘다 (수치 클램프는 엔진 몫)
+  const banned = PM.GARA_IDS.slice(0, PM.GARA_POOL.length - 2);
+  assert.equal(PM.syncGaraList([], 10, { banned, rng: Math.random }).length, 2);
+});
+
+test('적발 확률은 부대 지능이 정한다 — 머리 좋은 부대일수록 잘 숨긴다', () => {
+  const dumb = PM.spotChance(4), smart = PM.spotChance(8);
+  assert.ok(dumb > smart, '지능이 높은데 더 잘 걸린다');
+  // 어느 쪽도 0도 1도 아니다 — 완전히 못 보는 부대도, 전부 보이는 부대도 없다
+  for (const intel of [0, 5, 10]) {
+    const p = PM.spotChance(intel);
+    assert.ok(p > 0 && p < 1, `지능 ${intel}의 적발 확률이 ${p}다`);
+  }
+  assert.ok(PM.spotChance(10) >= PM.TUNING.gara.spotFloor, '바닥이 안 걸렸다');
+});
+
+// ── 확인 명부 — 두 방향으로 틀릴 수 있어야 한다 ─────────
+const KNOWN = (id, on) => ({ id, on });
+const atPlace = key => PM.GARA_POOL.filter(g => g.place === key).map(g => g.id);
+
+test('들이닥치면 잡힌 것이 오늘 날짜로 명부에 오른다', () => {
+  const here = atPlace('barracks');
+  const out = PM.inspectGara({ active: here, known: [], placeKey: 'barracks', intel: 0, on: '2026-06-01', rng: () => 0 });
+  assert.deepEqual(out.spotted.sort(), here.slice().sort(), '지능 0인데도 놓쳤다');
+  assert.deepEqual(out.known.map(k => k.on), here.map(() => '2026-06-01'));
+});
+
+test('숨긴 것은 안 보인다 — 이미 알고 있었다면 그 믿음은 그대로 남는다', () => {
+  const here = atPlace('barracks');
+  const out = PM.inspectGara({
+    active: here, known: [KNOWN(here[0], '2026-05-01')],
+    placeKey: 'barracks', intel: 10, on: '2026-06-01', rng: () => 0.999,   // 전부 숨긴다
+  });
+  assert.deepEqual(out.spotted, [], '숨겼는데 잡혔다');
+  const kept = out.known.find(k => k.id === here[0]);
+  assert.ok(kept, '숨긴 것을 알고 있었는데 명부에서 지워졌다');
+  assert.equal(kept.on, '2026-05-01', '못 봤는데 날짜가 새로 찍혔다');
+});
+
+test('없어진 것은 명부에서 지워진다 — 들어가 봤으면 안다', () => {
+  const here = atPlace('barracks');
+  const out = PM.inspectGara({
+    active: [],                                  // 이 자리에서는 이제 아무것도 안 돈다
+    known: [KNOWN(here[0], '2026-05-01')],
+    placeKey: 'barracks', intel: 5, on: '2026-06-01', rng: () => 0,
+  });
+  assert.deepEqual(out.known, [], '없어진 것이 명부에 남았다');
+});
+
+test('다른 자리의 명부는 안 건드린다 — 생활관에 들이닥쳐도 창고는 낡은 채로 남는다', () => {
+  const store = atPlace('storage')[0];
+  const out = PM.inspectGara({
+    active: [], known: [KNOWN(store, '2026-05-01')],
+    placeKey: 'barracks', intel: 5, on: '2026-06-01', rng: () => 0,
+  });
+  assert.deepEqual(out.known, [KNOWN(store, '2026-05-01')], '안 가 본 자리의 기록이 손을 탔다');
+});
+
+test('명부는 두 방향으로 틀릴 수 있다 — 낡아서 틀리고, 못 봐서 빈다', () => {
+  const here = atPlace('barracks');
+  assert.ok(here.length >= 2, '이 단언에는 생활관 관행이 둘 이상 필요하다');
+  // 하나만 돌고 있는데 그 하나를 숨겼다 → 명부는 비어 있고(못 봐서), 진실은 하나다
+  const blind = PM.inspectGara({ active: [here[0]], known: [], placeKey: 'barracks', intel: 10, on: 'd2', rng: () => 0.999 });
+  assert.equal(blind.known.length, 0);
+  assert.equal(blind.missed.length, 1, '못 본 것이 집계되지 않았다');
+  // 반대로 명부에 있는데 실제로는 딴 것이 돈다 → 안 가 보면 영영 모른다
+  const stale = [KNOWN(here[0], 'd1')];
+  assert.deepEqual(
+    PM.inspectGara({ active: [here[1]], known: stale, placeKey: 'storage', intel: 5, on: 'd9', rng: () => 0 }).known,
+    stale, '엉뚱한 자리를 털었는데 명부가 고쳐졌다');
+});

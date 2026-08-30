@@ -13,7 +13,11 @@ import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
-import { PLACES, PARAM_LABELS, BAND_LABELS, band, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING } from './params.js';
+import {
+  PLACES, PARAM_LABELS, BAND_LABELS, band,
+  slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING,
+  GARA_BY_ID, ABSENCE_KINDS,
+} from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
@@ -186,15 +190,91 @@ function renderHud() {
   $('#hud-streak').textContent = `${s.streak}일 / ${s.goal}일`;
   $('#hud-review').textContent = s.reviewDate;
   $('#hud-accidents').textContent = `${s.accidents}건`;
-  $('#hud-unit').textContent = `${state.unit.name} · 병력 ${s.roster}명`;
+  // 병력은 오늘 부대에 있는 인원이다. 입원·이탈은 따로 센다 — 그 자리는 채워지지 않는다.
+  $('#hud-unit').textContent = `${state.unit.name} · 병력 ${s.roster}/${ROSTER_SIZE}명`
+    + (s.away.length ? ` (부재 ${s.away.length})` : '');
   renderGauges();
+  renderGara(s);
+}
+
+const daysBetween = (a, b) =>
+  Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000);
+
+/**
+ * 가라 내역 — 계기판이 「몇 개」를 말하고 여기가 「무엇」을 말한다.
+ * 화면은 절대 진짜 목록을 못 받는다(snapshot에 active가 없다) — 확인한 것만 그린다.
+ * 그래서 이 패널의 제일 중요한 줄은 목록이 아니라 **미확인 몇 건**이다.
+ */
+/**
+ * 명부가 비었을 때 뭐라고 할 것인가. 「없다」로 끝내면 안 된다 —
+ * 안 턴 자리가 남았는데 없다고 하면 계기판이 거짓말을 하는 것처럼 읽힌다.
+ * 남은 안개의 크기를 그대로 말해 주는 것이 이 한 줄의 일이다.
+ */
+function garaEmptyLine(g, unknown) {
+  const never = Object.keys(PLACES).filter(k => !g.seen[k]).length;
+  if (!Object.keys(g.seen).length) return '확인된 것 없음 — 아직 아무 자리도 안 털었다.';
+  if (unknown > 0) {
+    return never
+      ? `확인된 것 없음 — 안 가 본 자리 ${never}곳에 ${unknown}건이 남아 있다.`
+      : `확인된 것 없음 — ${unknown}건이 어딘가에서 돌고 있는데 전부 놓쳤다.`;
+  }
+  return g.running ? '확인된 것 없음 — 방금 턴 자리에는 없었다.' : '아는 한 지금 도는 것은 없다.';
+}
+
+function renderGara(snap) {
+  const g = snap.gara, today = snap.date;
+  const knownIds = g.known.map(k => k.id);
+  // 명부와 계기판의 어긋남은 둘 중 한 방향으로만 난다. 계기판이 정직하니 플레이어가 어차피
+  // 뺄셈으로 알아낼 수 있는 것이고, 그렇다면 흐리게 두지 말고 **이름을 붙여 주는 편이 낫다.**
+  //   미확인 — 돌고 있는데 못 본 것 (숨겼거나, 그 자리를 안 털었다)
+  //   낡음   — 명부가 계기판보다 많다. 최소 그만큼은 이미 멎었다는 뜻이다
+  const unknown = Math.max(0, g.running - knownIds.length);
+  const stale = Math.max(0, knownIds.length - g.running);
+
+  $('#gara-tally').innerHTML =
+    `<span class="gt-run" title="계기판의 가라 수치 그대로다">돌고 있음 <b>${g.running}</b></span>` +
+    `<span class="gt-known" title="들이닥쳐서 확인한 것">확인 <b>${knownIds.length}</b></span>` +
+    (stale
+      ? `<span class="gt-stale" title="명부가 계기판보다 많다 — 확인한 뒤 조용히 멎은 것이 있다">낡음 <b>≥${stale}</b></span>`
+      : `<span class="gt-unknown${unknown ? ' on' : ''}" title="돌고 있는데 아직 못 본 것">미확인 <b>${unknown}</b></span>`) +
+    (g.banned.length ? `<span class="gt-ban" title="지침이 서 있는 한 다시 안 생긴다">금지 <b>${g.banned.length}</b> · 천장 ${g.cap}</span>` : '');
+
+  // 확인된 것 — 오래된 것부터가 아니라 **낡은 것부터** 위로. 다시 가 봐야 할 자리가 먼저 보인다.
+  const rows = g.known
+    .map(k => ({ ...GARA_BY_ID[k.id], on: k.on, age: daysBetween(k.on, today) }))
+    .sort((a, b) => b.age - a.age);
+  $('#gara-known').innerHTML = rows.length
+    ? rows.map(r => {
+      const cls = r.age >= 14 ? 'stale' : r.age >= 4 ? 'aging' : 'fresh';
+      return `<li class="${cls}">
+        <span class="gk-place">${escapeHtml(PLACES[r.place]?.label || '')}</span>
+        <span class="gk-label">${escapeHtml(r.label)}</span>
+        <span class="gk-age">${r.age === 0 ? '오늘 확인' : `${r.age}일 전`}</span>
+        <span class="gk-desc">${escapeHtml(r.desc)}</span>
+      </li>`;
+    }).join('')
+    : `<li class="dim empty">${garaEmptyLine(g, unknown)}</li>`;
+
+  const ban = g.banned.map(id => GARA_BY_ID[id]).filter(Boolean);
+  $('#gara-banned-box').classList.toggle('hidden', !ban.length);
+  $('#gara-banned').innerHTML = ban.map(b =>
+    `<li><span class="gk-place">${escapeHtml(PLACES[b.place]?.label || '')}</span>
+      <span class="gk-label">${escapeHtml(b.label)}</span></li>`).join('');
+
+  // 자리별 마지막 확인 — 명부가 얼마나 낡았는지의 근거. 「미확인」이 제일 눈에 띄어야 한다.
+  $('#gara-seen').innerHTML = Object.entries(PLACES).map(([k, p]) => {
+    const on = g.seen[k];
+    const age = on ? daysBetween(on, today) : null;
+    const cls = on == null ? 'never' : age >= 14 ? 'stale' : age >= 4 ? 'aging' : 'fresh';
+    return `<span class="gs ${cls}">${escapeHtml(p.label)} <b>${on == null ? '미확인' : age === 0 ? '오늘' : `${age}일`}</b></span>`;
+  }).join('');
 }
 
 // 부대 계기판 — 다섯 파라미터 상시 노출. 갈등 바에는 8부터 열리는 위험 구간 눈금을 새긴다.
 // 난이도는 오늘의 실효값(계절·주말 보정 후)이다 — static이지만 달력이 만지는 것이 보여야 한다.
 const GAUGE_DEFS = [
   { k: 'difficulty', label: '일과 난이도', cls: 'diff', note: '오늘 실효치 — 계절·주말이 정한다' },
-  { k: 'gara', label: '가라', cls: 'gara', note: '높으면 편하지만, 힘든 일을 대충 하면 다친다' },
+  { k: 'gara', label: '가라', cls: 'gara', note: '이 숫자가 곧 지금 돌고 있는 편법의 개수다 — 무엇인지는 아래 내역에서' },
   { k: 'happy', label: '행복도', cls: 'happy', note: '낮으면 싸움이 늘고 멘탈이 쓸려 내려간다' },
   { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: 'comrade', note: '이 눈금을 넘으면 탈영·자해급 사고의 문이 열린다 — 자리는 전우애가 정한다' },
   { k: 'rep', label: '평판', cls: 'rep', note: '개입마다 −1 · 조용한 날 +1. 낮으면 지침이 안 먹힌다' },
@@ -256,6 +336,8 @@ function stageTo(slot, chatter = []) {
   const sky = $('#stage-sky');
   const f = dayFraction(slot.time);
   state.stage?.goto(slot);
+  // 빠진 인원은 무대에서도 빠진다 — 입원·이탈이 숫자로만 남지 않는다.
+  state.stage?.crowd((state.roster?.present.length ?? ROSTER_SIZE) / ROSTER_SIZE);
   const look = state.stage?.ok ? state.stage.look() : { sky: skyFallback(f), sun: sunFallback(f) };
   sky.style.background = `linear-gradient(180deg, ${look.sky.top} 0%, ${look.sky.bot} 100%)`;
   const sun = $('#stage-sun');
@@ -325,28 +407,40 @@ function renderRoster() {
   const rows = state.roster.soldiers
     .map(s => ({ s, cohort: cohortOf(unit, s.joined), rank: rankOf(unit, s.joined, today) }))
     .sort((a, b) => a.cohort - b.cohort);
-  $('#roster-list').innerHTML = rows.map(({ s, cohort, rank }) =>
-    `<details class="roster-row"><summary><span class="rk rk-${rank}">${escapeHtml(rank)}</span> ${escapeHtml(s.name)}
-      ${mentalBadge(s.mental)}
+  $('#roster-list').innerHTML = rows.map(({ s, cohort, rank }) => {
+    // 부재자는 명부에 남는다 — 제적이 아니다. 다만 어디에 있고 언제 오는지가 같이 찍힌다.
+    const away = s.away ? ABSENCE_KINDS[s.away.kind] : null;
+    return `<details class="roster-row${away ? ' away' : ''}"><summary><span class="rk rk-${rank}">${escapeHtml(rank)}</span> ${escapeHtml(s.name)}
+      ${away ? `<span class="away-tag" title="복귀 예정 ${escapeHtml(s.away.until)}">${away.icon} ${escapeHtml(away.label)}</span>` : mentalBadge(s.mental)}
       <span class="dim">${cohort}기 · ${escapeHtml(s.job)} · ${escapeHtml(s.grade)}/${escapeHtml(s.character)}</span></summary>
       <p>${escapeHtml(s.sheet) || '<span class="dim">인사기록 미도착</span>'}</p>
-      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)} · 멘탈 ${s.mental ?? TUNING.mental.default}/10</p></details>`).join('')
-    || '<p class="dim">병력 없음</p>';
+      ${away ? `<p class="small away-note">${escapeHtml(away.where)} · ${escapeHtml(s.away.since)} 부터 · 복귀 예정 ${escapeHtml(s.away.until)}</p>` : ''}
+      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)} · 멘탈 ${s.mental ?? TUNING.mental.default}/10</p></details>`;
+  }).join('') || '<p class="dim">병력 없음</p>';
   // 면담(상담) 대상 목록 — **멘탈 낮은 순**으로 세운다. 누굴 불러야 하는지가 목록 자체다.
-  const byNeed = rows.slice().sort((a, b) => (a.s.mental ?? 6) - (b.s.mental ?? 6));
+  // 부재자는 목록에 없다 — 없는 사람을 주임원사실로 부를 수는 없다.
+  const byNeed = rows.filter(r => !r.s.away).sort((a, b) => (a.s.mental ?? 6) - (b.s.mental ?? 6));
   $('#interview-who').innerHTML = byNeed.map(({ s, cohort, rank }) =>
     `<option value="${escapeHtml(s.serial)}">[멘탈 ${s.mental ?? TUNING.mental.default}] ${cohort}기 ${escapeHtml(rank)} ${escapeHtml(s.name)} (${escapeHtml(s.job)})</option>`).join('');
 }
 
 function renderNotices() {
   const list = state.engine.state.notices;
+  // 지침은 이제 원문 하나가 아니다 — 무엇을 막고 있는지가 같이 붙는다.
+  // 철회하면 그 문이 다시 열린다(끊긴 가라가 되살아나지는 않는다 — 문만 열린다).
   $('#notice-list').innerHTML = list.length
-    ? list.map((n, i) => `<li>${escapeHtml(n)} <button class="btn95 tiny" data-del="${i}" type="button">철회</button></li>`).join('')
+    ? list.map((n, i) => {
+      const bans = (n.bans || []).map(id => GARA_BY_ID[id]?.label).filter(Boolean);
+      return `<li><span class="nt-body">${escapeHtml(n.text)}
+        ${bans.length ? `<span class="nt-bans">막는 중 · ${escapeHtml(bans.join(' · '))}</span>` : ''}</span>
+        <button class="btn95 tiny" data-del="${i}" type="button">철회</button></li>`;
+    }).join('')
     : '<li class="dim">게시된 지침 없음</li>';
   $('#notice-list').querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
     state.engine.removeNotice(Number(b.dataset.del));
     saveCampaign();
     renderNotices();
+    renderHud();   // 막아 뒀던 문이 열린다 — 천장이 도로 올라간다
   }));
 }
 
@@ -440,11 +534,16 @@ const standingNow = () => {
 // ── 엔진 손잡이 — 하루의 전부가 여기로 들어온다 ─────────
 function makeHandlers() {
   return {
-    briefing: async ({ date, briefing, arrivals, departures }) => {
+    briefing: async ({ date, briefing, arrivals, departures, returns }) => {
       renderHud(); renderRoster(); renderTimeline(-1);
       stageTo(slotsFor(date)[0], []);
       dayMark(state.engine.snapshot());
       await addEntry('briefing', `[아침 브리핑 · ${date}]\n${briefing}`);
+      // 복귀 — 병원에서든 부대 밖에서든, 오늘 아침 인원이 채워졌다.
+      for (const r of returns || []) {
+        const kind = ABSENCE_KINDS[r.away?.kind];
+        await addEntry('sys', `${rankLine(state.unit, r, date)} ${kind ? kind.back(r.name) : `${r.name} 복귀.`}`, { typed: false });
+      }
       for (const d of departures || []) await addEntry('sys', `${who(d)} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
       for (const a of arrivals || []) await addEntry('sys', `${who(a)} 전입 신고 — ${a.job}, 군번 ${a.serial}.`, { typed: false });
     },
@@ -467,12 +566,19 @@ function makeHandlers() {
       markIncident(false);
       await addEntry('outcome', scene);
     },
-    verdict: async ({ escalated, tier, category }) => {
+    verdict: async ({ escalated, tier, category, absences }) => {
       if (escalated) {
         sfx.trombone();
         // 확전하면 유형이 넘어갈 수 있다 — 사고 대장에 찍히는 것은 「무엇이 되었는가」다.
         await addEntry('stamp', `■ 사고 확정 (${tier === 'major' ? '중대' : '경미'}) — 무사고 기록 0일로 회귀. 날짜는 돌아가지 않는다.`,
           { typed: false, badge: categoryBadge(category, '사고 대장 기재') });
+        // 사고가 사람을 데려갔다 — 이 자리는 복귀일까지 비어 있다. 충원은 없다.
+        for (const a of absences || []) {
+          const kind = ABSENCE_KINDS[a.kind];
+          if (!kind) continue;
+          await addEntry('stamp', `${kind.icon} ${kind.line(a.soldier.name, a.until)} 자리는 채워지지 않는다 — 복귀할 때까지 ${state.roster.present.length}명으로 간다.`, { typed: false });
+        }
+        renderRoster();
       } else {
         sfx.love();
         await addEntry('stamp', '□ 수습 — 사건은 사고가 되지 않았다. 무사고 기록 유지.', { typed: false });
@@ -670,10 +776,16 @@ async function doInspect() {
   const key = $('#inspect-where').value;
   const out = await attempt('군기 점검 중', () => state.engine.inspect(key));
   if (!out) return;
-  await addEntry('inspect', `🔦 군기 점검 · ${out.place}\n${out.findings}`, { typed: false });
+  // 적발 목록은 소견 아래에 **따로** 박아 준다. 산문에 묻히면 명부에 뭐가 올랐는지 모른다.
+  const caught = out.spotted.length
+    ? `\n적발 — ${out.spotted.map(g => g.label).join(' · ')} (명부에 올렸다. 끊으려면 지침이다)`
+    : '\n적발 없음 — 제때 치웠거나, 여기서는 아무것도 안 돌고 있었다.';
+  await addEntry('inspect', `🔦 군기 점검 · ${out.place}\n${out.findings}${caught}`, { typed: false });
   renderHud();
   saveCampaign();
-  toast('각 잡혔다 — 가라 −1 · 행복 −1 · 평판 −1');
+  toast(out.spotted.length
+    ? `${out.spotted.length}건 적발 — 가라 −1 · 행복 −1 · 평판 −1`
+    : '각은 잡혔지만 잡은 건 없다 — 가라 −1 · 행복 −1 · 평판 −1');
 }
 
 async function doNotice() {
@@ -685,7 +797,10 @@ async function doNotice() {
   renderNotices();
   renderHud();
   saveCampaign();
-  await addEntry('sys', `📢 공지 게시. 어디선가 한마디 — "${out.reaction}"`, { typed: false });
+  // 막은 것과 실제로 끊긴 것은 다르다 — 안 돌던 것을 막으면 문만 닫히고 가라는 안 내려간다.
+  const shut = out.banned.length ? `\n지침이 닫은 문 — ${out.banned.map(g => g.label).join(' · ')}` : '';
+  const cut = out.cut.length ? `\n실제로 끊긴 것 — ${out.cut.map(g => g.label).join(' · ')} (가라 −${out.cut.length})` : '';
+  await addEntry('sys', `📢 공지 게시. 어디선가 한마디 — "${out.reaction}"${shut}${cut}`, { typed: false });
 }
 
 // ── 배선 ────────────────────────────────────────────────

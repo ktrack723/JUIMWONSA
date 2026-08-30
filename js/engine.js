@@ -6,7 +6,9 @@
 //   → D 아침 브리핑 (하루 스레드의 첫 쌍)
 //   → 슬롯 아홉: 슬롯마다 사고 롤(코드). 성공하면 사건 —
 //       E-1 장면 → (지침 입력) → E-2 결과 → E-3 확전 판정(스레드 밖, 지침 못 봄)
-//       확전이면 **사고** — 무사고 카운터만 0. 병사·파라미터는 그대로.
+//       확전이면 **사고** — 무사고 카운터가 0이 되고, 유형에 따라 연루자 하나가
+//       부대에서 실제로 빠진다(탈영은 사라지고 부상은 입원한다 — params.js의 부재 규칙).
+//       빠진 자리는 충원되지 않는다. 복귀일까지 남은 인원으로 버틴다.
 //       사건에는 언제나 유형이 하나 붙는다(params.js의 열둘). 씨앗이 풀에서 오므로
 //       장면이 아무리 갈라져도 유형은 코드가 알고, 화면은 거기에 그림을 붙인다.
 //   → 하루 마감: 드리프트 적용, 조용한 날 평판 회복, 카운터 ±, 날짜 전진.
@@ -50,7 +52,9 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
-  minMentalOf, applyInspection, categoryFor, farewellTone, pickSendoff, PARAM_KEYS, PLACES, TUNING,
+  minMentalOf, applyInspection, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
+  GARA_BY_ID, garaCap, garaAt, syncGaraList, inspectGara,
+  farewellTone, pickSendoff, PARAM_KEYS,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -73,17 +77,25 @@ export class Engine {
    *   rng        — 게임 난수. 사고 롤·등급 굴림·연루자 선정이 쓴다 (테스트가 결정적으로 돈다)
    *   cosmeticRng— 연출 난수. 스프라이트 대사 뽑기가 쓴다. **게임 난수와 반드시 갈라 둔다** —
    *                한 통을 같이 쓰면 말풍선 몇 개를 뽑았느냐가 사고 확률을 밀어낸다
+   *   garaRng    — 가라의 **정체**를 뽑는 통. 어느 관행이 돌고 있고 들이닥쳤을 때 뭐가 걸리는가.
+   *                사고 확률이 보는 것은 가라의 **개수**(params.gara)뿐이고 정체는 안 본다 —
+   *                그래서 이 통도 게임 난수와 갈라 둔다. 같은 통을 쓰면 「가라 목록이 몇 칸
+   *                움직였나」가 그날의 사고 롤을 통째로 밀어낸다(말풍선 때 겪은 그 사고다).
+   *                안 주면 연출 통을 같이 쓴다.
    *   cheapModel — 판정 계열(E-3·N·I-2)을 태울 저가 모델 id. 없으면 기본 모델
    */
-  constructor(llm, { unit, roster, state, handlers, ambient = null, rng = Math.random, cosmeticRng = Math.random, cheapModel = null }) {
+  constructor(llm, { unit, roster, state, handlers, ambient = null, rng = Math.random, cosmeticRng = Math.random, garaRng = null, cheapModel = null }) {
     this.llm = llm;
     this.unit = unit;
     this.roster = roster;
     this.h = handlers || {};
     this.rng = rng;
     this.cosmeticRng = cosmeticRng;
+    this.garaRng = garaRng || cosmeticRng;
     this.cheapModel = cheapModel;
     this.state = state || Engine.newCampaign(unit);
+    this.#migrate();
+    this.#syncGara();   // 「가라 4」가 실제로 무엇 넷인지를 부임 첫날 굴려 둔다
     // 병영 소음 풀. 부임 때 한 번 채우고 100일 내내 쓴다 — 저장돼 있으면 그걸 집는다.
     this.ambient = ambient || new AmbientPool(unit);
     this.ambient.load();
@@ -104,12 +116,44 @@ export class Engine {
       day: 0,             // 부임 후 며칠째인가 (표시용)
       streak: 0,          // 무사고 연속 일수 — 사고만이 이걸 0으로 돌린다
       params: initialParams(),
-      notices: [],        // 활성 지침 목록 — E-1에 주입된다
+      notices: [],        // [{text, bans}] — 활성 지침. text는 E-1에 주입되고 bans는 가라를 막는다
+      // 가라 내역 — 게이지 눈금의 내용물.
+      //   active — 지금 돌고 있는 관행 id들. **플레이어에게 통째로는 절대 안 보인다**
+      //   known  — 확인 명부 [{id, on}]. 들이닥쳐서 잡은 것만 오른다. 확인한 그날의 사실이다
+      //   seen   — 장소별 마지막 확인 날짜. 명부가 얼마나 낡았는지의 근거
+      gara: { active: [], known: [], seen: {} },
       yesterday: '',      // 어제의 코드 요약 (⬛ → D의 입력)
       accidents: [],      // [{date, desc}] — 기록
       promoted: false,
       farewell: null,     // 마지막 밤. 한 번 치르면 여기 눕고, 다시 열어도 같은 밤이다
     };
+  }
+
+  /** 옛 저장분 흡수 — 지침이 문자열 배열이던 시절, 가라 내역이 없던 시절. */
+  #migrate() {
+    const s = this.state;
+    s.notices = (s.notices || []).map(n => (typeof n === 'string'
+      ? { text: n, bans: [] }
+      : { text: String(n?.text || ''), bans: (n?.bans || []).filter(id => GARA_BY_ID[id]) }));
+    const g = s.gara || (s.gara = {});
+    g.active = (g.active || []).filter(id => GARA_BY_ID[id]);
+    g.known = (g.known || []).filter(k => GARA_BY_ID[k?.id]);
+    g.seen ||= {};
+  }
+
+  /** 지침이 막아 놓은 관행 전부. 지침을 철회하면 그 문이 다시 열린다. */
+  bannedGara() { return this.state.notices.flatMap(n => n.bans || []); }
+
+  /**
+   * 목록을 수치에 맞춘다. **수치가 원본이고 목록이 따라간다** — 가라가 오르면 새 관행이
+   * 하나 조용히 시작되고, 내리면 하나가 멎는다. 플레이어에게는 아무 통보도 없다:
+   * 계기판은 개수를 말하지만 정체는 말하지 않는다.
+   * 금지가 늘면 천장이 내려가므로 수치 자체가 눌린다 — 지침이 가라를 「제한」한다는 것이 이것이다.
+   */
+  #syncGara() {
+    const s = this.state, banned = this.bannedGara();
+    s.params.gara = Math.min(s.params.gara, garaCap(banned));
+    s.gara.active = syncGaraList(s.gara.active, s.params.gara, { banned, rng: this.garaRng });
   }
 
   /**
@@ -139,8 +183,19 @@ export class Engine {
       accidents: s.accidents.length,
       promoted: s.promoted,
       farewell: s.farewell ? { ...s.farewell } : null,
-      roster: this.roster.soldiers.length,
-      notices: s.notices.slice(),
+      // 병력은 **오늘 부대에 있는 인원**이다. 입원·이탈은 명부에 남아도 병력이 아니다.
+      roster: this.roster.present.length,
+      away: this.roster.absent.map(x => ({ name: x.name, serial: x.serial, ...x.away })),
+      notices: s.notices.map(n => ({ text: n.text, bans: (n.bans || []).slice() })),
+      // 가라 내역 중 **화면이 봐도 되는 것만** 싣는다. active 목록은 여기 없다 —
+      // 계기판이 개수(params.gara)를 말하고, 명부가 확인된 것만 말한다. 그 틈이 이 게임이다.
+      gara: {
+        running: s.params.gara,                     // 몇 개가 돌고 있는가 (= 가라 게이지)
+        known: s.gara.known.map(k => ({ ...k })),   // 그중 확인한 것
+        banned: this.bannedGara(),                  // 지침으로 막아 놓은 것
+        seen: { ...s.gara.seen },                   // 장소별 마지막 확인 날짜
+        cap: garaCap(this.bannedGara()),            // 금지가 내려 놓은 천장
+      },
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
       params: { ...s.params },
     };
@@ -303,9 +358,12 @@ export class Engine {
       // 슬롯이 대사를 뽑기 전에만 도착하면 된다. 실패는 안에서 삼킨다(조용한 부대).
       const ambientJob = this.ensureAmbient();
 
-      // 전역 → 전입. 빈 자리는 그날 바로 채워진다.
+      // 복귀 → 전역 → 전입. 순서가 있다: 병원에서 돌아온 놈이 그날 전역일이면 그날 나간다.
+      // 부재로 빈 자리는 정원으로 세지 않으므로 전입은 전역분만 채운다.
+      const returns = this.roster.returnFrom(date);
       const departures = this.roster.discharge(date);
       const arrivals = this.roster.vacancies() > 0 ? await this.fillRoster() : [];
+      const away = this.roster.absent;
 
       // D. 아침 브리핑 — 하루 스레드의 첫 user/assistant 쌍.
       const excerpt = this.roster.sample(4, this.rng);
@@ -317,6 +375,9 @@ export class Engine {
           difficulty: band(effDiff), bands: bandsOf(s.params),
           yesterday: s.yesterday,
           arrivals: this.dressedAll(arrivals), departures, excerpt: this.dressedAll(excerpt),
+          // 지금 부대에 없는 사람들 — 장면에 세우면 안 된다. 돌아온 사람은 오늘 아침의 뉴스다.
+          away: away.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away', until: x.away.until })),
+          returns: returns.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away' })),
         }),
       });
       let brief;
@@ -332,7 +393,7 @@ export class Engine {
       await ambientJob;   // 첫 슬롯이 대사를 뽑기 전에는 도착해 있어야 한다
       const slotLines = Array.isArray(brief.slots) ? brief.slots.map(x => String(x || '')) : [];
       this.thread.push({ role: 'assistant', content: [brief.briefing, ...slotLines].filter(Boolean).join('\n') });
-      await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures });
+      await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures, returns });
 
       // 첫 슬롯이 대사를 뽑기 전에 소음 풀이 눕는다 — 브리핑을 받고 읽는 동안 뒤에서 날아왔다.
       await ambientJob;
@@ -346,7 +407,7 @@ export class Engine {
           chatter: this.ambientFor(slot.key, 3),
         });
 
-        const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.soldiers) }, {
+        const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.present) }, {
           intel: this.unit.intel.score, macho: this.unit.macho.score,
           comrade: this.unit.comrade.score, difficulty: effDiff,
         }, slot.kind, this.rng);
@@ -359,7 +420,8 @@ export class Engine {
       // 하루 마감 — 드리프트, 조용한 날 평판 회복, 카운터, 날짜 전진.
       // 병사별 멘탈 드리프트 — 부대 분위기가 전원을 쓸어간다. 파라미터 드리프트보다 먼저,
       // 오늘의(드리프트 전) 분위기로 계산한다.
-      for (const man of this.roster.soldiers) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
+      // 부재자는 부대 분위기에 안 쓸린다 — 여기에 없으니까. 멘탈은 나간 날 그대로 얼어 있다.
+      for (const man of this.roster.present) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
       this.roster.save();
 
       s.params = applyDrift(s.params, effDiff, {
@@ -367,7 +429,7 @@ export class Engine {
         baseline: this.unit.difficulty,   // 「오늘이 평소보다 힘든가」는 이 부대 기준이다
       });
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
-      s.yesterday = this.#summarize(date, incidents, arrivals, departures);
+      s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
       s.day += 1;
       if (isPromoted(s.streak)) s.promoted = true;
@@ -385,6 +447,9 @@ export class Engine {
         }, {}),
         arrivals: arrivals.map(a => a.name),
         departures: departures.map(d => d.name),
+        returns: returns.map(r => r.name),
+        // 오늘 사고가 데려간 인원 — 카운터가 0으로 돌아간 것과 별개로 부대가 실제로 빈다.
+        taken: incidents.flatMap(i => i.absences || []).map(a => a.soldier.name),
       };
       const snap = { ...this.snapshot(), today: ledger };
       await this.h.dayEnd?.(snap);
@@ -402,10 +467,10 @@ export class Engine {
     // 멘탈이 연 큰 사건은 **무너진 그 놈들**의 사건이다 — 멘탈 낮은 순으로 고른다.
     // 그 밖의 사건은 가중 추첨(등급·멘탈)이다.
     const involved = cause === 'mental'
-      ? this.roster.soldiers.slice()
+      ? this.roster.present
         .sort((a, b) => (a.mental ?? TUNING.mental.default) - (b.mental ?? TUNING.mental.default))
         .slice(0, event.involved)
-      : pickInvolved(this.roster.soldiers, event.involved, this.rng);
+      : pickInvolved(this.roster.present, event.involved, this.rng);
     if (!involved.length) return null;
     const place = PLACES[event.place]?.label || event.place;
     // 유형은 코드가 안다 — 그림도 기록도 이걸 본다. 판정 콜은 늘지 않는다.
@@ -416,7 +481,10 @@ export class Engine {
       role: 'user',
       content: P.incidentUser({
         slotLabel: slot.label, place, tier, event: event.desc, category: category?.en,
-        involved: this.dressedAll(involved), notices: s.notices,
+        involved: this.dressedAll(involved), notices: s.notices.map(n => n.text),
+        // 그 자리에서 잘라먹고 있던 모서리. 사건이 거기서 자라 나오게 하는 재료다 —
+        // 실린다고 플레이어가 아는 것은 아니다. 확인 명부는 점검으로만 채워진다.
+        garaHere: garaAt(s.gara.active, event.place).map(id => GARA_BY_ID[id].en),
       }),
     });
     let scene;
@@ -455,29 +523,62 @@ export class Engine {
     const verdict = await judging;
 
     s.params = applyDirections(s.params, verdict);
+    this.#syncGara();   // 가라가 움직였으면 관행 하나가 새로 돌기 시작했거나 멎었다
     const escalated = verdict?.outcome === 'escalated';
     // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.
     const stamped = categoryFor(event, escalated);
     // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
     for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated);
     this.roster.save();
+    // 사고가 사람을 데려간다 — 탈영은 사라지고, 부상·자해는 실려 간다. 유형만 보고 코드가 정한다.
+    const absences = escalated ? this.#takeAway(involved, stamped?.id) : [];
     if (escalated) {
-      // 사건이 사고가 됐다 — 무사고 카운터만 0. 날짜도, 병사도, 파라미터도 안 돌아간다.
+      // 사건이 사고가 됐다 — 무사고 카운터는 0, 그리고 자리 하나가 빈다.
+      // 날짜도 파라미터도 안 돌아가고, 빠진 병사는 지워지는 것이 아니라 복귀일을 달고 명부에 남는다.
       this.accidentToday = true;
       s.streak = 0;
-      s.accidents.push({ date: s.date, desc: event.desc, tier, category: stamped?.id || null });
+      s.accidents.push({
+        date: s.date, desc: event.desc, tier, category: stamped?.id || null,
+        away: absences.map(a => ({ name: a.soldier.name, serial: a.soldier.serial, kind: a.kind, until: a.until })),
+      });
     }
-    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped });
-    return { desc: event.desc, tier, escalated, directive: !!directive, category: stamped?.id || null };
+    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped, absences });
+    return {
+      desc: event.desc, tier, escalated, directive: !!directive,
+      category: stamped?.id || null, absences,
+    };
+  }
+
+  /**
+   * 사고가 데려간 사람. 유형이 부재 규칙에 걸릴 때만, 사건당 한 명이다(TUNING.absence).
+   * 데려가는 것은 연루자 중 **첫 번째** — 가중 추첨이 앞세운 사람이고, 멘탈이 연 사건이라면
+   * 제일 무너진 사람이다. 자해·탈영이 아무에게나 안 일어나는 이유가 여기서도 지켜진다.
+   * 복귀일은 여기서 굳는다. 이 굴림은 게임 난수를 쓴다 — 연출 난수와 섞이지 않는다.
+   */
+  #takeAway(involved, categoryId) {
+    const out = [];
+    for (const man of involved.slice(0, TUNING.absence.perIncident)) {
+      const rule = absenceFor(categoryId, this.rng);
+      if (!rule || man.away) continue;
+      const gone = this.roster.sendAway(man, { kind: rule.kind, days: rule.days, since: this.state.date });
+      if (gone) out.push({ soldier: gone, kind: rule.kind, days: rule.days, until: gone.away.until });
+    }
+    return out;
   }
 
   // 어제의 코드 요약 — 다음 날 D의 입력이 된다. 원문 스레드는 닫힌다.
-  #summarize(date, incidents, arrivals, departures) {
+  #summarize(date, incidents, arrivals, departures, returns = []) {
     const parts = [`${date}:`];
     if (!incidents.length) parts.push('사건 없음. 조용한 하루였다.');
     for (const it of incidents) {
       parts.push(`「${it.desc}」(${it.tier === 'major' ? '중대' : '경미'}) — ${it.escalated ? '사고로 확전, 무사고 기록이 깨졌다' : it.directive ? '주임원사 개입으로 수습' : '개입 없이 지나갔다'}.`);
+      // 사람이 빠진 것은 내일의 사실이다 — 어제 요약에 실려 아침 브리핑까지 간다.
+      for (const a of it.absences || []) {
+        const kind = ABSENCE_KINDS[a.kind];
+        parts.push(`${a.soldier.name} ${kind?.label || '부재'} — 복귀 예정 ${a.until}.`);
+      }
     }
+    if (returns.length) parts.push(`복귀 ${returns.map(r => r.name).join('·')}.`);
     if (arrivals.length) parts.push(`전입 ${arrivals.map(a => a.name).join('·')}.`);
     if (departures.length) parts.push(`전역 ${departures.map(d => d.name).join('·')}.`);
     return parts.join(' ');
@@ -506,6 +607,11 @@ export class Engine {
   async interview(serial, question) {
     const soldier = this.roster.bySerial(serial);
     if (!soldier) throw new Error(`명부에 없는 군번: ${serial}`);
+    // 없는 사람은 못 부른다 — 병원에 있거나 부대 밖에 있다. 평판도 안 깎인다(부르지도 못했으니).
+    if (soldier.away) {
+      const kind = ABSENCE_KINDS[soldier.away.kind];
+      throw new Error(`${soldier.name}은(는) 지금 부대에 없다 — ${kind?.label || '부재'}, 복귀 예정 ${soldier.away.until}`);
+    }
     this.#charge();
 
     // 병사의 체감 밴드 — 부대 지표가 아니라 자기 주변이다. 한 칸 오차의 사견이 낀다.
@@ -538,38 +644,79 @@ export class Engine {
   }
 
   /**
-   * I-2. 불시점검 — 군기 점검이다. 계기판이 상시로 열린 게임에서 「밴드를 본다」는
-   * 원래 의의는 죽었다. 대신 이것은 파라미터를 직접 미는 유일한 결정적 레버다:
-   * 들이닥치면 일은 각이 잡히고(가라 −1) 분위기는 가라앉는다(행복 −1). 순수 코드다.
-   * LLM은 그 자리에서 눈에 띈 것(점검 소견)만 쓴다 — 장소-대응표는 그 장면의 재료로 남는다.
+   * I-2. 불시점검 — 군기 점검이다. 이제 이것이 **가라 내역을 사는 유일한 창구**다.
+   * 계기판은 「가라 4」라고만 말한다. 그 넷이 무엇인지는 들이닥쳐야 안다.
+   *
+   * 한 번 들이닥치면 세 가지가 같이 일어난다:
+   *   · 그 자리의 관행 중 일부가 적발돼 확인 명부에 오른다 — **일부다.** 나머지는 제때 치웠다.
+   *     적발 확률은 부대 지능이 정한다: 머리 좋은 부대일수록 절반쯤만 걸린다.
+   *   · 없어진 것은 명부에서 지워진다. 들어가 봤으면 아니까.
+   *   · 파라미터가 확정으로 밀린다(가라 −1 · 행복 −1). 그 −1은 「각이 잡혔다」는 **일반 효과**라
+   *     아무 관행이나 하나를 멎게 한다 — 방금 적발한 그것을 골라 끊지는 않는다.
+   *
+   * 마지막 줄이 중요하다. **점검은 정체를 사고, 관행을 끊는 것은 지침의 일이다.** 적발한 것을
+   * 점검이 스스로 끊게 해 봤더니, 한 자리에 도는 관행이 평균 한 건이라 산 정보가 같은 개입의
+   * 부수효과에 그대로 지워졌다(실측: 털고 나면 명부가 언제나 비었다). 자세한 것은 params.js의
+   * syncGaraList 주석에 남겼다.
+   * LLM은 코드가 정해 준 적발 목록을 장면으로 옮겨 쓸 뿐이다. 무엇이 걸리는지는 안 정한다.
    */
   async inspect(placeKey) {
     const place = PLACES[placeKey];
     if (!place) throw new Error(`대응표에 없는 장소: ${placeKey}`);
+    const s = this.state;
     this.#charge();
 
+    // 무엇이 걸리고 무엇이 숨는가 — 전부 코드다. 호출보다 먼저 끝난다.
+    const res = inspectGara({
+      active: s.gara.active, known: s.gara.known, placeKey,
+      intel: this.unit.intel.score, on: s.date, rng: this.garaRng,
+    });
+    s.gara.known = res.known;
+    s.gara.seen[placeKey] = s.date;
+
     const NAMES = { gara: 'corner-cutting', happy: 'morale', conflict: 'friction-and-abuse' };
-    const readings = Object.fromEntries(place.reveals.map(k => [NAMES[k], band(this.state.params[k])]));
+    const readings = Object.fromEntries(place.reveals.map(k => [NAMES[k], band(s.params[k])]));
     const findings = await this.#judge({
       label: `불시점검 · ${place.label}`,
       system: P.inspectSystem(this.unit),
-      user: P.inspectUser({ place: place.label, readings }),
+      user: P.inspectUser({
+        place: place.label, readings,
+        found: res.spotted.map(id => GARA_BY_ID[id].en),
+      }),
       schema: null,
     });
+
     // 효과는 장면과 무관하게 확정이다 — LLM이 폭을 정하는 자리는 이 게임에 없다.
-    this.state.params = applyInspection(this.state.params);
-    return { place: place.label, findings, effect: { ...TUNING.inspect } };
+    // 명부는 여기서 안 건드린다. 무엇이 멎었는지는 주임원사가 알 길이 없고, 방금 확인한 것이
+    // 조용히 멎었다면 그 줄은 그날부터 낡기 시작한다 — 그게 이 게임에 남겨 둔 안개다.
+    s.params = applyInspection(s.params);
+    this.#syncGara();
+
+    // 놓친 것의 **개수조차** 안 돌려준다. 「3건 중 1건 적발」이라고 말해 버리면
+    // 그 자리의 진짜 개수가 통째로 새고, 숨긴다는 것 자체가 의미를 잃는다.
+    return {
+      place: place.label, findings, effect: { ...TUNING.inspect },
+      spotted: res.spotted.map(id => GARA_BY_ID[id]),
+    };
   }
 
   /**
    * N. 공지 — 게시는 저장이고, 판정은 방향뿐이다. 반응 한 줄은 화면에서 끝난다.
    * 텍스트는 활성 지침 목록에 들어가 이후 모든 사건 생성(E-1)에 주입된다.
+   *
+   * 여기에 두 번째 일이 붙었다: 판정자가 **이 공지가 어느 관행의 문을 닫는가**를 같이 돌려준다.
+   * 판정자가 보는 것은 이 군대에 존재하는 관행의 static 대장뿐이고 — 무엇이 지금 돌고 있는지는
+   * 여전히 하나도 못 본다 — 그중 어느 것이 실제로 돌고 있었는지는 코드가 혼자 맞대 본다.
+   * 막힌 관행은 그 자리에서 멎고(가라가 그만큼 내려간다) 지침이 서 있는 한 다시 안 생긴다.
+   *
+   * 실제로 돌던 것을 끊었으면 **판정자의 가라 방향은 버린다.** 끊은 개수가 이미 그 공지의
+   * 가라 효과이기 때문이다 — 여기에 「분위기상 가라가 내려갈 듯」을 더하면 같은 것을 두 번 센다.
    */
   async postNotice(text) {
     const t = String(text || '').trim();
     if (!t) throw new Error('빈 공지는 게시할 수 없다');
+    const s = this.state;
     this.#charge();
-    this.state.notices.push(t);
 
     let out;
     try {
@@ -578,15 +725,35 @@ export class Engine {
         user: P.noticeUser(t), schema: P.NOTICE_SCHEMA,
       });
     } catch {
-      out = { gara: 'same', happy: 'same', conflict: 'same', reaction: '(반응이 들리지 않았다)' };
+      out = { gara: 'same', happy: 'same', conflict: 'same', bans: [], reaction: '(반응이 들리지 않았다)' };
     }
-    this.state.params = applyDirections(this.state.params, out);
-    return { reaction: String(out.reaction || '') };
+
+    const bans = [...new Set((out.bans || []).filter(id => GARA_BY_ID[id]))];
+    s.notices.push({ text: t, bans });
+    // 막은 것 중 **실제로 돌고 있던** 것들. 이 개수가 곧 이 공지가 끊어낸 가라다.
+    const cut = s.gara.active.filter(id => bans.includes(id));
+
+    s.params = applyDirections(s.params, cut.length ? { ...out, gara: 'same' } : out);
+    s.params.gara = Math.max(0, s.params.gara - cut.length);
+    this.#syncGara();
+    // 끊긴 것은 확인 명부에서도 내린다 — 내가 끊었으니 안 돌아간다는 것은 안다.
+    s.gara.known = s.gara.known.filter(k => !cut.includes(k.id));
+
+    return {
+      reaction: String(out.reaction || ''),
+      banned: bans.map(id => GARA_BY_ID[id]),
+      cut: cut.map(id => GARA_BY_ID[id]),
+    };
   }
 
-  /** 활성 지침 철회 — 게시의 반대. 판정도 호출도 없다. 평판도 안 깎인다. */
+  /**
+   * 활성 지침 철회 — 게시의 반대. 판정도 호출도 없다. 평판도 안 깎인다.
+   * 막아 뒀던 관행의 문이 다시 열린다. 다만 **끊긴 것이 되살아나지는 않는다** —
+   * 가라 수치는 내려간 자리에 그대로 있고, 문이 열렸을 뿐이다. 다시 차오르는 것은 시간의 몫이다.
+   */
   removeNotice(index) {
     this.state.notices.splice(index, 1);
+    this.#syncGara();
   }
 
   // ── F. 환송회 — 마지막 밤. 100일을 찍은 그날의 끝에 딱 한 콜 ──
