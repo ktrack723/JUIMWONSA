@@ -36,10 +36,10 @@ function bannedKeys(node, path = '$', found = []) {
 // export되는 *_SCHEMA = 실제로 API에 보내는 최상위 스키마 전부.
 const SCHEMAS = Object.entries(P).filter(([k, v]) => k.endsWith('_SCHEMA') && v && typeof v === 'object');
 
-test('내보내는 스키마가 하나도 빠짐없이 존재한다 — A·P·D·E-3·N 다섯', () => {
+test('내보내는 스키마가 하나도 빠짐없이 존재한다 — A·P·D·E-3·N·F 여섯', () => {
   const names = SCHEMAS.map(([k]) => k).sort();
   assert.deepEqual(names,
-    ['AMBIENT_SCHEMA', 'BRIEFING_SCHEMA', 'ESCALATION_SCHEMA', 'NOTICE_SCHEMA', 'RECRUIT_SCHEMA']);
+    ['AMBIENT_SCHEMA', 'BRIEFING_SCHEMA', 'ESCALATION_SCHEMA', 'FAREWELL_SCHEMA', 'NOTICE_SCHEMA', 'RECRUIT_SCHEMA']);
 });
 
 for (const [name, schema] of SCHEMAS) {
@@ -78,4 +78,7 @@ test('슬롯 아홉 개 상한은 스키마가 아니라 프롬프트 지시와 
   // 앰비언트도 같다 — 줄 수는 지시로 말하고, 넘치거나 모자란 것은 ambient.js가 받아낸다
   assert.ok(!('maxItems' in P.AMBIENT_SCHEMA.properties.lines));
   assert.match(P.AMBIENT_SCHEMA.properties.lines.description, /three or four lines each/);
+  // 환송회도 같다 — 인사하는 인원 수는 코드가 고른 명단이 정하고, 스키마는 안 센다
+  assert.ok(!('maxItems' in P.FAREWELL_SCHEMA.properties.lines));
+  assert.match(P.FAREWELL_SCHEMA.properties.lines.description, /one entry per man/);
 });

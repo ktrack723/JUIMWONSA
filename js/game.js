@@ -419,7 +419,7 @@ function makeHandlers() {
     dayEnd: async (snap) => {
       renderHud(); renderTimeline(9); renderNotices();
       saveCampaign();
-      if (snap.promoted) return showPromotion(snap);
+      if (snap.promoted) return await showPromotion(snap);
       $('#dayend-text').innerHTML =
         `저녁점호 이상 무. <b>무사고 ${snap.streak}일차</b>로 하루를 닫는다.<br>` +
         `다음 날: ${escapeHtml(snap.date)} (${escapeHtml(weekdayOf(snap.date))}) · 진급 심사일 ${escapeHtml(snap.reviewDate)}`;
@@ -442,14 +442,83 @@ async function runOneDay() {
   $('#btn-next-day').textContent = '다음 날 아침점호 ▶';
 }
 
-function showPromotion(snap) {
+async function showPromotion(snap) {
   const acc = snap.accidents;
   $('#promo-text').innerHTML =
     `<b>무사고 연속 ${snap.goal}일. ${escapeHtml(snap.date)} 부로 원사 진급 상신이 통과됐다.</b><br>` +
     (acc ? `그동안 사고 ${acc}건을 딛고 온 길이다. 병사들은 아무도 축하한다는 말을 안 했지만, 오늘 배식줄이 이상하게 조용했다.`
-      : `부임 후 단 한 건도 터뜨리지 않았다. 완벽한 100일 — 심사장에서 아무도 그 말을 믿지 않았다.`);
+      : `부임 후 단 한 건도 터뜨리지 않았다. 완벽한 100일 — 심사장에서 아무도 그 말을 믿지 않았다.`) +
+    `<br>진급은 이 부대를 뜬다는 뜻이다. <b>오늘이 마지막 밤이다.</b>`;
   $('#promo-panel').classList.remove('hidden');
   sfx.fanfare();
+  await runFarewell();
+}
+
+// ── 마지막 씬 — 환송회 ─────────────────────────────────
+// 거하게 차려지느냐 아무도 없느냐는 **행복도**가 정한다(engine.farewell → params.farewellTone).
+// 화면은 그 갈래를 고르지 않는다 — 무대를 어디로 옮기고 어떤 소리를 낼지만 안다.
+// 무대는 **병사들이 어디 있느냐**를 그린다 — 판때기가 어디로 모이는지가 곧 그 밤의 답이다.
+// 아무도 안 온 밤에 무대를 식당으로 옮기면 빈 식당에 열두 명이 서 있게 된다.
+// 그 밤의 판때기는 생활관에 그대로 있다: 아무도 안 나온 것이지 아무도 없는 게 아니다.
+const FAREWELL_SCENES = {
+  grand: {
+    title: '환송회', head: '식당 · 소등 시간이 한참 지났다',
+    slot: { key: 'farewell', label: '환송회', kind: 'meal', time: '20:30', at: 'messhall' },
+    note: '병사들이 거하게 차려 놓고 기다리고 있었다. 행복한 부대는 사람을 그냥 안 보낸다.',
+    sound: () => sfx.love(),
+  },
+  thin: {
+    title: '배웅', head: '식당 · 불은 반만 켜져 있다',
+    slot: { key: 'farewell', label: '배웅', kind: 'rest', time: '21:30', at: 'messhall' },
+    note: '몇 명이 남아 있었다. 차린 것은 없었지만, 그래도 누군가는 남아 있었다.',
+    sound: () => sfx.click(),
+  },
+  none: {
+    title: '전출', head: '식당은 비었고, 불은 생활관에만 켜져 있다',
+    slot: { key: 'farewell', label: '전출', kind: 'sleep', time: '21:30', at: 'barracks' },
+    note: '아무도 나오지 않았다. 100일을 버틴 것은 당신이고, 그 100일을 견딘 것은 그들이다.',
+    sound: () => sfx.trombone(),
+  },
+};
+
+async function runFarewell() {
+  const panel = $('#farewell-panel'), retry = $('#btn-farewell-retry'), end = $('#btn-farewell-end');
+  panel.classList.add('hidden');
+  retry.classList.add('hidden');
+  end.classList.add('hidden');
+
+  let out;
+  try {
+    out = await withLoading('마지막 밤 — 부대로 돌아가는 중', () => state.engine.farewell());
+  } catch (e) {
+    toast(errMsg(e));
+    $('#farewell-text').textContent = '회선이 끊겨 마지막 밤이 열리지 못했다. 다시 시도하라.';
+    retry.classList.remove('hidden');
+    panel.classList.remove('hidden');
+    return;
+  }
+  saveCampaign();
+
+  const sc = FAREWELL_SCENES[out.tone] || FAREWELL_SCENES.thin;
+  markIncident(false);
+  renderTimeline(9);
+  stageTo(sc.slot, []);
+  sc.sound();
+  await addEntry('farewell', `[${sc.title} · ${sc.head}]\n${out.scene}`);
+  // 입을 여는 놈은 코드가 고른 그 몇 명뿐이다 — 엔진이 명부 밖 이름을 이미 걸러 놓았다.
+  for (const l of out.lines) {
+    const man = state.roster.bySerial(l.serial);
+    const who = man ? `${rankLine(state.unit, man, state.engine.state.date)} ${man.name}` : l.name;
+    await addEntry('sendoff', `${who}: ${l.text}`);
+  }
+  if (out.closing) await addEntry('closing', out.closing);
+
+  $('#farewell-text').innerHTML = `<b>${escapeHtml(sc.note)}</b><br>` +
+    `${escapeHtml(state.unit.name)} 근무 끝. 무사고 ${TUNING.goal}일 · 사고 누계 ${state.engine.snapshot().accidents}건.`;
+  end.classList.remove('hidden');
+  panel.classList.remove('hidden');
+  // 게임의 마지막 버튼이다 — 접혀 있는 자리에서 끝나지 않게 화면으로 끌어온다.
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ── 사건 대응 입력 ──────────────────────────────────────
@@ -593,6 +662,13 @@ function wire() {
   $('#btn-inspect-go').addEventListener('click', doInspect);
   $('#btn-notice-post').addEventListener('click', doNotice);
   $('#btn-next-day').addEventListener('click', () => { sfx.click(); runOneDay(); });
+  $('#btn-farewell-retry').addEventListener('click', () => { sfx.click(); runFarewell(); });
+  $('#btn-farewell-end').addEventListener('click', () => {
+    sfx.click();
+    $('#farewell-panel').classList.add('hidden');
+    renderUnits();
+    show('unit');
+  });
 
   const toggleConsole = () => $('#console-panel').classList.toggle('hidden');
   $('#console-toggle').addEventListener('click', toggleConsole);

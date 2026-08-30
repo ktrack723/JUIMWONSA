@@ -376,3 +376,49 @@ test('멘탈이 여는 문은 전우애와 무관하다 — 한 사람이 무너
   assert.ok(at(10) > 0, '전우애가 멘탈 위험까지 막아 버렸다');
   assert.equal(at(10), at(1), '멘탈 위험이 전우애를 탄다');
 });
+
+// ── 마지막 씬 — 환송회는 행복도가 연다 ──────────────────
+test('행복도가 마지막 밤을 가른다 — 높으면 환송회, 낮으면 아무도 없다', () => {
+  assert.equal(PM.farewellTone(10), 'grand');
+  assert.equal(PM.farewellTone(PM.TUNING.farewell.grand), 'grand', '문턱 자리가 환송회로 안 떨어졌다');
+  assert.equal(PM.farewellTone(PM.TUNING.farewell.grand - 1), 'thin');
+  assert.equal(PM.farewellTone(PM.TUNING.farewell.empty), 'none', '문턱 자리가 빈 방으로 안 떨어졌다');
+  assert.equal(PM.farewellTone(0), 'none');
+  // 눈금 전 구간이 아는 갈래로만 떨어진다 — 화면이 모르는 결이 나오면 씬이 안 열린다
+  for (let v = 0; v <= 10; v++) assert.ok(PM.FAREWELL_TONES.includes(PM.farewellTone(v)));
+});
+
+test('갈래는 행복도만 본다 — 무사고 기록도 평판도 마지막 밤을 못 산다', () => {
+  // farewellTone은 행복도 한 값만 받는다. 다른 파라미터가 낄 자리가 시그니처에 없다.
+  assert.equal(PM.farewellTone.length, 1);
+  assert.equal(PM.farewellTone(9), PM.farewellTone(9));
+});
+
+test('아무도 안 온 밤에는 입을 여는 놈이 0이다', () => {
+  const men = Array.from({ length: 5 }, (_, i) => ({ name: `병${i}`, mental: 8 - i, joined: '2026-01-01' }));
+  assert.deepEqual(PM.pickSendoff(men, 'none'), []);
+  assert.equal(PM.pickSendoff(men, 'thin').length, PM.TUNING.farewell.speakers.thin);
+  assert.equal(PM.pickSendoff(men, 'grand').length, PM.TUNING.farewell.speakers.grand);
+});
+
+test('인사는 잘 버틴 놈들이 한다 — 사건 연루자 선정의 정확한 반대편이다', () => {
+  const men = [
+    { name: '무너진놈', mental: 1, joined: '2026-01-01' },
+    { name: '버틴놈', mental: 9, joined: '2026-03-01' },
+    { name: '중간놈', mental: 5, joined: '2026-02-01' },
+  ];
+  assert.deepEqual(PM.pickSendoff(men, 'grand').map(m => m.name), ['버틴놈', '중간놈', '무너진놈']);
+  assert.deepEqual(PM.pickSendoff(men, 'thin').map(m => m.name), ['버틴놈']);
+  // 정원보다 적어도 안 죽는다 (전역이 겹쳐 명부가 빈 경우)
+  assert.deepEqual(PM.pickSendoff([], 'grand'), []);
+});
+
+test('멘탈이 같으면 짬 순이다 — 굴리지 않는다', () => {
+  const men = [
+    { name: '후임', mental: 6, joined: '2026-05-01' },
+    { name: '고참', mental: 6, joined: '2025-11-01' },
+  ];
+  assert.deepEqual(PM.pickSendoff(men, 'thin').map(m => m.name), ['고참']);
+  // 두 번 불러도 같다 — 마지막 밤은 굴리는 자리가 아니다
+  assert.deepEqual(PM.pickSendoff(men, 'grand'), PM.pickSendoff(men, 'grand'));
+});

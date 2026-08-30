@@ -2,7 +2,7 @@
 //
 // 구조도는 어느 데이터가 어느 프롬프트에 들어가는지를 못박아 놓은 그림이다.
 // 한 칸이라도 새거나 빠지면 그건 구조도와 다른 게임이다. 필드마다 표식을 심어
-// 블록 전부(U·A·P·D·E-1·E-2·E-3·I-1·I-2·N)에 그 표식이 나타나는지 전수로 확인한다.
+// 블록 전부(U·A·P·D·E-1·E-2·E-3·I-1·I-2·N·F)에 그 표식이 나타나는지 전수로 확인한다.
 //
 // §6의 차단 표가 곧 이 파일이다:
 //   A 병영 소음  → 파라미터·명부·카운터를 **전부** 못 본다 (그래서 캐시될 수 있다)
@@ -11,6 +11,8 @@
 //   I-1 면담    → 부대 전체 파라미터를 못 본다 (자기 체감 밴드만)
 //   P 생성      → 현재 파라미터·명부를 못 본다
 //   D 브리핑    → 수치는 못 본다 (밴드까지만)
+//   F 환송회    → 결(거하게/조촐/아무도 없음)을 **못 고른다** — 코드가 정해서 넘긴다.
+//                 파라미터는 사기 밴드 하나뿐이고, 지침·어제·사고 누계는 못 본다
 //   평판        → 어떤 LLM 판정도 못 움직인다 (스키마에 자리 자체가 없다)
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,6 +69,10 @@ const I1 = P.interviewSystem(unit) + '\n'
   + '\n' + P.interviewFollowup('FOLLOWUP표식');
 const I2 = P.inspectSystem(unit) + '\n' + P.inspectUser({ place: M.place, readings: { 'corner-cutting': M.bandGara } });
 const N = P.noticeSystem(unit) + '\n' + P.noticeUser(M.notice);
+const F = P.farewellSystem(unit) + '\n' + P.farewellUser({
+  tone: 'grand', morale: M.bandHappy, clean: false, speakers: [soldier],
+});
+const Fnone = P.farewellUser({ tone: 'none', morale: M.bandHappy, clean: true, speakers: [] });
 
 const has = (hay, needle) => hay.includes(needle);
 
@@ -276,6 +282,40 @@ test('N의 출력은 방향 셋 + 반응 한 줄뿐이다 — 평판이 낄 자�
   assert.deepEqual(Object.keys(P.NOTICE_SCHEMA.properties).sort(), ['conflict', 'gara', 'happy', 'reaction']);
 });
 
+// ── F. 환송회 — 마지막 밤. 갈래는 코드가 정한다 ─────────
+test('F는 결·사기 밴드·입을 여는 놈들만 받는다', () => {
+  assert.ok(has(F, 'grand'), 'F에 코드가 정한 결이 없다');
+  assert.ok(has(F, M.bandHappy), 'F에 사기 밴드가 없다');
+  assert.ok(has(F, M.sheet), 'F에 인사할 병사의 본문이 없다 — 인사가 아무나의 인사가 된다');
+  assert.ok(has(F, M.cult), 'F의 system에 부대 프롬프트가 없다');
+});
+
+test('F는 결을 못 고른다 — 스키마에 갈래 자리가 아예 없다', () => {
+  const keys = Object.keys(P.FAREWELL_SCHEMA.properties).sort();
+  assert.deepEqual(keys, ['closing', 'lines', 'scene']);
+  const json = JSON.stringify(P.FAREWELL_SCHEMA);
+  // 「anything」이 thin을 품는다 — 낱말 경계로 본다
+  assert.ok(!/\b(grand|thin|none|tone|shape)\b/i.test(json), 'F의 출력에 결을 되돌릴 자리가 생겼다 — 모형이 결말을 고르게 된다');
+});
+
+test('F는 파라미터도 지침도 어제도 못 본다 — 사기 밴드 하나뿐이다', () => {
+  for (const k of ['bandGara', 'bandConf', 'bandDiff', 'yesterday', 'notice', 'directive', 'scene', 'question']) {
+    assert.ok(!has(F, M[k]), `F에 ${k}가 새어 들어갔다`);
+  }
+});
+
+test('아무도 안 온 밤은 빈 방이 명시되고 대사 자리가 비어 있다', () => {
+  assert.ok(!has(Fnone, M.sheet), '아무도 없는 밤에 병사 본문이 실렸다');
+  assert.ok(/nobody/i.test(Fnone), '빈 방이라는 못이 안 박혔다');
+  assert.ok(/lines array must be empty/i.test(P.farewellSystem(unit)), '대사를 비우라는 못이 안 박혔다');
+  assert.ok(/do not have one man appear late/i.test(P.farewellSystem(unit)), '빈 방을 위로하지 말라는 못이 안 박혔다');
+});
+
+test('F는 이름을 지어낼 수 없다 — 나열된 놈만 입을 연다', () => {
+  const desc = P.FAREWELL_SCHEMA.properties.lines.items.properties.name.description;
+  assert.ok(/Never invent a name/i.test(desc), '이름 창작 금지 못이 스키마에서 빠졌다');
+});
+
 test('어느 판정 스키마에도 평판이 없다 — 개입 횟수가 곧 평판이다', () => {
   for (const s of [P.ESCALATION_SCHEMA, P.NOTICE_SCHEMA]) {
     assert.ok(!('rep' in s.properties));
@@ -290,13 +330,14 @@ test('밴드 자리에 수치가 들어오면 프롬프트가 만들어지기 �
   assert.throws(() => P.outcomeUser({ directive: 'x', standing: 3 }));
   assert.throws(() => P.interviewOpen({ soldier, felt: { room: 2, work: 'mid', mood: 'mid' }, honesty: 'candid', question: 'q' }));
   assert.throws(() => P.inspectUser({ place: 'p', readings: { morale: 5 } }));
+  assert.throws(() => P.farewellUser({ tone: 'grand', morale: 9, clean: true, speakers: [] }));
 });
 
 // ── 전송 스키마 대장 ────────────────────────────────────
-test('보내는 스키마는 다섯뿐이다 — A·P·D·E-3·N', () => {
+test('보내는 스키마는 여섯뿐이다 — A·P·D·E-3·N·F', () => {
   const schemas = Object.keys(P).filter(k => k.endsWith('_SCHEMA'));
   assert.deepEqual(schemas.sort(),
-    ['AMBIENT_SCHEMA', 'BRIEFING_SCHEMA', 'ESCALATION_SCHEMA', 'NOTICE_SCHEMA', 'RECRUIT_SCHEMA']);
+    ['AMBIENT_SCHEMA', 'BRIEFING_SCHEMA', 'ESCALATION_SCHEMA', 'FAREWELL_SCHEMA', 'NOTICE_SCHEMA', 'RECRUIT_SCHEMA']);
 });
 
 // ── §9.4 한글 누출 검사 — 지시는 영어다 ─────────────────
@@ -331,8 +372,10 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
     'I-1': P.interviewSystem(ascii) + P.interviewOpen({ soldier: aSoldier, felt: { room: 'mid', work: 'mid', mood: 'low' }, honesty: 'guarded', question: 'how is it' }) + P.interviewFollowup('and then'),
     'I-2': P.inspectSystem(ascii) + P.inspectUser({ place: 'yard', readings: { morale: 'low' } }),
     N: P.noticeSystem(ascii) + P.noticeUser('no soccer'),
+    F: P.farewellSystem(ascii) + P.farewellUser({ tone: 'grand', morale: 'very-high', clean: true, speakers: [aSoldier] }),
+    'F(아무도없음)': P.farewellUser({ tone: 'none', morale: 'very-low', clean: false, speakers: [] }),
     // 스키마도 모형에게 간다 — 구조화 출력이 막히면 시스템 프롬프트에 통째로 붙는다.
-    스키마: ['AMBIENT', 'RECRUIT', 'BRIEFING', 'ESCALATION', 'NOTICE'].map(k => JSON.stringify(P[`${k}_SCHEMA`])).join(''),
+    스키마: ['AMBIENT', 'RECRUIT', 'BRIEFING', 'ESCALATION', 'NOTICE', 'FAREWELL'].map(k => JSON.stringify(P[`${k}_SCHEMA`])).join(''),
   };
   // 한글 전 영역 — 조합 자모 · 호환 자모 · 확장 A · 음절 · 반각까지 전부 본다.
   const HANGUL = /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff\uffa0-\uffdc]/g;
@@ -350,7 +393,7 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
 
 test('그래도 출력 언어 고정은 생성 블록 전부에 붙어 있다', () => {
   const KO = /Output is Korean|output in Korean/;
-  for (const t of [A, Pb, D, I1, I2, N]) assert.ok(KO.test(t), '출력 언어 고정이 빠진 블록이 있다');
+  for (const t of [A, Pb, D, I1, I2, N, F]) assert.ok(KO.test(t), '출력 언어 고정이 빠진 블록이 있다');
 });
 
 // ── 콜 비용 — 매일 정가로 나가는 것을 지킨다 ────────────

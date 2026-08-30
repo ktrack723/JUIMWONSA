@@ -14,6 +14,9 @@
 // 일과 중 주임원사가 할 수 있는 일은 셋 — 면담(I-1)·불시점검(I-2)·공지(N).
 // 전부 평판 −1. 어떤 LLM 판정도 평판을 못 움직인다 — 개입 횟수가 곧 평판이다.
 //
+// 100일을 찍으면 하루가 아니라 임기가 끝난다 — 그 밤이 환송회(F)다. 부임당 한 콜이고,
+// 거하게 차려지느냐 아무도 없느냐는 **행복도가 코드로** 정한다 (farewell 메서드).
+//
 // 캐시 설계 (기획서 §7):
 //   · D·E-1·E-2는 같은 스레드를 공유한다 — system 동일, messages에 쌓인다.
 //   · 스레드는 하루가 끝나면 닫고, 다음 날은 어제의 코드 요약으로 시작한다.
@@ -47,7 +50,7 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
-  minMentalOf, applyInspection, categoryFor, PLACES, TUNING,
+  minMentalOf, applyInspection, categoryFor, farewellTone, pickSendoff, PLACES, TUNING,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -105,6 +108,7 @@ export class Engine {
       yesterday: '',      // 어제의 코드 요약 (⬛ → D의 입력)
       accidents: [],      // [{date, desc}] — 기록
       promoted: false,
+      farewell: null,     // 마지막 밤. 한 번 치르면 여기 눕고, 다시 열어도 같은 밤이다
     };
   }
 
@@ -131,6 +135,7 @@ export class Engine {
       reviewDate: reviewDate(s.date, s.streak),
       accidents: s.accidents.length,
       promoted: s.promoted,
+      farewell: s.farewell ? { ...s.farewell } : null,
       roster: this.roster.soldiers.length,
       notices: s.notices.slice(),
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
@@ -549,5 +554,54 @@ export class Engine {
   /** 활성 지침 철회 — 게시의 반대. 판정도 호출도 없다. 평판도 안 깎인다. */
   removeNotice(index) {
     this.state.notices.splice(index, 1);
+  }
+
+  // ── F. 환송회 — 마지막 밤. 100일을 찍은 그날의 끝에 딱 한 콜 ──
+
+  /**
+   * 진급이 통과된 날 밤. 원사 진급은 이 부대를 뜬다는 뜻이라 마지막 씬이 여기서 열린다.
+   *
+   * **무엇이 열리는지는 행복도 하나가 정한다** (params.js의 farewellTone) — 무사고 기록도
+   * 평판도 아니다. 기록은 주임원사가 가져가는 것이고 밥상은 병사들이 차리는 것이라서다.
+   * 높으면 거하게 차려 놓고 앞에 나와 인사하고, 낮으면 식당에 아무도 없다.
+   * 누가 입을 여는지도 코드가 고른다 — 사건 연루자 선정의 정확한 반대편이다(잘 버틴 순).
+   *
+   * 결과는 캠페인 상태에 눕는다. 화면을 다시 열어도 같은 밤이고, 콜은 다시 안 나간다.
+   */
+  async farewell() {
+    const s = this.state;
+    if (s.farewell) return s.farewell;
+    const tone = farewellTone(s.params.happy);
+    const speakers = pickSendoff(this.roster.soldiers, tone);
+
+    const out = await this.#gen({
+      label: '환송회',
+      system: P.farewellSystem(this.unit),
+      messages: [{ role: 'user', content: P.farewellUser({
+        tone,
+        morale: band(s.params.happy),
+        clean: s.accidents.length === 0,
+        speakers: this.dressedAll(speakers),
+      }) }],
+      schema: P.FAREWELL_SCHEMA, maxTokens: 4000,
+    });
+
+    // 이름은 코드가 고른 그 몇 명 밖으로 안 나간다 — 없는 병사가 인사하고 가면
+    // 마지막 장면이 명부에 대해 거짓말을 한다. 아무도 안 온 밤은 대사 자체가 없다.
+    const allowed = new Map(speakers.map(x => [x.name, x]));
+    const lines = tone === 'none' ? [] : (Array.isArray(out?.lines) ? out.lines : [])
+      .map(l => ({ name: String(l?.name || '').trim(), text: String(l?.text || '').trim() }))
+      .filter(l => l.text && allowed.has(l.name))
+      .map(l => ({ ...l, serial: allowed.get(l.name).serial }));
+
+    s.farewell = {
+      tone,
+      scene: String(out?.scene || '').trim(),
+      lines,
+      closing: String(out?.closing || '').trim(),
+      speakers: speakers.map(x => x.serial),
+    };
+    await this.h.farewell?.({ ...s.farewell });
+    return s.farewell;
   }
 }

@@ -8,6 +8,7 @@
 //   · 사건 후보 풀과 심각도 티어 (LLM은 장면만 쓴다 — 풀 밖 창작은 없다)
 //   · 사고 유형 열둘과 유형별 그림 자리 (사건이 확전하면 유형이 넘어가는 표까지)
 //   · 날짜 규칙 (부임일 = 오늘 − 100일 · 계절 · 주말)
+//   · 마지막 씬의 갈래 (행복도가 환송회를 여는가, 아무도 없는가 — 그리고 누가 입을 여는가)
 //   · 파라미터 → 5단계 밴드 변환 (수치는 프롬프트에 절대 안 나간다)
 //
 // 눈금은 연애조작단 규칙 그대로 — **0~10, 한 걸음 1칸.** 화면의 숫자가 곧
@@ -99,6 +100,12 @@ export const TUNING = {
   // 불시점검(군기 점검)의 효과 — 순수 코드다. 들이닥치면 일은 각이 잡히고(가라↓)
   // 분위기는 가라앉는다(행복↓). LLM은 점검 소견(장면)만 쓴다.
   inspect: { gara: -1, happy: -1 },
+
+  // 환송회 — 100일을 찍고 부대를 뜨는 마지막 밤. 병사들이 나오느냐 마느냐는
+  // **행복도 하나**가 정한다. 눈금은 밴드 경계 그대로다(high는 7부터, low는 3까지) —
+  // 계기판에서 「높다/낮다」로 읽히는 자리가 곧 씬이 갈리는 자리여야 한다.
+  // speakers는 그 자리에서 입을 여는 인원. 아무도 안 나온 밤은 당연히 0이다.
+  farewell: { grand: 7, empty: 3, speakers: { grand: 4, thin: 1, none: 0 } },
 
   roster: { size: 16 },
   goal: 100,   // 무사고 연속 100일
@@ -511,6 +518,42 @@ export function endOfDayStreak(streak, accidentToday) {
 }
 
 export const isPromoted = streak => streak >= TUNING.goal;
+
+// ── 마지막 씬 — 환송회 ────────────────────────────────────
+// 100일을 찍으면 원사 진급이고, 진급은 이 부대를 뜬다는 뜻이다. 그 마지막 밤이
+// 어떤 모습이냐를 정하는 것은 무사고 기록도 평판도 아니라 **행복도**다:
+// 기록은 주임원사가 가져가는 것이고, 밥상은 병사들이 차리는 것이라서다.
+export const FAREWELL_TONES = ['grand', 'thin', 'none'];
+
+/**
+ * 마지막 씬의 결. 행복도 하나가 정한다 — LLM은 이 갈래를 못 고른다.
+ *   grand — 거하게 차린다. 병사들이 앞에 나와 인사한다
+ *   thin  — 몇 명만 어정쩡하게 남는다
+ *   none  — 아무도 없다. 위병소까지 혼자 걸어 나간다
+ */
+export function farewellTone(happy) {
+  const h = clamp(happy);
+  if (h >= TUNING.farewell.grand) return 'grand';
+  if (h <= TUNING.farewell.empty) return 'none';
+  return 'thin';
+}
+
+/** 그 자리에서 입을 여는 인원. 결마다 다르고, 아무도 없는 밤은 0이다. */
+export const sendoffSize = tone => TUNING.farewell.speakers[tone] || 0;
+
+/**
+ * 환송회에서 입을 여는 놈들 — **잘 버틴 순**(멘탈 내림차순)이고, 같으면 짬 순이다.
+ * 사건 연루자 선정(pickInvolved)의 정확한 반대편이다: 사고는 무너진 놈들에게서 나고,
+ * 인사는 버틴 놈들이 한다. 난수를 안 쓴다 — 마지막 밤은 굴리는 자리가 아니다.
+ */
+export function pickSendoff(roster, tone) {
+  const n = sendoffSize(tone);
+  if (!n) return [];
+  const m = s => s.mental ?? TUNING.mental.default;
+  return roster.slice()
+    .sort((a, b) => m(b) - m(a) || String(a.joined).localeCompare(String(b.joined)))
+    .slice(0, n);
+}
 
 /** 게이지 하나를 화면에 그릴 때 쓰는 값 (평판 등 노출용). */
 export function gauge(value, max = SCALE.max) {
