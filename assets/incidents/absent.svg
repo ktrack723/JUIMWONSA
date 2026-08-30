@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="absent">
+  <title>absent</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#c0453b" stroke-width="3"/>
+  <path d="M14 12 h20 v40 H14" fill="none" stroke="#e8e4d8" stroke-width="3"/>
+  <circle cx="30" cy="33" r="2" fill="#e8e4d8"/>
+  <path d="M36 32 h16 M45 24 l8 8 l-8 8" fill="none" stroke="#e8e4d8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

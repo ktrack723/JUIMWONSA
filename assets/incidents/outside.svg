@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="outside">
+  <title>outside</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#c0453b" stroke-width="3"/>
+  <path d="M12 34 V26 h10 l16 -10 v32 l-16 -10 H12 Z" fill="none" stroke="#e8e4d8" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M44 22 q7 10 0 20 M51 16 q11 16 0 32" fill="none" stroke="#e8e4d8" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

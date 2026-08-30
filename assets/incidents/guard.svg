@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="guard">
+  <title>guard</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#c0453b" stroke-width="3"/>
+  <path d="M16 52 V26 l16 -12 l16 12 v26" fill="none" stroke="#e8e4d8" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M12 52 h40" stroke="#e8e4d8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M23 36 q9 -8 18 0 q-9 8 -18 0 Z" fill="none" stroke="#e8e4d8" stroke-width="2.4"/><circle cx="32" cy="36" r="2.6" fill="#e8e4d8"/>
+</svg>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="blast">
+  <title>blast</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#d8a13a" stroke-width="3"/>
+  <path d="M32 10 L37 24 L50 18 L43 31 L56 34 L42 39 L48 52 L34 44 L30 56 L26 43 L13 48 L20 35 L8 31 L21 26 L15 14 L27 21 Z" fill="none" stroke="#e8e4d8" stroke-width="2.6" stroke-linejoin="round"/>
+</svg>

@@ -1053,6 +1053,33 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .day-entry.stamp { font-family: var(--font-mono); font-weight: 700; }
 .day-entry.sys { color: var(--ink-soft); font-size: var(--fs-sm); }
 
+/* ── 사고 유형 딱지 — 그림 한 장 + 갈래·이름 ────────────────
+   유형은 코드가 정한 열둘(params.js)이고 파일은 assets/incidents/<id>.svg다.
+   그림이 없으면 .cat-art.fallback(글자)로 떨어지므로 칸 크기는 둘이 같아야 한다. */
+.cat-badge {
+  display: flex; align-items: center; gap: var(--s3);
+  margin: 0 0 var(--s2); padding-bottom: var(--s2);
+  border-bottom: 1px solid rgba(0,0,0,.12);
+  white-space: normal;
+}
+.cat-art {
+  flex: 0 0 auto; width: 44px; height: 44px;
+  object-fit: cover; border-radius: 3px;
+  background: #1d2118; border: 1px solid var(--ink-soft);
+}
+.cat-art.fallback {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1;
+}
+.cat-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cat-text b { font-size: var(--fs-md); }
+.cat-text span { font-size: var(--fs-xs); color: var(--ink-mid); font-family: var(--font-mono); }
+/* 갈래가 곧 테두리색이다 — 안전사고 오커 · 군기사고 관인붉음 · 신상 서류청 */
+.cat-safety .cat-art { border-color: var(--warn); box-shadow: 0 0 0 2px rgba(109,84,23,.22); }
+.cat-discipline .cat-art { border-color: var(--stamp); box-shadow: 0 0 0 2px rgba(143,34,38,.20); }
+.cat-personnel .cat-art { border-color: var(--file); box-shadow: 0 0 0 2px rgba(31,63,107,.20); }
+.day-entry .entry-body { white-space: pre-wrap; }
+
 .intervene-tabs { display: flex; gap: var(--s2); margin: var(--s2) 0; }
 .iv-body { padding: var(--s2) 0; }
 .iv-body label { display: block; margin-bottom: var(--s2); }

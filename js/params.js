@@ -6,6 +6,7 @@
 //   · 병사 등급 추첨 (지능·마초 가중)
 //   · 장소-파라미터 대응표 (불시점검이 어느 파라미터를 드러내는가)
 //   · 사건 후보 풀과 심각도 티어 (LLM은 장면만 쓴다 — 풀 밖 창작은 없다)
+//   · 사고 유형 열둘과 유형별 그림 자리 (사건이 확전하면 유형이 넘어가는 표까지)
 //   · 날짜 규칙 (부임일 = 오늘 − 100일 · 계절 · 주말)
 //   · 파라미터 → 5단계 밴드 변환 (수치는 프롬프트에 절대 안 나간다)
 //
@@ -168,29 +169,109 @@ export function dayFraction(time) {
 // x는 무대 위의 가로 자리(0..1)다 — 스프라이트가 슬롯을 따라 이 자리들 사이를 통근한다.
 // 드러내는 파라미터와 무대 자리는 같은 표에 산다: 생활관은 갈등을 드러내고, 무대 왼쪽 끝에 있다.
 export const PLACES = {
-  barracks: { label: '생활관', reveals: ['conflict'], x: 0.12 },
-  messhall: { label: '식당', reveals: ['happy'], x: 0.32 },
-  office: { label: '행정반', reveals: ['gara'], x: 0.5 },
-  worksite: { label: '작업장', reveals: ['gara'], x: 0.7 },
-  storage: { label: '창고', reveals: ['gara', 'conflict'], x: 0.86 },
-  smoking: { label: '흡연장', reveals: ['happy', 'conflict'], x: 0.97 },
+  guardpost: { label: '위병소', reveals: ['gara'], x: 0.03 },
+  barracks: { label: '생활관', reveals: ['conflict'], x: 0.16 },
+  messhall: { label: '식당', reveals: ['happy'], x: 0.33 },
+  office: { label: '행정반', reveals: ['gara'], x: 0.48 },
+  worksite: { label: '작업장', reveals: ['gara'], x: 0.64 },
+  armory: { label: '탄약고', reveals: ['gara'], x: 0.78 },
+  storage: { label: '창고', reveals: ['gara', 'conflict'], x: 0.89 },
+  smoking: { label: '흡연장', reveals: ['happy', 'conflict'], x: 0.98 },
 };
+
+// ── 사고 유형 — 이미지가 붙는 자리 ────────────────────────
+// 큰 갈래는 지어낸 것이 아니라 군이 실제로 쓰는 구분이다 (docs/research.md §14):
+//   · 안전사고(safety)  — 고의 없는 불안전한 행동·상태가 사망·부상·물자 피해를 낸 것
+//   · 군기사고(discipline) — 법규를 고의·과실로 어겨 징계·형사처벌 대상이 되는 것
+//   · 신상(personnel)   — 자해·자살 시도. 군 사망사고 지표가 위 둘과 따로 세는 자리다
+//
+// 이 표가 곧 **이미지 대장**이다. 유형 하나에 그림 한 장(`assets/incidents/<id>.svg`)이고,
+// 그림이 없으면 icon 글자가 대신 뜬다 — 그림을 갈아 끼우는 데 코드를 안 고쳐도 된다.
+// en은 프롬프트로 나가는 표기다(지시문은 영어다 — §9.4). label은 화면 몫이다.
+export const INCIDENT_CATEGORIES = {
+  injury:    { label: '부상·안전사고', class: 'safety',     icon: '🩹', en: 'injury during work, sport or training' },
+  blast:     { label: '화재·폭발',     class: 'safety',     icon: '💥', en: 'fire or explosion — ammunition, fuel, kitchen' },
+  vehicle:   { label: '차량·중장비',   class: 'safety',     icon: '🚛', en: 'vehicle or heavy-equipment accident' },
+  health:    { label: '보건·환자',     class: 'safety',     icon: '🤒', en: 'mass illness, heat or cold casualty' },
+  firearm:   { label: '총기·탄약',     class: 'discipline', icon: '🎯', en: 'firearm or live ammunition mishandled' },
+  guard:     { label: '경계·근무 실패', class: 'discipline', icon: '🔭', en: 'guard duty or watch failing' },
+  violation: { label: '규정위반 검거',  class: 'discipline', icon: '📱', en: 'caught breaking regulations — phone, gambling, drink' },
+  abuse:     { label: '가혹행위·부조리', class: 'discipline', icon: '👊', en: 'abuse, hazing or bullying between soldiers' },
+  absent:    { label: '인원이탈',      class: 'discipline', icon: '🚪', en: 'a soldier missing — absent without leave' },
+  supply:    { label: '보급·물자',     class: 'discipline', icon: '📦', en: 'supplies or equipment missing or misused' },
+  outside:   { label: '대외·민간',     class: 'discipline', icon: '📰', en: 'it reached outside the fence — civilians, press, social media' },
+  selfharm:  { label: '자해·신상',     class: 'personnel',  icon: '🕯', en: 'a soldier at risk of harming himself' },
+};
+export const CATEGORY_KEYS = Object.keys(INCIDENT_CATEGORIES);
+export const CATEGORY_CLASSES = { safety: '안전사고', discipline: '군기사고', personnel: '신상사고' };
+
+/** 유형 하나의 그림 자리. 파일이 없으면 화면이 icon으로 떨어진다. */
+export const artFor = catId => `assets/incidents/${catId}.svg`;
+
+/**
+ * 이 사건을 어느 유형으로 그릴 것인가. 확전한 사건은 `becomes`를 따라 유형이 바뀐다 —
+ * 「취침 중 누가 운다」(가혹행위)가 사고가 되면 자해로 넘어가는 식이다. 전부 static 표라
+ * **판정 호출이 늘지 않는다.**
+ */
+export function categoryFor(event, escalated = false) {
+  const id = (escalated && event?.becomes) || event?.cat;
+  const cat = INCIDENT_CATEGORIES[id];
+  if (!cat) return null;
+  return { id, ...cat, art: artFor(id), className: CATEGORY_CLASSES[cat.class] };
+}
 
 // ── 사건 풀 — 후보와 심각도는 코드가 뽑고, LLM은 장면만 쓴다 ──
 // tier: minor(작은사건 롤) / major(큰사건 롤 — 갈등 8 초과에서만 열린다).
 // slots: 이 사건이 날 수 있는 슬롯 kind. place: 사건 화면과 E-1 프롬프트에 실린다.
+// cat: 유형(위 표) — 이미지와 기록이 이걸 본다. becomes: 확전하면 넘어가는 유형.
+// weight: 같은 tier·슬롯에서 뽑힐 무게. 흔한 일이 흔하게 나와야 한다 (기본 1).
+//
+// **지침은 자유롭게 쓰지만 씨앗은 이 풀 밖으로 안 나간다** — 그래서 무한한 장면에도
+// 유형은 언제나 열둘 중 하나로 떨어지고, 그림 한 장이 반드시 대응된다.
+// 항목마다의 근거는 docs/research.md §14.
 export const EVENT_POOL = [
-  { id: 'sports-injury', tier: 'minor', kinds: ['rest'], place: 'worksite', involved: 2, desc: '족구·축구 중 부상 정황' },
-  { id: 'work-accident', tier: 'minor', kinds: ['work'], place: 'worksite', involved: 1, desc: '작업 중 안전사고 직전 상황' },
-  { id: 'mess-burn', tier: 'minor', kinds: ['meal'], place: 'messhall', involved: 1, desc: '취사장 화상·배식 사고 정황' },
-  { id: 'quarrel', tier: 'minor', kinds: ['meal', 'rest'], place: 'barracks', involved: 2, desc: '병사 간 언쟁이 몸싸움 직전까지 감' },
-  { id: 'rollcall-miss', tier: 'minor', kinds: ['rollcall'], place: 'barracks', involved: 1, desc: '점호 인원 미달 — 한 명이 안 보인다' },
-  { id: 'hiding-sleep', tier: 'minor', kinds: ['work'], place: 'storage', involved: 1, desc: '미상번 후 구석에 짱박혀 수면' },
-  { id: 'gear-missing', tier: 'minor', kinds: ['work', 'rollcall'], place: 'storage', involved: 1, desc: '보급품·장비 수량 불일치 발견' },
-  { id: 'night-noise', tier: 'minor', kinds: ['sleep'], place: 'barracks', involved: 2, desc: '취침 시간 소란 — 누군가 울거나 싸운다' },
-  { id: 'desertion-sign', tier: 'major', kinds: ['rollcall', 'work'], place: 'barracks', involved: 1, desc: '탈영 의심 — 관물대가 비어 있다' },
-  { id: 'selfharm-sign', tier: 'major', kinds: ['rest', 'sleep'], place: 'barracks', involved: 1, desc: '자해 정황 — 혼자 있으려는 병사' },
-  { id: 'group-abuse', tier: 'major', kinds: ['rest', 'sleep', 'meal'], place: 'barracks', involved: 2, desc: '집단 따돌림·구타 정황이 드러남' },
+  // 부상·안전사고 — 제일 흔한 자리
+  { id: 'sports-injury', tier: 'minor', cat: 'injury', kinds: ['rest'], place: 'worksite', involved: 2, weight: 3, desc: '족구·축구 중 부상 정황' },
+  { id: 'work-accident', tier: 'minor', cat: 'injury', kinds: ['work'], place: 'worksite', involved: 1, weight: 3, desc: '작업 중 안전사고 직전 상황' },
+  { id: 'mess-burn', tier: 'minor', cat: 'injury', kinds: ['meal'], place: 'messhall', involved: 1, weight: 2, desc: '취사장 화상·배식 사고 정황' },
+  // 차량·중장비
+  { id: 'truck-backing', tier: 'minor', cat: 'vehicle', kinds: ['work'], place: 'worksite', involved: 2, weight: 2, desc: '후진하는 차량 뒤로 사람이 지나간다 — 유도자가 없다' },
+  { id: 'load-swing', tier: 'minor', cat: 'vehicle', kinds: ['work'], place: 'storage', involved: 1, weight: 1, desc: '하역 중 적재물이 흔들린다 — 결박이 덜 됐다' },
+  // 화재·폭발
+  { id: 'fuel-smoke', tier: 'minor', cat: 'blast', kinds: ['work', 'rest'], place: 'armory', involved: 1, weight: 1, desc: '탄약고·유류고 인근 흡연 정황' },
+  { id: 'kitchen-gas', tier: 'minor', cat: 'blast', kinds: ['meal'], place: 'messhall', involved: 1, weight: 1, desc: '취사장 가스·튀김유 과열 — 연기가 올라온다' },
+  // 총기·탄약
+  { id: 'ammo-count', tier: 'minor', cat: 'firearm', kinds: ['work', 'rollcall'], place: 'armory', involved: 1, weight: 1, desc: '탄약 수불부와 실물 수량이 안 맞는다' },
+  { id: 'muzzle-play', tier: 'minor', cat: 'firearm', kinds: ['work', 'rest'], place: 'armory', involved: 2, weight: 1, desc: '총기 수입 중 장난 — 총구가 사람을 향했다' },
+  // 경계·근무 실패
+  { id: 'post-empty', tier: 'minor', cat: 'guard', kinds: ['rollcall', 'sleep'], place: 'guardpost', involved: 1, weight: 2, desc: '근무자가 초소에 없다 — 교대 기록도 비었다' },
+  { id: 'perimeter-gap', tier: 'minor', cat: 'guard', kinds: ['work', 'rollcall'], place: 'guardpost', involved: 1, weight: 1, desc: '외곽 순찰 기록에 공백 — 철조망 쪽에 흔적이 있다' },
+  { id: 'hiding-sleep', tier: 'minor', cat: 'guard', becomes: 'violation', kinds: ['work'], place: 'storage', involved: 1, weight: 2, desc: '미상번 후 구석에 짱박혀 수면' },
+  // 규정위반 검거
+  { id: 'phone-after-hours', tier: 'minor', cat: 'violation', kinds: ['sleep', 'rollcall'], place: 'barracks', involved: 1, weight: 3, desc: '반납했어야 할 휴대폰이 취침 후에도 돌아다닌다' },
+  { id: 'phone-gambling', tier: 'minor', cat: 'violation', becomes: 'outside', kinds: ['rest'], place: 'smoking', involved: 2, weight: 2, desc: '휴대폰 도박·금전거래 정황 — 계좌 얘기가 돈다' },
+  { id: 'contraband-drink', tier: 'minor', cat: 'violation', kinds: ['rest', 'sleep'], place: 'storage', involved: 2, weight: 1, desc: '외부 반입 주류 정황 — 관물대에서 냄새가 난다' },
+  // 가혹행위·부조리
+  { id: 'quarrel', tier: 'minor', cat: 'abuse', kinds: ['meal', 'rest'], place: 'barracks', involved: 2, weight: 3, desc: '병사 간 언쟁이 몸싸움 직전까지 감' },
+  { id: 'night-noise', tier: 'minor', cat: 'abuse', becomes: 'selfharm', kinds: ['sleep'], place: 'barracks', involved: 2, weight: 2, desc: '취침 시간 소란 — 누군가 울거나 싸운다' },
+  // 인원이탈
+  { id: 'rollcall-miss', tier: 'minor', cat: 'absent', kinds: ['rollcall'], place: 'barracks', involved: 1, weight: 2, desc: '점호 인원 미달 — 한 명이 안 보인다' },
+  { id: 'leave-overdue', tier: 'minor', cat: 'absent', kinds: ['rollcall'], place: 'guardpost', involved: 1, weight: 2, desc: '휴가 복귀 시간이 지났는데 연락이 안 된다' },
+  // 보급·물자
+  { id: 'gear-missing', tier: 'minor', cat: 'supply', kinds: ['work', 'rollcall'], place: 'storage', involved: 1, weight: 2, desc: '보급품·장비 수량 불일치 발견' },
+  // 보건·환자
+  { id: 'food-illness', tier: 'minor', cat: 'health', kinds: ['meal'], place: 'messhall', involved: 2, weight: 2, desc: '같은 식탁에서 여럿이 복통을 호소한다' },
+  { id: 'heat-casualty', tier: 'minor', cat: 'health', kinds: ['work'], place: 'worksite', involved: 1, weight: 2, desc: '작업 중 한 명의 얼굴이 하얗다 — 온열·한랭 손상 정황' },
+  // 대외·민간
+  { id: 'sns-leak', tier: 'minor', cat: 'outside', kinds: ['rest', 'sleep'], place: 'smoking', involved: 1, weight: 1, desc: '부대 사진이 SNS에 올라갔다 — 배경에 초소가 찍혔다' },
+  { id: 'civil-damage', tier: 'minor', cat: 'outside', kinds: ['work'], place: 'worksite', involved: 2, weight: 1, desc: '작업 중 민간 담장·차량을 건드렸다는 민원' },
+
+  // ── 큰 사건 — 갈등이 8을 넘겨야 열린다 ──
+  { id: 'desertion-sign', tier: 'major', cat: 'absent', kinds: ['rollcall', 'work'], place: 'barracks', involved: 1, weight: 2, desc: '탈영 의심 — 관물대가 비어 있다' },
+  { id: 'selfharm-sign', tier: 'major', cat: 'selfharm', kinds: ['rest', 'sleep'], place: 'barracks', involved: 1, weight: 2, desc: '자해 정황 — 혼자 있으려는 병사' },
+  { id: 'group-abuse', tier: 'major', cat: 'abuse', kinds: ['rest', 'sleep', 'meal'], place: 'barracks', involved: 2, weight: 2, desc: '집단 따돌림·구타 정황이 드러남' },
+  { id: 'unauthorized-drill', tier: 'major', cat: 'abuse', kinds: ['work', 'rest'], place: 'worksite', involved: 2, weight: 1, desc: '규정 밖 얼차려 — 완전군장으로 세워 놨다' },
+  { id: 'weapon-taken', tier: 'major', cat: 'firearm', kinds: ['work', 'rollcall', 'sleep'], place: 'armory', involved: 1, weight: 1, desc: '총기·실탄 무단 반출 정황 — 수불부만 멀쩡하다' },
 ];
 
 // ── 사고 판정 롤 (LLM 없음) ───────────────────────────────
@@ -216,11 +297,14 @@ export function rollSlot(params, unitStats, slotKind, rng = Math.random) {
   return null;
 }
 
-/** 롤이 성공한 슬롯의 사건 후보 뽑기. 풀 밖 창작은 없다. */
+/**
+ * 롤이 성공한 슬롯의 사건 후보 뽑기. 풀 밖 창작은 없다.
+ * 무게 추첨이다 — 족구 부상이 탄약고 흡연보다 흔해야 한다.
+ */
 export function pickEvent(tier, slotKind, rng = Math.random) {
   const pool = EVENT_POOL.filter(e => e.tier === tier && e.kinds.includes(slotKind));
   const any = pool.length ? pool : EVENT_POOL.filter(e => e.tier === tier);
-  return any[Math.floor(rng() * any.length)];
+  return any[weightedPick(any.map(e => e.weight ?? 1), rng)];
 }
 
 // ── 등급 추첨 — 코드가 굴린다. LLM은 굴려진 등급에 맞는 인물을 쓸 뿐이다 ──
