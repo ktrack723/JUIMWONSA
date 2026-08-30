@@ -1349,8 +1349,15 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 
 .stage-bubbles { position: absolute; inset: 0; pointer-events: none; }
 .stage-bubbles .bubble {
-  position: absolute; transform: translateX(-50%);
-  max-width: min(48%, 230px); padding: 3px 7px; font-size: 11px; line-height: 1.35;
+  /* --shift는 무대 밖으로 나가지 않게 **몸통만** 옆으로 민 폭이다(game.js의 keepInStage).
+     꼬리는 아래에서 같은 값만큼 되밀린다 — 그래서 밀어도 가리키는 자리는 안 변한다. */
+  position: absolute; transform: translateX(calc(-50% + var(--shift, 0px)));
+  /* width:max-content가 **꼭 있어야 한다.** left만 준 절대위치 상자는 폭이 auto일 때
+     「left에서 오른쪽 끝까지」로 죄이므로, 무대 오른쪽에 선 놈(left:97%)의 풍선이
+     27px짜리 국수가락으로 접힌다 — max-width는 그 위에 얹히는 상한이라 못 막는다.
+     내용만큼 벌린 뒤 max-width로 자르고, 삐져나가는 것은 --shift가 민다. */
+  width: max-content; max-width: min(48%, 230px);
+  padding: 3px 7px; font-size: 11px; line-height: 1.35;
   background: #f7f4e6; color: #23231c; border: 1px solid #3c3a2c;
   box-shadow: 2px 2px 0 rgba(0, 0, 0, .3);
   /* nowrap이면 긴 군가 소절이 max-width를 뚫고 나간다 — 접는다 */
@@ -1358,8 +1365,10 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
   animation: bubble-in .35s ease-out;
 }
 .stage-bubbles .bubble::after {
-  /* 꼬리도 피벗과 같은 자리(가운데)다 — 왼쪽에 박아 두면 몸통과 어긋나 보인다 */
-  content: ''; position: absolute; left: 50%; margin-left: -5px; bottom: -5px;
+  /* 꼬리는 **말한 놈의 정수리**에 남는다. 몸통을 --shift만큼 밀었으면 그만큼 되민다 —
+     가운데에 박아 두면 무대 끝에 선 놈의 꼬리가 몸통을 따라 옆으로 끌려간다. */
+  content: ''; position: absolute; left: calc(50% - var(--shift, 0px));
+  margin-left: -5px; bottom: -5px;
   border: 5px solid transparent; border-top-color: #f7f4e6; border-bottom: 0;
 }
 /* 군가는 목으로 부르는 것과 스피커에서 나오는 것이 다르게 보여야 한다 */
@@ -1369,7 +1378,12 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
   background: #dfe8f4; border-color: #3a5a7c; border-style: dashed; font-style: italic;
 }
 .stage-bubbles .bubble.song.broadcast::after { border-top-color: #dfe8f4; }
-@keyframes bubble-in { from { opacity: 0; transform: translateX(-50%) translateY(4px); } to { opacity: 1; } }
+/* 뜰 때 살짝 올라온다. --shift를 여기서도 실어야 한다 — 빼먹으면 애니메이션이 도는
+   0.35초 동안 몸통이 원래 자리로 튀었다가 제자리로 돌아온다. */
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateX(calc(-50% + var(--shift, 0px))) translateY(4px); }
+  to { opacity: 1; transform: translateX(calc(-50% + var(--shift, 0px))); }
+}
 @media (prefers-reduced-motion: reduce) {
   .stage-bubbles .bubble { animation: none; }
   .stage-sky, .stage-sun { transition: none; }
@@ -1385,11 +1399,16 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 
 /* 사건이 터진 자리 — 어느 판때기가 사고를 쳤는지 눈에 보이게 */
 .stage-bubbles .incident-mark {
-  position: absolute; bottom: 30%; transform: translateX(-50%);
+  /* bottom은 game.js가 그 판때기의 정수리에 맞춰 준다 — 여기서 박아 두면 안 된다.
+     그래서 까딱임도 bottom이 아니라 transform으로 준다(둘이 겹치면 JS 값이 덮인다). */
+  position: absolute; transform: translateX(-50%);
   font-size: 22px; line-height: 1; text-shadow: 0 0 6px #000, 0 0 12px #c22;
   animation: mark-bob .7s ease-in-out infinite alternate;
 }
-@keyframes mark-bob { from { bottom: 30%; } to { bottom: 35%; } }
+@keyframes mark-bob {
+  from { transform: translateX(-50%) translateY(0); }
+  to { transform: translateX(-50%) translateY(-6px); }
+}
 @media (prefers-reduced-motion: reduce) { .stage-bubbles .incident-mark { animation: none; } }
 
 /* 계급 배지 — 명부에서 짬이 한눈에 보이게 */

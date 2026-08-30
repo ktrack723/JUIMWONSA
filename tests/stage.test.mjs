@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { skyAt, sunAt, GROUND } from '../js/sprites.js';
+import { skyAt, sunAt, GROUND, BUBBLE_GAP, bubbleSpots } from '../js/sprites.js';
 import { SLOTS, SLOT_KEYS, PLACES, slotsFor, dayFraction } from '../js/params.js';
 
 const HEX = /^#[0-9a-f]{6}$/;
@@ -98,4 +98,75 @@ test('무대 층위가 아래에서 위로 쌓인다 — 땅이 병사를 덮으
   assert.ok(z('stage-sun') < z('stage-ground'), '해가 땅보다 위에 있다');
   assert.ok(z('stage-ground') < z('stage-canvas'), '땅이 병사보다 위에 있다');
   assert.ok(z('stage-canvas') < z('stage-bubbles'), '병사가 말풍선보다 위에 있다');
+});
+
+// ── 말풍선이 말한 놈을 가리키는가 ─────────────────────────
+// 고정 사다리(34%·51%·68%)에 걸어 놨던 자리다. 판때기 정수리는 48~54%에 있고 판때기는
+// 3%~97%를 걸어 다니는데 가로까지 [25%,75%]로 죄어 놔서, 첫 풍선은 가슴팍을 찌르고
+// 셋째는 허공에 떴고 끝에 선 놈의 풍선은 아무도 없는 자리를 가리켰다.
+const heads = xs => xs.map(x => ({ x, head: GROUND + 0.3 }));
+
+test('풍선은 판때기 정수리 바로 위에 선다 — 고정 높이가 아니다', () => {
+  const [a, b] = bubbleSpots([{ x: 0.2, head: 0.48 }, { x: 0.8, head: 0.54 }], 2);
+  assert.ok(Math.abs(a.bottom - (0.48 + BUBBLE_GAP)) < 1e-9, `정수리를 안 따라간다: ${a.bottom}`);
+  assert.ok(Math.abs(b.bottom - (0.54 + BUBBLE_GAP)) < 1e-9, '키가 다른 놈이 같은 높이에 섰다');
+  // 정수리보다 위여야 한다 — 아래로 잡으면 꼬리가 몸통을 찌른다
+  assert.ok(a.bottom > 0.48 && b.bottom > 0.54);
+});
+
+test('가로를 안 죈다 — 무대 끝에 선 놈의 풍선도 그놈을 가리킨다', () => {
+  const spots = bubbleSpots(heads([0.03, 0.5, 0.97]), 3);
+  assert.equal(spots[0].x, 0.03, '왼쪽 끝이 안쪽으로 끌려왔다');
+  assert.equal(spots[2].x, 0.97, '오른쪽 끝이 안쪽으로 끌려왔다');
+  // 잘리는 것은 css의 --shift가 몸통만 밀어서 푼다. 꼬리는 여기 x에 남는다.
+});
+
+test('말할 놈을 가로로 흩어 고른다 — 한 자리에 몰린 놈들만 뽑히면 안 된다', () => {
+  // 왼쪽에 다섯이 몰려 서 있고 오른쪽에 하나
+  const spots = bubbleSpots(heads([0.10, 0.12, 0.14, 0.16, 0.18, 0.90]), 3);
+  const xs = spots.map(s => s.x);
+  assert.equal(Math.min(...xs), 0.10, '제일 왼쪽을 안 골랐다');
+  assert.equal(Math.max(...xs), 0.90, '제일 오른쪽을 안 골랐다');
+});
+
+test('그래도 가까이 서면 올려서 비껴 세운다 — 겹쳐 놓으면 둘 다 못 읽는다', () => {
+  const spots = bubbleSpots(heads([0.50, 0.52, 0.54]), 3);
+  const bottoms = spots.map(s => s.bottom);
+  assert.equal(new Set(bottoms.map(b => b.toFixed(4))).size, 3, '셋이 같은 높이에 겹쳤다');
+  for (let i = 1; i < bottoms.length; i++) {
+    assert.ok(bottoms[i] > bottoms[i - 1], '뒤에 오는 풍선이 안 올라갔다');
+  }
+});
+
+test('무대가 안 열려도(WebGL 없음) 자리는 나온다 — 게임은 그대로 돈다', () => {
+  const spots = bubbleSpots([], 3);
+  assert.equal(spots.length, 3);
+  for (const s of spots) {
+    assert.ok(s.x > 0 && s.x < 1, `무대 밖이다: ${s.x}`);
+    assert.ok(s.bottom > GROUND, '땅에 묻혔다');
+  }
+  assert.equal(new Set(spots.map(s => s.x)).size, 3, '전부 한 자리에 겹쳤다');
+});
+
+test('꼬리는 몸통을 밀어도 제 주인에게 남는다 — css가 --shift를 되민다', async () => {
+  const css = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
+  const body = css.match(/\.stage-bubbles \.bubble \{[^}]*\}/)[0];
+  const tail = css.match(/\.stage-bubbles \.bubble::after \{[^}]*\}/)[0];
+  assert.match(body, /transform:[^;]*calc\(-50% \+ var\(--shift/,
+    '몸통이 --shift를 안 탄다 — 무대 끝 풍선이 잘린다');
+  assert.match(tail, /left:\s*calc\(50% - var\(--shift/,
+    '꼬리가 --shift를 안 되민다 — 몸통을 밀면 꼬리가 같이 끌려간다');
+  // 애니메이션이 도는 동안에도 밀어 둔 자리를 지켜야 한다
+  const anim = css.match(/@keyframes bubble-in \{[^}]*\}[^}]*\}/)[0];
+  assert.ok((anim.match(/var\(--shift/g) || []).length >= 2,
+    'bubble-in 키프레임이 --shift를 빠뜨렸다 — 뜨는 0.35초 동안 몸통이 튄다');
+});
+
+test('❗의 높이는 코드가 정한다 — css가 bottom을 박으면 판때기 가슴에 걸린다', async () => {
+  const css = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
+  const mark = css.match(/\.stage-bubbles \.incident-mark \{[^}]*\}/)[0];
+  assert.ok(!/bottom:/.test(mark), 'css가 ❗의 bottom을 박아 놨다 — 정수리를 못 따라간다');
+  const bob = css.match(/@keyframes mark-bob \{[^}]*\}[^}]*\}/)[0];
+  assert.ok(!/bottom:/.test(bob), '까딱임이 bottom을 만진다 — 코드가 세운 높이를 덮는다');
+  assert.match(bob, /translateY/, '까딱임이 transform으로 안 돈다');
 });

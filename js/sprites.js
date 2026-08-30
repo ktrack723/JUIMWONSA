@@ -95,6 +95,44 @@ function drawSoldier(rank) {
 // 땅의 높이(0..1). CSS의 .stage-ground와 **같은 값이어야 한다** — 병사는 이 선 위에 선다.
 export const GROUND = 0.22;
 
+/** 판때기 정수리와 풍선 꼬리 사이 (무대 높이 대비). 붙여 놓으면 머리를 덮는다. */
+export const BUBBLE_GAP = 0.02;
+/** 가로로 이만큼 안에서 겹치면 앞 풍선 위로 올려 세운다 (무대 폭 대비). */
+const BUBBLE_NEAR = 0.22;
+/** 겹칠 때 올리는 한 칸 (무대 높이 대비). */
+const BUBBLE_LIFT = 0.14;
+
+/**
+ * 말풍선 n개를 어디에 세울 것인가. **무대의 좌표계를 아는 쪽이 정해야 하는 값**이라
+ * 화면이 아니라 여기 있다 — 화면은 돌려받은 자리에 DOM만 갖다 붙인다.
+ *
+ * 예전에는 화면이 세로를 34%·51%·68%의 고정 사다리로 박고 가로를 [25%, 75%]로 죄었다.
+ * 판때기 정수리는 48~54%에 있고 판때기는 3%~97%를 걸어 다니므로, 첫 풍선은 가슴팍을
+ * 찌르고 셋째 풍선은 허공에 떴으며, 끝에 선 놈의 풍선은 아무도 없는 자리를 가리켰다.
+ *
+ * 하는 일 둘:
+ *   ① 말할 놈을 **가로로 흩어서** 고른다. 아무나 집으면 한 자리에 몰려 선 놈들이 뽑혀
+ *      풍선 셋이 겹친다 — 겹친 뒤에 푸는 것보다 애초에 떨어뜨리는 편이 낫다.
+ *   ② 그래도 가까우면 그만큼 올려 세운다. 꼬리는 그대로 제 주인을 가리킨다.
+ *
+ * @param pos   positions()가 준 [{x, head}]
+ * @param count 세울 풍선 수
+ * @returns [{x, bottom}] — 둘 다 0..1. bottom은 바닥에서 잰 높이라 CSS에 그대로 들어간다
+ */
+export function bubbleSpots(pos, count) {
+  const spread = [...(pos || [])].sort((a, b) => a.x - b.x);
+  const spots = [];
+  for (let i = 0; i < count; i++) {
+    // 무대가 안 열렸으면(WebGL 없음) 판때기도 없다 — 그때는 고르게 흩고 눈높이에 세운다.
+    const p = spread.length
+      ? spread[Math.round(i * (spread.length - 1) / Math.max(1, count - 1))]
+      : { x: (i + 0.5) / count, head: GROUND + 0.3 };
+    const clash = spots.filter(q => Math.abs(q.x - p.x) < BUBBLE_NEAR).length;
+    spots.push({ x: p.x, bottom: p.head + BUBBLE_GAP + clash * BUBBLE_LIFT });
+  }
+  return spots;
+}
+
 const rand = (a, b) => a + Math.random() * (b - a);
 
 export class Stage {
@@ -197,9 +235,20 @@ export class Stage {
   /**
    * 지금 이 순간 스프라이트들이 서 있는 화면 좌표(0..1). 말풍선이 이걸 보고 붙는다.
    * 무대에서 뺀 판때기(crowd)는 자리도 안 준다 — 없는 사람 머리 위에서 말이 나오면 안 된다.
+   *
+   *   x    — 가로. 0이 왼쪽 끝
+   *   head — **판때기의 정수리.** 바닥에서 잰 높이(0..1)라 CSS의 bottom에 그대로 들어간다.
+   *
+   * 예전에는 `y: 1 - base`(위에서 잰 **몸통 한가운데**)를 줬는데, 화면은 CSS bottom을 쓰고
+   * 말풍선은 머리 위에 떠야 한다 — 기준점도 방향도 둘 다 안 맞아서 아무도 안 썼고,
+   * 화면은 대신 34%·51%·68%라는 고정 사다리에 말풍선을 걸어 놨다. 판때기 정수리가
+   * 48~54%인데 첫 풍선이 34%에 붙으니 **꼬리가 가슴팍을 찌르고 있었다.**
+   * 여기서 정수리를 주면 화면은 그냥 갖다 붙이면 된다.
    */
   positions() {
-    return this.sprites.filter(s => s.sp.visible).map(s => ({ x: s.x, y: 1 - s.base }));
+    return this.sprites.filter(s => s.sp.visible)
+      // sp.position.y는 걸을 때 까딱이는 몫까지 들어간 지금 자리다 — 풍선도 같이 까딱여야 한다.
+      .map(s => ({ x: s.x, head: s.sp.position.y + s.h / 2 }));
   }
 
   start() {
