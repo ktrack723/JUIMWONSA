@@ -60,28 +60,44 @@ export function sunAt(frac) {
 }
 
 // 계급 띠 — 짬이 찰수록 전투복이 바랜다. 명부의 전입일 순서로 정해진다.
+// **색은 부대가 준다**(units.js의 sprite). 여기 있는 것은 「얼마나 바랬는가」와 살색뿐이다 —
+// 부대를 하나 더 붙일 때 이 표를 만질 일이 없어야 한다.
+// fade는 **흰빛으로 얼마나 갔는가**다. 회색 물감을 섞으면 부대 색이 죽는다 —
+// 파란 전투복이 말년쯤엔 하얗게 떠서 공군이 공군으로 안 보였다. 햇빛에 바래는 것은
+// 채도가 빠지는 것이 아니라 밝아지는 것이라, 흰빛으로 미는 편이 결도 맞다.
 const RANKS = [
-  { key: 'new', top: '#4a5a3a', bot: '#3a4a2e', skin: '#e8c8a8' },   // 막내 — 새 옷
-  { key: 'mid', top: '#5a6a46', bot: '#46543a', skin: '#e0bc9a' },
-  { key: 'old', top: '#6b7a58', bot: '#55624a', skin: '#d8b28e' },   // 말년 — 바랜 옷
+  { key: 'new', fade: 0.00, skin: '#e8c8a8' },   // 막내 — 새 옷
+  { key: 'mid', fade: 0.10, skin: '#e0bc9a' },
+  { key: 'old', fade: 0.19, skin: '#d8b28e' },   // 말년 — 바랜 옷
 ];
 
+// 부대 색을 안 주면 이걸 쓴다 (옛 저장분·테스트). 예전의 올리브 그대로다.
+export const DEFAULT_KIT = { top: '#4a5a3a', bot: '#3a4a2e', cap: '#4a5a3a' };
+
+const WASH = '#ffffff';               // 바래는 쪽 — 햇빛. 색을 밝힐 뿐 하늘색으로 안 만든다
+const DARK = '#1d221a';               // 모자챙은 언제나 모자보다 어둡다
+
 // 도트 병사 한 장. 32×48 캔버스에 그려 텍스처로 굽는다. 계급마다 한 장씩만 굽는다.
-function drawSoldier(rank) {
+function drawSoldier(rank, kit = DEFAULT_KIT) {
   const c = document.createElement('canvas');
   c.width = 32; c.height = 48;
   const g = c.getContext('2d');
   const px = (x, y, w, h, fill) => { g.fillStyle = fill; g.fillRect(x, y, w, h); };
-  px(11, 4, 10, 3, '#2c3626');        // 모자챙
-  px(12, 1, 8, 4, rank.top);          // 모자
+  // 짬이 찰수록 바랜다 — 부대 색에서 출발해 그만큼 뜬 색으로 간다.
+  const worn = hex => mixHex(hex, WASH, rank.fade);
+  const top = worn(kit.top), bot = worn(kit.bot);
+  // **모자는 안 바랜다.** 부대를 가르는 색이라 열두 판때기에서 같은 색으로 서야
+  // 「저건 해병이다」가 한눈에 온다 — 계급마다 뜨면 그냥 얼룩이 된다.
+  px(11, 4, 10, 3, mixHex(kit.cap, DARK, 0.55));   // 모자챙
+  px(12, 1, 8, 4, kit.cap);           // 모자 — 부대의 색
   px(12, 7, 8, 7, rank.skin);         // 얼굴 (이목구비는 안 그린다)
-  px(10, 14, 12, 15, rank.top);       // 상의
-  px(7, 15, 3, 12, rank.top);         // 팔
-  px(22, 15, 3, 12, rank.top);
+  px(10, 14, 12, 15, top);            // 상의
+  px(7, 15, 3, 12, top);              // 팔
+  px(22, 15, 3, 12, top);
   px(7, 25, 3, 3, rank.skin);         // 손
   px(22, 25, 3, 3, rank.skin);
-  px(11, 29, 4, 14, rank.bot);        // 다리
-  px(17, 29, 4, 14, rank.bot);
+  px(11, 29, 4, 14, bot);             // 다리
+  px(17, 29, 4, 14, bot);
   // 군화는 캔버스 **맨 아래까지** 채운다. 밑에 투명 픽셀을 남기면 그만큼 병사가
   // 땅 위에 떠 보인다 — 판때기는 텍스처 전체 높이로 배치되기 때문이다.
   px(10, 43, 6, 5, '#241f1a');        // 군화
@@ -138,9 +154,9 @@ const rand = (a, b) => a + Math.random() * (b - a);
 export class Stage {
   /**
    * canvas 하나를 받아 무대를 연다. WebGL이 안 되면 ok=false로 조용히 죽는다.
-   * onSpeak는 말풍선을 그리는 쪽에 자리를 알려주려고 부른다 (화면 좌표 0..1).
+   * kit은 이 부대의 전투복·모자 색이다 (units.js의 sprite). 안 주면 올리브로 떨어진다.
    */
-  constructor(canvas, { count = 12 } = {}) {
+  constructor(canvas, { count = 12, kit = DEFAULT_KIT } = {}) {
     this.canvas = canvas;
     this.ok = false;
     this.sprites = [];
@@ -155,7 +171,7 @@ export class Stage {
       this.scene = new Scene();
       // 정사영 카메라. 무대는 언제나 0..1 × 0..1이다 — 캔버스가 커져도 좌표는 안 바뀐다.
       this.camera = new OrthographicCamera(0, 1, 1, 0, -10, 10);
-      this.textures = RANKS.map(drawSoldier);
+      this.textures = RANKS.map(r => drawSoldier(r, kit));
       this.#build(count);
       this.ok = true;
       this.resize();

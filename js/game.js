@@ -403,10 +403,14 @@ function renderGauges() {
   // 부대에서는 이 자리가 거짓말을 한다 — 안 올라온 것마다 문턱이 앞으로 당겨지는데
   // 계기판은 여전히 기준선을 가리키고 있기 때문이다. 그 사실 자체는 숨기지 않는다:
   // 숨기는 것은 **얼마나 당겨졌는가**지 「당겨진다」가 아니다.
-  if (note) {
+  // 접힌 자리의 제목 줄에는 **눈금 하나만** 쓴다. 이유는 펼쳐야 나온다 —
+  // 제목에 문장을 넣으면 접어 둔 뜻이 없어진다(계기 다섯이 먼저 보여야 접은 것이다).
+  if (note) note.textContent = TUNING.roll.big.open.toFixed(1);
+  const why = $('#gauge-open-why');
+  if (why) {
     const p = reportChance('minor', { comrade: state.unit.comrade.score, macho: state.unit.macho.score });
-    note.textContent = `${TUNING.roll.big.open.toFixed(1)} — 다만 이 부대는 잔사건 열에 `
-      + `${Math.round(p * 10)}건만 위로 올라온다. 안 올라온 것마다 이 자리가 앞으로 당겨진다.`;
+    why.textContent = `이 부대는 잔사건 열에 ${Math.round(p * 10)}건만 위로 올라온다`
+      + ` — 안 올라온 것마다 이 자리가 앞으로 당겨진다.`;
   }
 }
 
@@ -428,7 +432,8 @@ function renderTimeline(activeIndex = -1) {
 // 그때도 하늘·해·장소 라벨은 CSS라 그대로 뜬다 — 병사 판때기만 없다.
 function openStage() {
   if (!state.stage) {
-    state.stage = new Stage($('#stage-canvas'), { count: 12 });
+    // 판때기 색은 부대가 준다 — 모자 하나로 어느 군인지가 한눈에 갈린다.
+    state.stage = new Stage($('#stage-canvas'), { count: 12, kit: state.unit.sprite });
     state.stage.start();
     addEventListener('resize', () => state.stage?.resize());
   }

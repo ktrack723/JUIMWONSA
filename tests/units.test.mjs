@@ -43,11 +43,36 @@ test('스키마 밖 필드가 없다 — 검증은 로드 시 이미 죽였겠�
   assert.deepEqual([...UNIT_FIELDS].sort(), [
     'branch', 'cohort', 'comrade', 'culture', 'desc', 'difficulty', 'id', 'intel', 'jobs',
     'macho', 'name', 'nameStyle', 'rankMonths', 'rules', 'serial', 'serviceMonths',
-    'soldierRules', 'songMode', 'songSlots', 'songs',
+    'soldierRules', 'songMode', 'songSlots', 'songs', 'sprite',
   ]);
   for (const u of UNITS) {
     assert.deepEqual(Object.keys(u).sort(), [...UNIT_FIELDS].sort());
   }
+});
+
+test('부대마다 무대 색이 있고, 모자로 군이 갈린다', () => {
+  const HEX = /^#[0-9a-f]{6}$/i;
+  for (const u of UNITS) {
+    for (const f of ['top', 'bot', 'cap']) {
+      assert.match(u.sprite[f], HEX, `${u.id}.sprite.${f}가 색이 아니다`);
+    }
+  }
+  // 모자는 부대를 가르는 자리다 — 두 부대가 같은 모자를 쓰면 무대에서 구별이 안 된다
+  const caps = UNITS.map(u => u.sprite.cap);
+  assert.equal(new Set(caps).size, caps.length, '두 부대가 같은 모자 색을 쓴다');
+  // 그리고 모자는 전투복과도 달라야 한다 — 같으면 모자가 안 보인다
+  for (const u of UNITS) {
+    assert.notEqual(u.sprite.cap, u.sprite.top, `${u.id}: 모자가 상의와 같은 색이라 안 보인다`);
+  }
+  // 해병은 빨강, 공군은 파랑 — 색의 결까지 못박는다(R>B / B>R)
+  const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [mr, , mb] = rgb(UNIT_BY_ID['marine-fort'].sprite.cap);
+  assert.ok(mr > mb + 60, '해병 모자가 빨갛지 않다');
+  const [ar, , ab] = rgb(UNIT_BY_ID['airforce-sys'].sprite.cap);
+  assert.ok(ab > ar + 60, '공군 모자가 파랗지 않다');
+  // 공군은 전투복까지 파랑이다 — 「다 파랑」이 그 부대의 결이다
+  const [tr, , tb] = rgb(UNIT_BY_ID['airforce-sys'].sprite.top);
+  assert.ok(tb > tr, '공군 전투복이 파란 쪽이 아니다');
 });
 
 test('군번 형식과 직무 슬롯이 부대마다 있다 — 채번과 배정은 코드 몫이다', () => {

@@ -75,7 +75,7 @@
           <div class="panel95 hud" data-title="상황판">
             <div id="hud-date" class="hud-date"></div>
             <div class="hud-row"><span class="hud-k">무사고</span><span id="hud-streak" class="hud-v big"></span></div>
-            <div class="hud-row"><span class="hud-k">임기 만료 · 심사일</span><span id="hud-review" class="hud-v"></span></div>
+            <div class="hud-row"><span class="hud-k">임기 만료</span><span id="hud-review" class="hud-v"></span></div>
             <div class="hud-row"><span class="hud-k">사고 누계</span><span id="hud-accidents" class="hud-v"></span></div>
             <!-- 지금 이대로 끝나면 무엇이고, 한 등급 위는 무엇이 필요한가.
                  진급은 첫 사고에 닫히므로, 목표가 자리를 옮겨 앉는 것이 보여야 한다. -->
@@ -92,49 +92,63 @@
                프롬프트에는 여전히 밴드만 나간다 (숫자가 새면 테스트가 깨진다). -->
           <div class="panel95 gauges" data-title="부대 계기판">
             <div id="gauge-box"></div>
-            <p class="meter-note">갈등·부조리가 <b id="gauge-open-note">위험 눈금</b>을 넘거나 멘탈이 <b>2 이하</b>로
-              무너진 병사가 있으면 탈영·자해급 사고의 문이 열린다. 다만 <b>그 눈금은 기준선일 뿐이다</b> —
-              위로 안 올라간 사건 하나마다 실제 자리가 앞으로 당겨지고, 얼마나 당겨졌는지는 계기판이 모른다.
-              끈끈한 부대는 사건이 적은 게 아니라 <b>보고가 적다</b>: 장부가 조용한 동안 밑이 차오른다.</p>
+            <details class="ledger-help">
+              <summary>큰 사고의 문이 열리는 자리 — <b id="gauge-open-note">위험 눈금</b></summary>
+              <p class="meter-note"><b id="gauge-open-why"></b></p>
+              <p class="meter-note">갈등·부조리가 그 눈금을 넘거나 멘탈이 <b>2 이하</b>로
+                무너진 병사가 있으면 탈영·자해급 사고의 문이 열린다. 다만 <b>그 눈금은 기준선일 뿐이다</b> —
+                위로 안 올라간 사건 하나마다 실제 자리가 앞으로 당겨지고, 얼마나 당겨졌는지는 계기판이 모른다.
+                끈끈한 부대는 사건이 적은 게 아니라 <b>보고가 적다</b>: 장부가 조용한 동안 밑이 차오른다.</p>
+            </details>
           </div>
-          <!-- 가라 내역 — 계기판의 「가라 N」이 실제로 무엇 N개인가.
-               개수는 계기판이 말하고 정체는 여기가 말한다. 그 사이의 틈이 이 게임에 남은
-               마지막 안개다 — 틈을 좁히는 유일한 수단이 불시점검이다. -->
-          <div class="panel95 gara-panel" data-title="가라 내역 · 확인된 것만">
-            <div id="gara-tally" class="gara-tally"></div>
-            <ul id="gara-known" class="gara-list"></ul>
-            <div id="gara-banned-box" class="gara-banned-box hidden">
-              <div class="gara-sub">지침으로 막아 놓은 것</div>
-              <ul id="gara-banned" class="gara-list banned"></ul>
+          <!-- 내역 — 이 게임에서 **플레이어가 아는 것 전부**가 여기 있다.
+               가라와 부조리는 같은 종류의 안개다: 계기판이 개수를 말하고 이 명부가 정체를
+               말하며, 그 사이의 틈을 좁히는 길이 들이닥치는 것과 불러서 묻는 것뿐이다.
+               둘을 갈라 놓았더니 각자의 설명 문단에 밀려 화면 반 페이지쯤 떨어져 있었다 —
+               한 패널로 붙이고, 읽는 법은 접어 둔다. 눈에 먼저 와야 하는 것은 **명부**다. -->
+          <div class="panel95 ledger-panel" data-title="내역 · 확인된 것만">
+            <div class="ledger-sec">
+              <h4 class="ledger-h">가라 <small>자리에 붙는다 · 들이닥쳐서 안다</small></h4>
+              <div id="gara-tally" class="gara-tally"></div>
+              <ul id="gara-known" class="gara-list"></ul>
+              <div id="gara-banned-box" class="gara-banned-box hidden">
+                <div class="gara-sub">지침으로 막아 놓은 것</div>
+                <ul id="gara-banned" class="gara-list banned"></ul>
+              </div>
+              <div class="gara-sub">자리별 마지막 확인</div>
+              <div id="gara-seen" class="gara-seen"></div>
             </div>
-            <div class="gara-sub">자리별 마지막 확인</div>
-            <div id="gara-seen" class="gara-seen"></div>
-            <p class="meter-note">이 명부는 <b>확인한 그날의 사실</b>이지 지금의 사실이 아니다.
-              안 가 본 자리는 낡고, 머리 좋은 부대는 들이닥쳐도 절반쯤 숨긴다.<br>
-              들이닥칠 때는 <b>자리와 시간이 둘 다 맞아야</b> 잡힌다 — 점호 때 도는 것은 오후에 생활관을 털어도 없다.
-              <b class="tier-court">재판급</b>은 눈앞에서 나오면 그 자리에서 끊긴다. 나머지는 정체만 사고, 끊는 것은 지침의 일이다.</p>
+            <div class="ledger-sec">
+              <h4 class="ledger-h">부조리 <small>사람에 붙는다 · 덮치거나 불러서 안다</small></h4>
+              <div id="abuse-tally" class="gara-tally"></div>
+              <ul id="abuse-known" class="gara-list abuse-list"></ul>
+            </div>
+            <details class="ledger-help">
+              <summary>이 명부를 읽는 법</summary>
+              <p class="meter-note">이 명부는 <b>확인한 그날의 사실</b>이지 지금의 사실이 아니다.
+                안 가 본 자리는 낡고, 머리 좋은 부대는 들이닥쳐도 절반쯤 숨긴다.
+                들이닥칠 때는 <b>자리와 시간이 둘 다 맞아야</b> 잡힌다 — 점호 때 도는 것은 오후에 생활관을 털어도 없다.
+                <b class="tier-court">재판급</b>은 눈앞에서 나오면 그 자리에서 끊긴다. 나머지는 정체만 사고, 끊는 것은 지침의 일이다.</p>
+              <p class="meter-note">가라는 자리에 붙고 <b>부조리는 사람에 붙는다.</b> 그래서 찾는 길이 둘이다 —
+                그 자리·그 시간에 <b>들이닥쳐 덮치거나</b>, 당하는 놈을 <b>불러서 실토받거나.</b>
+                가해자는 절대 제 입으로 안 분다.
+                <b>아무도 안 말리면 무거워진다</b>(갈굼 → 가혹행위 → <b class="tier-crime">형사건</b>).
+                형사건은 저절로 안 없어지고 <b>덮쳐야만 끊긴다</b> — 그리고 그 사람은 그때까지 매일 깎인다.
+                단서는 관행 이름이 아니라 <b>그 짝</b>을 따라간다: 자라서 이름이 바뀌어도 누구를 봐야 하는지는 안다.</p>
+            </details>
           </div>
-          <!-- 부조리 내역 — 갈등 눈금의 내용물. 가라와 같은 안개인데 **사람 이름이 걸려 있다.**
-               발견 경로가 둘이다: 들이닥쳐 덮치거나, 당하는 놈을 불러 실토받거나. -->
-          <div class="panel95 abuse-panel" data-title="부조리 내역 · 확인된 것만">
-            <div id="abuse-tally" class="gara-tally"></div>
-            <ul id="abuse-known" class="gara-list abuse-list"></ul>
-            <p class="meter-note">가라는 자리에 붙고 <b>부조리는 사람에 붙는다.</b> 그래서 찾는 길이 둘이다 —
-              그 자리·그 시간에 <b>들이닥쳐 덮치거나</b>, 당하는 놈을 <b>불러서 실토받거나.</b>
-              가해자는 절대 제 입으로 안 분다.<br>
-              <b>아무도 안 말리면 무거워진다</b>(갈굼 → 가혹행위 → <b class="tier-crime">형사건</b>).
-              형사건은 저절로 안 없어지고 <b>덮쳐야만 끊긴다</b> — 그리고 그 사람은 그때까지 매일 깎인다.
-              단서는 관행 이름이 아니라 <b>그 짝</b>을 따라간다: 자라서 이름이 바뀌어도 누구를 봐야 하는지는 안다.</p>
+          <div class="panel95 roster-panel" data-title="병력 현황">
+            <div id="roster-list" class="roster-list"></div>
           </div>
           <!-- 검열 내역 — 당한 것의 기록. 가라 명부와 달리 안 낡는다: 지나간 일이다. -->
           <div id="censor-panel" class="panel95 censor-panel hidden" data-title="🕶 검열 내역">
             <ul id="censor-list" class="censor-list"></ul>
-            <p class="meter-note">검열관은 <b>자리를 안 고른다</b> — 흩어져서 전부 뒤진다. 대신 그 시간에
-              실제로 돌고 있는 것만 현장이 잡힌다. <b class="tier-court">재판급</b>이 하나라도 걸리면 그날이 사고다.
-              <b>지적 0으로 넘기면</b> 평판 +1 · 행복 +1 — 이 게임에 몇 안 되는 상방이다.</p>
-          </div>
-          <div class="panel95 roster-panel" data-title="병력 현황">
-            <div id="roster-list" class="roster-list"></div>
+            <details class="ledger-help">
+              <summary>검열이 하는 일</summary>
+              <p class="meter-note">검열관은 <b>자리를 안 고른다</b> — 흩어져서 전부 뒤진다. 대신 그 시간에
+                실제로 돌고 있는 것만 현장이 잡힌다. <b class="tier-court">재판급</b>이 하나라도 걸리면 그날이 사고다.
+                <b>지적 0으로 넘기면</b> 평판 +1 · 행복 +1 — 이 게임에 몇 안 되는 상방이다.</p>
+            </details>
           </div>
           <div class="panel95 notice-board" data-title="활성 지침">
             <ul id="notice-list" class="notice-list"></ul>

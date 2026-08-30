@@ -76,6 +76,10 @@ export const UNITS = [
     macho: { score: 9, desc: '사내다움을 증명하려고 아무도 안 시킨 짓을 한다. 다친 자리는 훈장이고 의무대는 패배다' },
     // ⑥ 전우애 — 침묵의 압력. 높을수록 무슨 일이 나도 그 자리에서 멎고 위로 안 간다
     comrade: { score: 10, desc: '같이 굴렀으니 같이 덮는다. 치고받고도 저녁이면 같이 담배 피우고, 무슨 일이 나도 위로는 안 올라간다. 올리는 놈이 나쁜 놈이다' },
+    // 무대 판때기의 색. **모자가 부대를 가른다** — 열두 판때기가 같은 모자를 쓰고 서 있어야
+    // 「저건 해병이다」가 한눈에 온다. 해병은 빨강이다(빨간명찰의 그 빨강).
+    // 전투복은 짬에 따라 바래고 모자는 안 바랜다 (sprites.js의 drawSoldier).
+    sprite: { top: '#4a5a3a', bot: '#3a4a2e', cap: '#a3232a' },
     difficulty: 8,          // 일과 난이도 — static. 주임원사가 못 건드린다
     serviceMonths: 18,      // 복무기간 (①의 수치판 — 전역 판정은 코드가 한다)
     // 군번은 전 군 공통으로 「입대연도 두 자리 + 여덟 자리」다. 군을 가르는 것은 표기가
@@ -141,6 +145,9 @@ export const UNITS = [
     intel: { score: 8, desc: '수능 다시 보러 온 것 같은 놈들. 규정을 읽고 와서 인용한다' },
     macho: { score: 2, desc: '체력 검정이 최대 위기. 몸으로 하는 증명을 유치하다고 여긴다' },
     comrade: { score: 2, desc: '옆자리 군번은 알아도 사람은 모른다. 참견이 무례라서 아무도 안 들어가고, 대신 손가락에 밴드 하나만 붙여도 그날 서면으로 올라간다 — 덮어 줄 사이가 아니니까' },
+    // 공군은 통째로 파랑이다 — 모자도 전투복도. 실제 공군 전투복이 청회색 계열이고,
+    // 무대에서 두 부대가 색 하나로 갈리는 것이 여기서 제일 크게 보인다.
+    sprite: { top: '#3f5570', bot: '#31445a', cap: '#1f4f8f' },
     difficulty: 3,
     serviceMonths: 21,
     serial: { branchCode: '5', seqBase: 20000000 },
@@ -168,7 +175,7 @@ export const UNITS = [
 // ── 검증 — 스키마 밖의 필드가 생기거나 절이 비면 로드 자체가 죽는다 ──────
 export const UNIT_FIELDS = new Set([
   'id', 'name', 'branch', 'desc', 'culture', 'rules', 'soldierRules',
-  'intel', 'macho', 'comrade', 'difficulty', 'serviceMonths', 'serial', 'jobs',
+  'intel', 'macho', 'comrade', 'difficulty', 'serviceMonths', 'serial', 'jobs', 'sprite',
   'songMode', 'songSlots', 'songs',
   'cohort', 'rankMonths', 'nameStyle',
 ]);
@@ -190,6 +197,10 @@ for (const u of UNITS) {
     if (typeof v.desc !== 'string' || v.desc.length < 2) throw new Error(`units.js: ${u.id}.${f}.desc 서술이 없다`);
   }
   if (typeof u.difficulty !== 'number' || u.difficulty < 0 || u.difficulty > 10) throw new Error(`units.js: ${u.id} 일과 난이도는 0~10이어야 한다`);
+  // 무대 색 셋 — 없거나 색이 아니면 판때기가 통째로 검게 굽힌다(canvas는 조용히 실패한다).
+  for (const f of ['top', 'bot', 'cap']) {
+    if (!/^#[0-9a-f]{6}$/i.test(u.sprite?.[f] || '')) throw new Error(`units.js: ${u.id}.sprite.${f}가 #rrggbb가 아니다`);
+  }
   if (!(u.serviceMonths >= 12)) throw new Error(`units.js: ${u.id} 복무기간이 이상하다`);
   if (!/^[135]$/.test(u.serial?.branchCode || '')) throw new Error(`units.js: ${u.id} 군 코드는 1·3·5 중 하나여야 한다`);
   if (!(u.serial.seqBase >= 0)) throw new Error(`units.js: ${u.id} 군번 시작 번호 누락`);
