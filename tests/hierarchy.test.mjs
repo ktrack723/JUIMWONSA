@@ -22,7 +22,7 @@ const M = {
   intelDesc: 'INTELDESC표식', machoDesc: 'MACHODESC표식',
   sheet: 'SHEET표식', othersheet: 'NEWCOMER표식',   // ⚠ 표식끼리 서로를 품으면 안 된다
   bandGara: 'BANDGARA표식', bandHappy: 'BANDHAPPY표식', bandConf: 'BANDCONF표식', bandDiff: 'BANDDIFF표식',
-  feltRoom: 'FELTROOM표식', feltWork: 'FELTWORK표식', feltMood: 'FELTMOOD표식',
+  feltRoom: 'FELTROOM표식', feltWork: 'FELTWORK표식', spirit: 'SPIRITBAND표식',
   honesty: 'HONESTY표식', standing: 'STANDING표식',
   yesterday: 'YESTER표식', notice: 'NOTICE표식', directive: 'DIRECTIVE표식',
   question: 'QUESTION표식', scene: 'SCENE표식', event: 'EVENT표식', place: 'PLACE표식',
@@ -62,7 +62,7 @@ const E2 = P.outcomeUser({ directive: M.directive, standing: M.standing });
 const E2none = P.outcomeUser({ directive: null, standing: M.standing });
 const E3 = P.JUDGE_SYSTEM + '\n' + P.judgeUser({ scene: M.scene, tier: 'major' });
 const I1 = P.interviewSystem(unit) + '\n'
-  + P.interviewOpen({ soldier, felt: { room: M.feltRoom, work: M.feltWork, mood: M.feltMood }, honesty: M.honesty, question: M.question })
+  + P.interviewOpen({ soldier: { ...soldier, spirit: M.spirit }, felt: { room: M.feltRoom, work: M.feltWork }, honesty: M.honesty, question: M.question })
   + '\n' + P.interviewFollowup('FOLLOWUP표식');
 const I2 = P.inspectSystem(unit) + '\n' + P.inspectUser({ place: M.place, readings: { 'corner-cutting': M.bandGara } });
 const N = P.noticeSystem(unit) + '\n' + P.noticeUser(M.notice);
@@ -227,10 +227,24 @@ test('E-3의 출력은 확전 여부 + 방향 셋뿐이다 — 점수도 해설�
 });
 
 // ── I-1. 면담 ───────────────────────────────────────────
-test('I-1은 그 병사의 프로필·체감 밴드·솔직도·질문을 받는다', () => {
-  for (const k of ['sheet', 'feltRoom', 'feltWork', 'feltMood', 'honesty', 'question']) {
+test('I-1은 그 병사의 프로필·체감 밴드·멘탈 밴드·솔직도·질문을 받는다', () => {
+  for (const k of ['sheet', 'feltRoom', 'feltWork', 'spirit', 'honesty', 'question']) {
     assert.ok(has(I1, M[k]), `I-1에 ${k}가 없다`);
   }
+});
+
+test('I-1은 상담이다 — 취조가 아니라는 못이 지시문에 박혀 있다', () => {
+  const role = P.interviewSystem(unit);
+  assert.ok(/not to interrogate/i.test(role), '취조 금지 못이 빠졌다');
+  assert.ok(/check on\s+him/i.test(role), '살피러 불렀다는 못이 빠졌다');
+  assert.ok(/Let the talk move him/i.test(role), '대화가 사람을 움직인다는 못이 빠졌다 — 멘탈 회복의 서사 근거다');
+});
+
+test('멘탈은 프롬프트에 밴드로만 간다 — 숫자가 오면 빌더가 죽는다', () => {
+  assert.throws(() => P.soldierRoll({ ...soldier, spirit: 3 }), '숫자 멘탈이 통과했다');
+  assert.throws(() => P.soldierRoll({ ...soldier, spirit: '3' }));
+  // spirit이 없으면 줄 자체가 안 붙는다 (전입 굴림 직후 등)
+  assert.ok(!P.soldierRoll(soldier).includes('spirit'), 'spirit 없는 병사에 빈 줄이 붙었다');
 });
 
 test('I-1은 부대 전체 파라미터를 못 본다 — 병사는 자기 체감만 안다', () => {

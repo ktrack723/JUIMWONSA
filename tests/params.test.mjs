@@ -112,11 +112,14 @@ test('갈등이 적당히 높으면 잔사고가 준다 — 군기가 눌러 놓
 test('rollSlot은 결정적 rng로 결정적으로 돈다 — 큰 롤이 먼저다', () => {
   const params = { gara: 5, conflict: 10 };
   const unit = { intel: 5, macho: 5, difficulty: 5 };
-  assert.deepEqual(PM.rollSlot(params, unit, 'work', seq([0.0001])), { tier: 'major' });
+  assert.deepEqual(PM.rollSlot(params, unit, 'work', seq([0.0001])), { tier: 'major', cause: 'conflict' });
   assert.equal(PM.rollSlot(params, unit, 'work', seq([0.99, 0.99])), null);
   const calm = { gara: 0, conflict: 0 };
   const safeUnit = { intel: 10, macho: 0, difficulty: 1 };
   assert.deepEqual(PM.rollSlot(calm, safeUnit, 'work', seq([0.0001])), { tier: 'minor' });
+  // 멘탈이 바닥난 놈이 있으면 갈등이 낮아도 큰 롤이 열린다 — 원인이 mental로 찍힌다
+  assert.deepEqual(PM.rollSlot({ gara: 0, conflict: 0, minMental: 1 }, safeUnit, 'work', seq([0.0001])),
+    { tier: 'major', cause: 'mental' });
 });
 
 test('사건 풀 밖 창작은 없다 — pickEvent는 티어·슬롯에 맞는 후보만 준다', () => {
@@ -244,4 +247,79 @@ test('장소마다 드러내는 파라미터가 있고, 전부 실존 파라미�
   assert.ok(PM.PLACES.worksite.reveals.includes('gara'));
   // 평판은 어느 장소도 안 드러낸다 — 평판은 병사가 아니라 주임원사의 것이다
   for (const p of Object.values(PM.PLACES)) assert.ok(!p.reveals.includes('rep'));
+});
+
+// ── 멘탈 — 병사별 저장 상태. 큰 사고의 두 번째 문이다 ────
+test('멘탈 굴림은 0~10 안이고, 인성 하위는 낮게 시작한다', () => {
+  for (let i = 0; i < 60; i++) {
+    const m = PM.rollMental('중', Math.random);
+    assert.ok(m >= 0 && m <= 10);
+  }
+  // 같은 난수면 인성만큼 정확히 낮다
+  const fixed = () => 0.5;
+  assert.equal(PM.rollMental('최악', fixed), PM.rollMental('중', fixed) - 2);
+  assert.equal(PM.rollMental('하', fixed), PM.rollMental('중', fixed) - 1);
+});
+
+test('부대 분위기가 멘탈을 쓸어간다 — 밝으면 +1, 어두우면 −1, 눌리면 또 −1', () => {
+  const base = { gara: 5, rep: 5 };
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 9, conflict: 3 }), 6);
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 3 }), 4);
+  // 어둡고 눌리면 사유가 둘이지만 하루 한 걸음이다
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 8 }), 4);
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 5, conflict: 5 }), 5, '보통 날에 움직였다');
+  assert.equal(PM.mentalDrift(0, { ...base, happy: 0, conflict: 9 }), 0, '바닥 밑으로 뚫었다');
+});
+
+test('상담은 +1, 연루는 −1, 사고가 되면 −2다', () => {
+  assert.equal(PM.counselMental(4), 5);
+  assert.equal(PM.counselMental(10), 10);
+  assert.equal(PM.incidentMental(5, false), 4);
+  assert.equal(PM.incidentMental(5, true), 3);
+  assert.equal(PM.incidentMental(0, true), 0);
+});
+
+test('멘탈이 dangerAt(2) 이하로 떨어진 병사가 있으면 큰 사고가 열린다', () => {
+  const unit = { intel: 5, macho: 5, difficulty: 5 };
+  for (const ok of [10, 5, 3]) {
+    assert.equal(PM.incidentRisk({ gara: 5, conflict: 3, minMental: ok }, unit).big, 0,
+      `멘탈 ${ok}인데 큰 사고가 열렸다`);
+  }
+  const at2 = PM.incidentRisk({ gara: 5, conflict: 3, minMental: 2 }, unit);
+  const at0 = PM.incidentRisk({ gara: 5, conflict: 3, minMental: 0 }, unit);
+  assert.ok(at2.big > 0, '멘탈 2에서 안 열렸다');
+  assert.ok(at0.big > at2.big, '더 무너졌는데 위험이 같다');
+  assert.equal(at2.bigCause, 'mental');
+  // 갈등과 멘탈이 둘 다 열렸으면 위험은 합산이고, 원인은 더 큰 쪽이다
+  const both = PM.incidentRisk({ gara: 5, conflict: 10, minMental: 2 }, unit);
+  assert.ok(both.big > at2.big);
+  assert.equal(both.bigCause, 'conflict');
+});
+
+test('minMental을 안 주면 안전값이다 — 멘탈이 생기기 전의 호출이 안 깨진다', () => {
+  const unit = { intel: 5, macho: 5, difficulty: 5 };
+  assert.equal(PM.incidentRisk({ gara: 5, conflict: 3 }, unit).big, 0);
+  assert.equal(PM.minMentalOf([]), 10, '빈 명부가 위험을 열었다');
+  assert.equal(PM.minMentalOf([{ mental: 4 }, { mental: 7 }]), 4);
+  assert.equal(PM.minMentalOf([{}]), PM.TUNING.mental.default, '멘탈 없는 옛 병사를 못 읽었다');
+});
+
+test('연루 가중은 등급이 낮을수록, 멘탈이 낮을수록 크다', () => {
+  const w = (grade, mental) => PM.involveWeight({ grade, mental });
+  assert.ok(w('폐급', 6) > w('에이스', 6));
+  assert.ok(w('B', 2) > w('B', 6), '무너진 놈이 더 잘 걸려야 한다');
+  assert.equal(w('B', 6), w('B', 8), '기준(6) 위는 가중이 없어야 한다');
+  assert.equal(w('B', undefined), w('B', 6), '멘탈 없는 옛 병사는 중립이어야 한다');
+});
+
+// ── 불시점검(군기 점검) — 순수 코드 효과 ─────────────────
+test('점검은 가라 −1 · 행복 −1이고, LLM은 폭을 못 만진다', () => {
+  const p = { gara: 5, happy: 5, conflict: 5, rep: 5 };
+  const out = PM.applyInspection(p);
+  assert.equal(out.gara, 4);
+  assert.equal(out.happy, 4);
+  assert.equal(out.conflict, 5);
+  assert.equal(out.rep, 5, '점검 효과가 평판을 건드렸다 — 평판은 applyIntervention 몫이다');
+  assert.equal(PM.applyInspection({ ...p, gara: 0, happy: 0 }).gara, 0, '바닥을 뚫었다');
+  assert.notEqual(out, p, '원본을 돌려줬다');
 });
