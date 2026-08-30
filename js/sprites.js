@@ -146,6 +146,17 @@ export class Stage {
   }
 
   /**
+   * 무대에 몇 명을 세울 것인가. ratio는 「정원 대비 오늘 부대에 있는 인원」(0..1)이다.
+   * 판때기 열둘은 명부 열여섯의 표본이라 1:1이 아니지만, **인원이 빠지면 무대도 빈다** —
+   * 입원·이탈이 숫자로만 남지 않게 하는 자리다. 최소 하나는 남긴다(빈 연병장은 버그로 보인다).
+   */
+  crowd(ratio) {
+    if (!this.ok) return;
+    const n = Math.max(1, Math.round(this.sprites.length * Math.max(0, Math.min(1, ratio))));
+    this.sprites.forEach((s, i) => { s.sp.visible = i < n; });
+  }
+
+  /**
    * 캔버스 크기가 바뀌면 부른다. 무대 좌표계(0..1 × 0..1)는 안 바뀌고 픽셀만 맞춘다.
    * 다만 **가로세로 비율은 보정해야 한다.** 정사영 카메라가 가로도 0..1, 세로도 0..1로
    * 잡는데 캔버스는 가로로 길다 — 보정 없이 두면 병사가 납작한 판때기로 뭉개진다
@@ -183,9 +194,12 @@ export class Stage {
     }
   }
 
-  /** 지금 이 순간 스프라이트들이 서 있는 화면 좌표(0..1). 말풍선이 이걸 보고 붙는다. */
+  /**
+   * 지금 이 순간 스프라이트들이 서 있는 화면 좌표(0..1). 말풍선이 이걸 보고 붙는다.
+   * 무대에서 뺀 판때기(crowd)는 자리도 안 준다 — 없는 사람 머리 위에서 말이 나오면 안 된다.
+   */
   positions() {
-    return this.sprites.map(s => ({ x: s.x, y: 1 - s.base }));
+    return this.sprites.filter(s => s.sp.visible).map(s => ({ x: s.x, y: 1 - s.base }));
   }
 
   start() {

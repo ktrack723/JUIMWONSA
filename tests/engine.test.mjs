@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { Engine } from '../js/engine.js';
 import { Roster } from '../js/roster.js';
 import { AmbientPool } from '../js/ambient.js';
-import { TUNING, INCIDENT_CATEGORIES } from '../js/params.js';
+import { TUNING, INCIDENT_CATEGORIES, absenceFor } from '../js/params.js';
 import { RECRUIT_SCHEMA as P_RECRUIT } from '../js/prompts.js';
 
 // ── 가짜 LLM — label로 갈라 결정적 응답을 준다 ──────────
@@ -559,4 +559,150 @@ test('전입 병사도 멘탈을 굴려 받는다 — 저장까지', async () =>
   const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
   const arrivals = await engine.fillRoster();
   assert.ok(arrivals.every(a => typeof a.mental === 'number' && a.mental >= 0 && a.mental <= 10));
+});
+
+// ── 부재 — 사고가 사람을 데려간다 (입원·이탈) ─────────────
+// 사고의 값이 카운터 0으로 끝나면 종이 위의 일이다. 확전한 사건은 유형에 따라
+// 연루자 하나를 부대에서 실제로 빼내고, 그 자리는 복귀일까지 비어 있다.
+
+// 부재 구간을 읽기 쉽게 — 브리핑 user의 한 섹션만 잘라 본다.
+const section = (user, head) => user.split(`[${head}`)[1]?.split('\n[')[0] || '';
+
+test('확전한 부상 사고는 병사를 입원시킨다 — 명부에는 남고 병력에서만 빠진다', async () => {
+  const { engine, state, roster, events } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  engine._directive = null;
+  const snap = await engine.runDay();
+
+  const gone = roster.absent;
+  assert.equal(gone.length, 1, '사고가 아무도 데려가지 않았다');
+  assert.equal(gone[0].away.kind, 'hospital', '작업 중 부상인데 입원이 아니다');
+  assert.equal(gone[0].away.since, '2026-05-18');
+  assert.equal(gone[0].away.until, '2026-05-28', '복귀일이 안 굳었다 (부상 최대 10일)');
+  // 제적이 아니다 — 명부는 열여섯 그대로고, 오늘 부대에 있는 인원만 열다섯이다
+  assert.equal(roster.soldiers.length, 16);
+  assert.equal(roster.present.length, 15);
+  assert.equal(snap.roster, 15, '병력 표시가 부재자를 세고 있다');
+  assert.deepEqual(snap.away.map(a => a.serial), [gone[0].serial]);
+  // 사고 대장에도 누가 어디로 갔는지가 남는다
+  assert.deepEqual(state.accidents[0].away.map(a => a.kind), ['hospital']);
+  // 화면 손잡이로도 나간다 — 게임이 「누가 사라졌는지」를 말할 수 있어야 한다
+  const verdict = events.find(e => e[0] === 'verdict')[1];
+  assert.equal(verdict.absences[0].soldier.serial, gone[0].serial);
+  assert.equal(verdict.absences[0].until, gone[0].away.until);
+});
+
+test('빈 자리는 충원되지 않는다 — 복귀할 때까지 열다섯으로 간다', async () => {
+  const { llm, engine, roster } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  engine._directive = null;
+  await engine.runDay();
+  llm.calls.length = 0;
+
+  await engine.runDay();   // 다음 날 — 전입 콜이 나가면 안 된다
+  assert.deepEqual(llm.byLabel('전입'), [], '부재로 빈 자리에 신병이 왔다');
+  assert.equal(roster.present.length, 15, '자리가 조용히 채워졌다');
+  assert.equal(roster.vacancies(), 0);
+});
+
+test('멘탈이 무너진 놈의 큰 사고는 이탈이다 — 그 놈이 부대에서 사라진다', async () => {
+  const { engine, roster, state } = fixture({
+    rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.001, 0, 0]),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  roster.soldiers[7].mental = 1;   // 한 명이 무너져 있다
+  engine._directive = null;
+  await engine.runDay();
+
+  const gone = roster.absent;
+  assert.equal(gone.length, 1);
+  assert.equal(gone[0].name, '기존7', '무너진 그 놈이 아니라 딴 놈이 사라졌다');
+  assert.equal(gone[0].away.kind, 'awol', '탈영인데 이탈이 아니다');
+  assert.equal(state.accidents[0].category, 'absent');
+});
+
+test('없는 사람은 사건에도 안 걸리고 면담에도 못 부른다', async () => {
+  const { engine, roster, state, events } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  const man = roster.soldiers[0];
+  roster.sendAway(man, { kind: 'awol', days: 9, since: '2026-05-18' });
+
+  const rep0 = state.params.rep;
+  await assert.rejects(() => engine.interview(man.serial, '어디 있었냐'), /부대에 없다/);
+  assert.equal(state.params.rep, rep0, '부르지도 못했는데 평판이 깎였다');
+
+  engine._directive = null;
+  await engine.runDay();
+  // 연루자는 언제나 부대에 있는 사람 중에서만 나온다 — 없는 놈이 족구를 하다 다칠 수는 없다
+  const incident = events.find(e => e[0] === 'incident')[1];
+  assert.ok(incident, '사건이 안 열렸다 — 이 테스트가 아무것도 안 재고 있다');
+  assert.ok(!incident.involved.some(s => s.serial === man.serial), '없는 사람이 사건에 연루됐다');
+  assert.ok(roster.absent.some(s => s.serial === man.serial), '부재가 하루 만에 풀렸다');
+  assert.equal(man.mental, 6, '부재자가 부대 분위기에 쓸렸다 — 여기 없는 사람이다');
+});
+
+test('브리핑은 지금 없는 사람과 오늘 돌아온 사람을 안다', async () => {
+  const { llm, engine, roster, events } = fixture();
+  const out = roster.soldiers[1];   // 아직 밖에 있다
+  const back = roster.soldiers[2];  // 오늘 아침 복귀
+  roster.sendAway(out, { kind: 'awol', days: 9, since: '2026-05-18' });
+  roster.sendAway(back, { kind: 'hospital', days: 1, since: '2026-05-17' });
+
+  await engine.runDay();
+  const user = llm.byLabel('아침 브리핑')[0].messages[0].content;
+  const away = section(user, 'NOT IN THE UNIT');
+  assert.ok(away.includes(out.name), '없는 사람이 브리핑에 안 실렸다');
+  assert.ok(away.includes('absent without leave'), '어디에 있는지가 안 실렸다');
+  assert.ok(!away.includes(back.name), '오늘 돌아온 사람이 아직 부재로 실린다');
+  assert.ok(section(user, 'BACK TODAY').includes(back.name), '복귀자가 브리핑에 안 실렸다');
+  // 수치 차단은 그대로다 — 부재도 날짜와 이름까지다
+  assert.ok(!/corner-cutting: \d/.test(user));
+  // 화면 손잡이에도 복귀가 실린다
+  const brief = events.find(e => e[0] === 'briefing')[1];
+  assert.deepEqual(brief.returns.map(r => r.name), [back.name]);
+  assert.equal(brief.returns[0].away.kind, 'hospital', '어디에서 돌아왔는지가 없다');
+  assert.equal(back.away, undefined);
+});
+
+test('부재는 어제 요약으로 다음 날 브리핑까지 간다', async () => {
+  const { llm, engine, state } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  engine._directive = null;
+  await engine.runDay();
+  assert.match(state.yesterday, /입원 — 복귀 예정 2026-05-28/, '어제 요약에 부재가 없다');
+  llm.calls.length = 0;
+  await engine.runDay();
+  const user = llm.byLabel('아침 브리핑')[0].messages[0].content;
+  assert.ok(user.includes('복귀 예정 2026-05-28'), '어제의 부재가 오늘 브리핑에 안 실렸다');
+});
+
+test('수습된 사건과 징계 유형의 사고는 아무도 데려가지 않는다', async () => {
+  // 수습 — 확전이 아니면 사람은 안 빠진다
+  const kept = fixture({ rng: incidentRng(), judges: [{ outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' }] });
+  kept.engine._directive = '분리해라';
+  await kept.engine.runDay();
+  assert.equal(kept.roster.absent.length, 0, '수습됐는데 사람이 빠졌다');
+
+  // 징계 유형(경계 실패·규정위반 따위)은 사고가 돼도 부대 안에서 끝난다 —
+  // 폰 걸린 놈이 사라지지는 않는다. 취침 슬롯에서 사건을 열어 뽑는다.
+  const disc = fixture({
+    rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.001, 0, 0]),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  disc.engine._directive = null;
+  await disc.engine.runDay();
+  const filed = disc.state.accidents[0];
+  assert.equal(INCIDENT_CATEGORIES[filed?.category]?.class, 'discipline',
+    `징계 유형 사고를 못 만들었다: ${filed?.category}`);
+  assert.equal(absenceFor(filed.category, () => 0), null, '이 유형은 부재 규칙 밖이어야 한다');
+  assert.equal(disc.roster.absent.length, 0, '징계로 끝날 사고가 사람을 데려갔다');
+  assert.deepEqual(filed.away, []);
 });

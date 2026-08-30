@@ -13,7 +13,7 @@ import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
-import { PLACES, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING } from './params.js';
+import { PLACES, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, ABSENCE_KINDS, TUNING } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
@@ -163,7 +163,9 @@ function renderHud() {
   $('#hud-streak').textContent = `${s.streak}일 / ${s.goal}일`;
   $('#hud-review').textContent = s.reviewDate;
   $('#hud-accidents').textContent = `${s.accidents}건`;
-  $('#hud-unit').textContent = `${state.unit.name} · 병력 ${s.roster}명`;
+  // 병력은 오늘 부대에 있는 인원이다. 입원·이탈은 따로 센다 — 그 자리는 채워지지 않는다.
+  $('#hud-unit').textContent = `${state.unit.name} · 병력 ${s.roster}/${ROSTER_SIZE}명`
+    + (s.away.length ? ` (부재 ${s.away.length})` : '');
   renderGauges();
 }
 
@@ -233,6 +235,8 @@ function stageTo(slot, chatter = []) {
   const sky = $('#stage-sky');
   const f = dayFraction(slot.time);
   state.stage?.goto(slot);
+  // 빠진 인원은 무대에서도 빠진다 — 입원·이탈이 숫자로만 남지 않는다.
+  state.stage?.crowd((state.roster?.present.length ?? ROSTER_SIZE) / ROSTER_SIZE);
   const look = state.stage?.ok ? state.stage.look() : { sky: skyFallback(f), sun: sunFallback(f) };
   sky.style.background = `linear-gradient(180deg, ${look.sky.top} 0%, ${look.sky.bot} 100%)`;
   const sun = $('#stage-sun');
@@ -302,15 +306,19 @@ function renderRoster() {
   const rows = state.roster.soldiers
     .map(s => ({ s, cohort: cohortOf(unit, s.joined), rank: rankOf(unit, s.joined, today) }))
     .sort((a, b) => a.cohort - b.cohort);
-  $('#roster-list').innerHTML = rows.map(({ s, cohort, rank }) =>
-    `<details class="roster-row"><summary><span class="rk rk-${rank}">${escapeHtml(rank)}</span> ${escapeHtml(s.name)}
-      ${mentalBadge(s.mental)}
+  $('#roster-list').innerHTML = rows.map(({ s, cohort, rank }) => {
+    // 부재자는 명부에 남는다 — 제적이 아니다. 다만 어디에 있고 언제 오는지가 같이 찍힌다.
+    const away = s.away ? ABSENCE_KINDS[s.away.kind] : null;
+    return `<details class="roster-row${away ? ' away' : ''}"><summary><span class="rk rk-${rank}">${escapeHtml(rank)}</span> ${escapeHtml(s.name)}
+      ${away ? `<span class="away-tag" title="복귀 예정 ${escapeHtml(s.away.until)}">${away.icon} ${escapeHtml(away.label)}</span>` : mentalBadge(s.mental)}
       <span class="dim">${cohort}기 · ${escapeHtml(s.job)} · ${escapeHtml(s.grade)}/${escapeHtml(s.character)}</span></summary>
       <p>${escapeHtml(s.sheet) || '<span class="dim">인사기록 미도착</span>'}</p>
-      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)} · 멘탈 ${s.mental ?? TUNING.mental.default}/10</p></details>`).join('')
-    || '<p class="dim">병력 없음</p>';
+      ${away ? `<p class="small away-note">${escapeHtml(away.where)} · ${escapeHtml(s.away.since)} 부터 · 복귀 예정 ${escapeHtml(s.away.until)}</p>` : ''}
+      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)} · 멘탈 ${s.mental ?? TUNING.mental.default}/10</p></details>`;
+  }).join('') || '<p class="dim">병력 없음</p>';
   // 면담(상담) 대상 목록 — **멘탈 낮은 순**으로 세운다. 누굴 불러야 하는지가 목록 자체다.
-  const byNeed = rows.slice().sort((a, b) => (a.s.mental ?? 6) - (b.s.mental ?? 6));
+  // 부재자는 목록에 없다 — 없는 사람을 주임원사실로 부를 수는 없다.
+  const byNeed = rows.filter(r => !r.s.away).sort((a, b) => (a.s.mental ?? 6) - (b.s.mental ?? 6));
   $('#interview-who').innerHTML = byNeed.map(({ s, cohort, rank }) =>
     `<option value="${escapeHtml(s.serial)}">[멘탈 ${s.mental ?? TUNING.mental.default}] ${cohort}기 ${escapeHtml(rank)} ${escapeHtml(s.name)} (${escapeHtml(s.job)})</option>`).join('');
 }
@@ -377,11 +385,16 @@ function categoryBadge(cat, note = '') {
 // ── 엔진 손잡이 — 하루의 전부가 여기로 들어온다 ─────────
 function makeHandlers() {
   return {
-    briefing: async ({ date, briefing, arrivals, departures }) => {
+    briefing: async ({ date, briefing, arrivals, departures, returns }) => {
       renderHud(); renderRoster(); renderTimeline(-1);
       stageTo(slotsFor(date)[0], []);
       await addEntry('briefing', `[아침 브리핑 · ${date}]\n${briefing}`);
       const st = x => rankLine(state.unit, x, date);
+      // 복귀 — 병원에서든 부대 밖에서든, 오늘 아침 인원이 채워졌다.
+      for (const r of returns || []) {
+        const kind = ABSENCE_KINDS[r.away?.kind];
+        await addEntry('sys', `${st(r)} ${kind ? kind.back(r.name) : `${r.name} 복귀.`}`, { typed: false });
+      }
       for (const d of departures || []) await addEntry('sys', `${st(d)} ${d.name} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
       for (const a of arrivals || []) await addEntry('sys', `${st(a)} ${a.name} 전입 신고 — ${a.job}, 군번 ${a.serial}.`, { typed: false });
     },
@@ -404,12 +417,19 @@ function makeHandlers() {
       markIncident(false);
       await addEntry('outcome', scene);
     },
-    verdict: async ({ escalated, tier, category }) => {
+    verdict: async ({ escalated, tier, category, absences }) => {
       if (escalated) {
         sfx.trombone();
         // 확전하면 유형이 넘어갈 수 있다 — 사고 대장에 찍히는 것은 「무엇이 되었는가」다.
         await addEntry('stamp', `■ 사고 확정 (${tier === 'major' ? '중대' : '경미'}) — 무사고 기록 0일로 회귀. 날짜는 돌아가지 않는다.`,
           { typed: false, badge: categoryBadge(category, '사고 대장 기재') });
+        // 사고가 사람을 데려갔다 — 이 자리는 복귀일까지 비어 있다. 충원은 없다.
+        for (const a of absences || []) {
+          const kind = ABSENCE_KINDS[a.kind];
+          if (!kind) continue;
+          await addEntry('stamp', `${kind.icon} ${kind.line(a.soldier.name, a.until)} 자리는 채워지지 않는다 — 복귀할 때까지 ${state.roster.present.length}명으로 간다.`, { typed: false });
+        }
+        renderRoster();
       } else {
         sfx.love();
         await addEntry('stamp', '□ 수습 — 사건은 사고가 되지 않았다. 무사고 기록 유지.', { typed: false });

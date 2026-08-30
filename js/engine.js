@@ -6,7 +6,9 @@
 //   → D 아침 브리핑 (하루 스레드의 첫 쌍)
 //   → 슬롯 아홉: 슬롯마다 사고 롤(코드). 성공하면 사건 —
 //       E-1 장면 → (지침 입력) → E-2 결과 → E-3 확전 판정(스레드 밖, 지침 못 봄)
-//       확전이면 **사고** — 무사고 카운터만 0. 병사·파라미터는 그대로.
+//       확전이면 **사고** — 무사고 카운터가 0이 되고, 유형에 따라 연루자 하나가
+//       부대에서 실제로 빠진다(탈영은 사라지고 부상은 입원한다 — params.js의 부재 규칙).
+//       빠진 자리는 충원되지 않는다. 복귀일까지 남은 인원으로 버틴다.
 //       사건에는 언제나 유형이 하나 붙는다(params.js의 열둘). 씨앗이 풀에서 오므로
 //       장면이 아무리 갈라져도 유형은 코드가 알고, 화면은 거기에 그림을 붙인다.
 //   → 하루 마감: 드리프트 적용, 조용한 날 평판 회복, 카운터 ±, 날짜 전진.
@@ -47,7 +49,7 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
-  minMentalOf, applyInspection, categoryFor, PLACES, TUNING,
+  minMentalOf, applyInspection, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -131,7 +133,9 @@ export class Engine {
       reviewDate: reviewDate(s.date, s.streak),
       accidents: s.accidents.length,
       promoted: s.promoted,
-      roster: this.roster.soldiers.length,
+      // 병력은 **오늘 부대에 있는 인원**이다. 입원·이탈은 명부에 남아도 병력이 아니다.
+      roster: this.roster.present.length,
+      away: this.roster.absent.map(x => ({ name: x.name, serial: x.serial, ...x.away })),
       notices: s.notices.slice(),
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
       params: { ...s.params },
@@ -292,9 +296,12 @@ export class Engine {
       // 슬롯이 대사를 뽑기 전에만 도착하면 된다. 실패는 안에서 삼킨다(조용한 부대).
       const ambientJob = this.ensureAmbient();
 
-      // 전역 → 전입. 빈 자리는 그날 바로 채워진다.
+      // 복귀 → 전역 → 전입. 순서가 있다: 병원에서 돌아온 놈이 그날 전역일이면 그날 나간다.
+      // 부재로 빈 자리는 정원으로 세지 않으므로 전입은 전역분만 채운다.
+      const returns = this.roster.returnFrom(date);
       const departures = this.roster.discharge(date);
       const arrivals = this.roster.vacancies() > 0 ? await this.fillRoster() : [];
+      const away = this.roster.absent;
 
       // D. 아침 브리핑 — 하루 스레드의 첫 user/assistant 쌍.
       const excerpt = this.roster.sample(4, this.rng);
@@ -306,6 +313,9 @@ export class Engine {
           difficulty: band(effDiff), bands: bandsOf(s.params),
           yesterday: s.yesterday,
           arrivals: this.dressedAll(arrivals), departures, excerpt: this.dressedAll(excerpt),
+          // 지금 부대에 없는 사람들 — 장면에 세우면 안 된다. 돌아온 사람은 오늘 아침의 뉴스다.
+          away: away.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away', until: x.away.until })),
+          returns: returns.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away' })),
         }),
       });
       let brief;
@@ -321,7 +331,7 @@ export class Engine {
       await ambientJob;   // 첫 슬롯이 대사를 뽑기 전에는 도착해 있어야 한다
       const slotLines = Array.isArray(brief.slots) ? brief.slots.map(x => String(x || '')) : [];
       this.thread.push({ role: 'assistant', content: [brief.briefing, ...slotLines].filter(Boolean).join('\n') });
-      await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures });
+      await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures, returns });
 
       // 첫 슬롯이 대사를 뽑기 전에 소음 풀이 눕는다 — 브리핑을 받고 읽는 동안 뒤에서 날아왔다.
       await ambientJob;
@@ -335,7 +345,7 @@ export class Engine {
           chatter: this.ambientFor(slot.key, 3),
         });
 
-        const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.soldiers) }, {
+        const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.present) }, {
           intel: this.unit.intel.score, macho: this.unit.macho.score,
           comrade: this.unit.comrade.score, difficulty: effDiff,
         }, slot.kind, this.rng);
@@ -348,12 +358,13 @@ export class Engine {
       // 하루 마감 — 드리프트, 조용한 날 평판 회복, 카운터, 날짜 전진.
       // 병사별 멘탈 드리프트 — 부대 분위기가 전원을 쓸어간다. 파라미터 드리프트보다 먼저,
       // 오늘의(드리프트 전) 분위기로 계산한다.
-      for (const man of this.roster.soldiers) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
+      // 부재자는 부대 분위기에 안 쓸린다 — 여기에 없으니까. 멘탈은 나간 날 그대로 얼어 있다.
+      for (const man of this.roster.present) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
       this.roster.save();
 
       s.params = applyDrift(s.params, effDiff, { interventions: this.interventionsToday });
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
-      s.yesterday = this.#summarize(date, incidents, arrivals, departures);
+      s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
       s.day += 1;
       if (isPromoted(s.streak)) s.promoted = true;
@@ -372,10 +383,10 @@ export class Engine {
     // 멘탈이 연 큰 사건은 **무너진 그 놈들**의 사건이다 — 멘탈 낮은 순으로 고른다.
     // 그 밖의 사건은 가중 추첨(등급·멘탈)이다.
     const involved = cause === 'mental'
-      ? this.roster.soldiers.slice()
+      ? this.roster.present
         .sort((a, b) => (a.mental ?? TUNING.mental.default) - (b.mental ?? TUNING.mental.default))
         .slice(0, event.involved)
-      : pickInvolved(this.roster.soldiers, event.involved, this.rng);
+      : pickInvolved(this.roster.present, event.involved, this.rng);
     if (!involved.length) return null;
     const place = PLACES[event.place]?.label || event.place;
     // 유형은 코드가 안다 — 그림도 기록도 이걸 본다. 판정 콜은 늘지 않는다.
@@ -431,23 +442,55 @@ export class Engine {
     // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
     for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated);
     this.roster.save();
+    // 사고가 사람을 데려간다 — 탈영은 사라지고, 부상·자해는 실려 간다. 유형만 보고 코드가 정한다.
+    const absences = escalated ? this.#takeAway(involved, stamped?.id) : [];
     if (escalated) {
-      // 사건이 사고가 됐다 — 무사고 카운터만 0. 날짜도, 병사도, 파라미터도 안 돌아간다.
+      // 사건이 사고가 됐다 — 무사고 카운터는 0, 그리고 자리 하나가 빈다.
+      // 날짜도 파라미터도 안 돌아가고, 빠진 병사는 지워지는 것이 아니라 복귀일을 달고 명부에 남는다.
       this.accidentToday = true;
       s.streak = 0;
-      s.accidents.push({ date: s.date, desc: event.desc, tier, category: stamped?.id || null });
+      s.accidents.push({
+        date: s.date, desc: event.desc, tier, category: stamped?.id || null,
+        away: absences.map(a => ({ name: a.soldier.name, serial: a.soldier.serial, kind: a.kind, until: a.until })),
+      });
     }
-    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped });
-    return { desc: event.desc, tier, escalated, directive: !!directive, category: stamped?.id || null };
+    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped, absences });
+    return {
+      desc: event.desc, tier, escalated, directive: !!directive,
+      category: stamped?.id || null, absences,
+    };
+  }
+
+  /**
+   * 사고가 데려간 사람. 유형이 부재 규칙에 걸릴 때만, 사건당 한 명이다(TUNING.absence).
+   * 데려가는 것은 연루자 중 **첫 번째** — 가중 추첨이 앞세운 사람이고, 멘탈이 연 사건이라면
+   * 제일 무너진 사람이다. 자해·탈영이 아무에게나 안 일어나는 이유가 여기서도 지켜진다.
+   * 복귀일은 여기서 굳는다. 이 굴림은 게임 난수를 쓴다 — 연출 난수와 섞이지 않는다.
+   */
+  #takeAway(involved, categoryId) {
+    const out = [];
+    for (const man of involved.slice(0, TUNING.absence.perIncident)) {
+      const rule = absenceFor(categoryId, this.rng);
+      if (!rule || man.away) continue;
+      const gone = this.roster.sendAway(man, { kind: rule.kind, days: rule.days, since: this.state.date });
+      if (gone) out.push({ soldier: gone, kind: rule.kind, days: rule.days, until: gone.away.until });
+    }
+    return out;
   }
 
   // 어제의 코드 요약 — 다음 날 D의 입력이 된다. 원문 스레드는 닫힌다.
-  #summarize(date, incidents, arrivals, departures) {
+  #summarize(date, incidents, arrivals, departures, returns = []) {
     const parts = [`${date}:`];
     if (!incidents.length) parts.push('사건 없음. 조용한 하루였다.');
     for (const it of incidents) {
       parts.push(`「${it.desc}」(${it.tier === 'major' ? '중대' : '경미'}) — ${it.escalated ? '사고로 확전, 무사고 기록이 깨졌다' : it.directive ? '주임원사 개입으로 수습' : '개입 없이 지나갔다'}.`);
+      // 사람이 빠진 것은 내일의 사실이다 — 어제 요약에 실려 아침 브리핑까지 간다.
+      for (const a of it.absences || []) {
+        const kind = ABSENCE_KINDS[a.kind];
+        parts.push(`${a.soldier.name} ${kind?.label || '부재'} — 복귀 예정 ${a.until}.`);
+      }
     }
+    if (returns.length) parts.push(`복귀 ${returns.map(r => r.name).join('·')}.`);
     if (arrivals.length) parts.push(`전입 ${arrivals.map(a => a.name).join('·')}.`);
     if (departures.length) parts.push(`전역 ${departures.map(d => d.name).join('·')}.`);
     return parts.join(' ');
@@ -465,6 +508,11 @@ export class Engine {
   async interview(serial, question) {
     const soldier = this.roster.bySerial(serial);
     if (!soldier) throw new Error(`명부에 없는 군번: ${serial}`);
+    // 없는 사람은 못 부른다 — 병원에 있거나 부대 밖에 있다. 평판도 안 깎인다(부르지도 못했으니).
+    if (soldier.away) {
+      const kind = ABSENCE_KINDS[soldier.away.kind];
+      throw new Error(`${soldier.name}은(는) 지금 부대에 없다 — ${kind?.label || '부재'}, 복귀 예정 ${soldier.away.until}`);
+    }
     this.state.params = applyIntervention(this.state.params);
     this.interventionsToday += 1;
 

@@ -206,7 +206,7 @@ export const BRIEFING_SCHEMA = {
   additionalProperties: false,
 };
 
-export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [] }) {
+export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [], away = [], returns = [] }) {
   return `[TODAY] ${date} (${weekday}) · season: ${season}
 [SCHEDULE] ${slots.join(' → ')}
 [WORKLOAD READING] ${label(difficulty)}
@@ -217,6 +217,11 @@ export function briefingUser({ date, weekday, season, slots, difficulty, bands, 
 [YESTERDAY] ${yesterday || '(first day in post — no yesterday here)'}
 [ARRIVALS] ${arrivals.length ? arrivals.map(soldierSheet).join('\n') : '(none)'}
 [DEPARTURES] ${departures.length ? departures.map(s => `${s.name} (${s.serial})`).join(', ') : '(none)'}
+[NOT IN THE UNIT — an accident took them. They are elsewhere: never put them in a scene,
+never have anyone speak to them. Their empty bunk is part of this morning]
+${away.length ? away.map(s => `${s.name} (${s.serial}) — ${s.en}, due back ${s.until}`).join('\n') : '(none — everyone is accounted for)'}
+[BACK TODAY — they walk back in this morning]
+${returns.length ? returns.map(s => `${s.name} (${s.serial}) — was ${s.en}`).join('\n') : '(none)'}
 [ROSTER EXCERPT — soldiers likely on view today. Roll lines only: you are writing the
 unit's symptoms, not these four men's inner lives. Names and standing are what you need]
 ${excerpt.length ? excerpt.map(soldierRoll).join('\n') : '(none)'}

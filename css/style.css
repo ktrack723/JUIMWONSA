@@ -1225,6 +1225,16 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 @keyframes mg-blink { 50% { box-shadow: 0 0 0 2px rgba(164, 68, 42, .5); } }
 @media (prefers-reduced-motion: reduce) { .mgauge.mg-danger { animation: none; } }
 .mg-num { font-family: var(--font-mono); font-size: var(--fs-xs); }
+
+/* 부재 — 사고가 데려간 사람. 명부에는 남고 부대에는 없다(입원·이탈). */
+.roster-row.away > summary { opacity: .62; text-decoration: line-through solid var(--ink-soft); }
+.roster-row.away > summary .rk { filter: grayscale(1); }
+.away-tag {
+  display: inline-block; margin: 0 4px; padding: 0 4px;
+  font-size: var(--fs-xs); font-weight: 600;
+  color: var(--stamp-deep); border: 1px solid var(--stamp); background: var(--dlg-dim);
+}
+.away-note { color: var(--stamp-deep); margin: var(--s1) 0 var(--s2) var(--s3); }
 .iv-heal { color: #3e6b2c; font-size: var(--fs-sm); margin: 2px 0 var(--s2); }
 
 /* ── 모바일 (아이폰 등 좁은 화면) ───────────────────────

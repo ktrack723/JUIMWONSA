@@ -13,6 +13,13 @@
 // 만들어진 병사는 localStorage에 저장되어 재사용된다. 사고로 카운터가 리셋되어도
 // 병사 데이터는 유지된다 — 어제 싸운 두 놈은 0일차에도 여전히 서로를 노려보고 있다.
 // 저장소는 주입식이다 — node 테스트는 Map 흉내를 꽂는다.
+//
+// **명부에 있다는 것과 부대에 있다는 것은 다르다.** 탈영한 놈도 입원한 놈도 명부에는
+// 남는다(제적이 아니다) — 다만 `away`가 붙어 부대에서 빠진다. 그래서 목록이 둘이다:
+//   · soldiers — 명부 전체. 저장·군번·정원(빈자리)이 보는 것
+//   · present  — 오늘 부대에 있는 사람. 사건·멘탈·면담·브리핑이 보는 것
+// 빈자리를 정원으로 세지 않는 것이 요점이다: 입원한 놈 자리에 신병이 오지 않는다.
+// 열다섯으로 며칠을 버티는 것이 사고의 값이다.
 
 import { TUNING } from './params.js';
 import { rollUniqueName } from './names.js';
@@ -39,6 +46,13 @@ export const SERIAL_DIGITS = 8;
 
 /** 전역일 — 전입일 + 복무기간(부대 프롬프트 ①의 수치판). */
 export const dischargeDate = (unit, joinedIso) => monthsAdd(joinedIso, unit.serviceMonths);
+
+/** 며칠 뒤 (ISO). 복귀 예정일 계산이 쓴다. */
+export function daysAdd(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 // ── 계급 ────────────────────────────────────────────────
 // 병 계급 넷. 진급은 최저복무기간이 차면 자동이다 — 법이 정한 눈금이라 코드가 든다.
@@ -122,7 +136,11 @@ export class Roster {
       const data = JSON.parse(raw);
       this.soldiers = data.soldiers || [];
       // 멘탈이 생기기 전의 저장분 — 기본값으로 채워 읽는다. 옛 세이브가 죽으면 안 된다.
-      for (const s of this.soldiers) s.mental ??= TUNING.mental.default;
+      for (const s of this.soldiers) {
+        s.mental ??= TUNING.mental.default;
+        // 복귀일 없는 부재는 영원히 안 돌아온다 — 깨진 저장분은 부대로 되돌린다.
+        if (s.away && !s.away.until) delete s.away;
+      }
       this.seq = data.seq || this.seq;
       return this.soldiers.length > 0;
     } catch { return false; }
@@ -138,7 +156,40 @@ export class Roster {
   }
 
   bySerial(serial) { return this.soldiers.find(s => s.serial === serial) || null; }
+
+  /** 오늘 부대에 있는 사람. 사건 연루·멘탈 드리프트·면담·브리핑 표본이 전부 이걸 본다. */
+  get present() { return this.soldiers.filter(s => !s.away); }
+  /** 지금 부대에 없는 사람 — 입원·이탈. 명부에는 남아 있고 자리도 비워 둔다. */
+  get absent() { return this.soldiers.filter(s => s.away); }
+
+  // 빈자리는 **명부 전체**로 센다 — 입원·이탈로 빈 자리는 충원되지 않는다.
   vacancies() { return Math.max(0, ROSTER_SIZE - this.soldiers.length); }
+
+  /**
+   * 부대에서 빼낸다 — 사고가 데려간 것이다. 제적이 아니라 부재다.
+   *   kind  — 'hospital'(입원) · 'awol'(이탈). 라벨과 문장은 params.js의 ABSENCE_KINDS가 든다
+   *   days  — 며칠 뒤에 돌아오는가. 복귀일은 여기서 날짜로 굳는다
+   * 이미 부재 중인 사람은 그대로 둔다 — 없는 놈이 또 사라질 수는 없다.
+   */
+  sendAway(soldier, { kind, days, since }) {
+    if (!soldier || soldier.away) return null;
+    soldier.away = { kind, since, until: daysAdd(since, Math.max(1, days)) };
+    this.save();
+    return soldier;
+  }
+
+  /**
+   * 복귀 — 예정일이 된 사람들을 부대로 되돌린다. 돌려주는 것은 복귀자 명단이고,
+   * 각 항목에는 어디에 있었는지(away)가 붙어 온다. 화면과 어제 요약이 그걸 읽는다.
+   */
+  returnFrom(dateIso) {
+    const back = this.soldiers.filter(s => s.away && s.away.until <= dateIso);
+    if (!back.length) return [];
+    const out = back.map(s => ({ ...s, away: { ...s.away } }));
+    for (const s of back) delete s.away;
+    this.save();
+    return out;
+  }
 
   /**
    * 군번 예약 — 채번만 하고 명부에는 안 올린다. 병렬 전입이 서로 같은 번호를
@@ -176,9 +227,13 @@ export class Roster {
     return soldier;
   }
 
-  /** 복무기간이 찬 병사들을 전역시킨다. 돌려주는 것은 전역자 명단이다. */
+  /**
+   * 복무기간이 찬 병사들을 전역시킨다. 돌려주는 것은 전역자 명단이다.
+   * **부재자는 못 나간다** — 병원에 있는 놈도, 이탈한 놈도 전역 신고를 할 수 없다.
+   * 돌아온 날 전역일이 이미 지나 있으면 그날 바로 나간다.
+   */
   discharge(dateIso) {
-    const out = this.soldiers.filter(s => dischargeDate(this.unit, s.joined) <= dateIso);
+    const out = this.present.filter(s => dischargeDate(this.unit, s.joined) <= dateIso);
     if (out.length) {
       this.soldiers = this.soldiers.filter(s => !out.includes(s));
       this.save();
@@ -186,9 +241,9 @@ export class Roster {
     return out;
   }
 
-  /** 오늘 등장할 병사들 — 브리핑 명부 발췌용 표본. */
+  /** 오늘 등장할 병사들 — 브리핑 명부 발췌용 표본. 부재자는 무대에 없다. */
   sample(n, rng = Math.random) {
-    const pool = this.soldiers.slice();
+    const pool = this.present;
     const picked = [];
     while (picked.length < n && pool.length) {
       picked.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);

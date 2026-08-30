@@ -172,6 +172,23 @@ test('D는 밴드·어제 요약·명부 발췌·전입을 받는다', () => {
   assert.ok(has(D, '병사표식') && has(D, 'PRXX-표식'), 'D에 명부 발췌가 없다');
 });
 
+// 사고가 데려간 사람은 D가 알아야 한다 — 없는 사람을 장면에 세우면 그날 아침이 거짓말이 된다.
+// 실리는 것은 이름·군번·어디에 있는지·복귀일까지고, 그마저 부재 상태의 라벨이다(수치 없음).
+test('D는 지금 부대에 없는 사람과 오늘 돌아온 사람을 받는다', () => {
+  const Daway = P.briefingUser({
+    date: 'DATE표식', weekday: 'WD표식', season: 'SEASON표식', slots: ['SLOT표식'],
+    difficulty: M.bandDiff, bands, yesterday: M.yesterday, excerpt: [soldier],
+    away: [{ name: 'AWAY표식', serial: 'PRZZ-표식', en: 'AWAYEN표식', until: 'UNTIL표식' }],
+    returns: [{ name: 'BACK표식', serial: 'PRWW-표식', en: 'BACKEN표식' }],
+  });
+  for (const mark of ['AWAY표식', 'PRZZ-표식', 'AWAYEN표식', 'UNTIL표식', 'BACK표식', 'BACKEN표식']) {
+    assert.ok(has(Daway, mark), `D에 ${mark}가 없다`);
+  }
+  assert.ok(/never put them in a scene/i.test(Daway), '없는 사람을 장면에 세우지 말라는 못이 빠졌다');
+  // 부재자가 없는 날에는 두 자리 다 (none)으로 닫힌다 — 빈 목록이 문장을 만들면 안 된다
+  assert.ok(!has(D, 'AWAY표식') && /everyone is accounted for/.test(D));
+});
+
 test('D의 지시문에 「수치를 말하지 말라. 증상으로만 말하라」가 박혀 있다', () => {
   assert.ok(/never\s+numbers/i.test(P.daySystem(unit)), '수치 금지 못이 빠졌다');
   assert.ok(/symptom/i.test(P.daySystem(unit)), '증상으로 말하라는 못이 빠졌다');

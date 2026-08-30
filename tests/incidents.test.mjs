@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
 import {
   INCIDENT_CATEGORIES, CATEGORY_KEYS, CATEGORY_CLASSES, EVENT_POOL, PLACES, SLOTS,
+  ABSENCE_KINDS, absenceFor, TUNING,
   categoryFor, artFor, pickEvent,
 } from '../js/params.js';
 
@@ -130,4 +131,49 @@ test('무게가 큰 사건이 실제로 더 자주 나온다', () => {
   const light = pool.reduce((a, b) => ((a.weight ?? 1) <= (b.weight ?? 1) ? a : b));
   assert.ok(count[heavy.id] > count[light.id],
     `무게가 안 먹는다 — ${heavy.id}(${heavy.weight}) ${count[heavy.id]} vs ${light.id}(${light.weight}) ${count[light.id]}`);
+});
+
+// ── 부재 규칙 — 어느 사고가 사람을 며칠 빼내는가 ──────────
+// 유형만 보고 정한다(판정 호출은 안 는다). 폭(일수)은 언제나 코드가 굴린다.
+test('부재 규칙의 유형은 전부 열둘 안에 있고, 종류는 입원·이탈 둘뿐이다', () => {
+  for (const [cat, rule] of Object.entries(TUNING.absence.rules)) {
+    assert.ok(INCIDENT_CATEGORIES[cat], `부재 규칙에 모르는 유형: ${cat}`);
+    assert.ok(ABSENCE_KINDS[rule.kind], `${cat}: 모르는 부재 종류 ${rule.kind}`);
+    const [lo, hi] = rule.days;
+    assert.ok(lo >= 1 && hi >= lo, `${cat}: 부재 일수가 이상하다 ${lo}~${hi}`);
+  }
+  assert.deepEqual(Object.keys(ABSENCE_KINDS).sort(), ['awol', 'hospital']);
+  for (const k of Object.values(ABSENCE_KINDS)) {
+    assert.ok(k.label && k.icon && k.where, '부재 종류에 화면 몫이 빠졌다');
+    assert.ok(!/[가-힣]/.test(k.en), `프롬프트 표기에 한글이 있다: ${k.en}`);
+    assert.ok(k.line('아무개', '2026-06-01').includes('아무개'));
+    assert.ok(k.back('아무개').includes('아무개'));
+  }
+});
+
+test('탈영은 사라지고 부상·자해는 입원한다 — 나머지 유형은 사람을 안 빼낸다', () => {
+  assert.equal(absenceFor('absent', () => 0).kind, 'awol');
+  for (const cat of ['injury', 'vehicle', 'blast', 'health', 'selfharm']) {
+    assert.equal(absenceFor(cat, () => 0).kind, 'hospital', `${cat}이 입원이 아니다`);
+  }
+  // 징계·행정으로 끝나는 유형은 부대 안에서 끝난다 — 폰 걸린 놈이 사라지지는 않는다
+  for (const cat of ['violation', 'guard', 'firearm', 'abuse', 'supply', 'outside']) {
+    assert.equal(absenceFor(cat, () => 0), null, `${cat}이 사람을 빼냈다`);
+  }
+  assert.equal(absenceFor(null, () => 0), null);
+  assert.equal(absenceFor('없는유형', () => 0), null);
+});
+
+test('부재 일수는 규칙의 [최소, 최대] 안에서만 굴려진다', () => {
+  for (const [cat, rule] of Object.entries(TUNING.absence.rules)) {
+    const [lo, hi] = rule.days;
+    assert.equal(absenceFor(cat, () => 0).days, lo, `${cat}: 최소치가 안 나온다`);
+    assert.equal(absenceFor(cat, () => 0.9999).days, hi, `${cat}: 최대치를 넘거나 못 미친다`);
+    let seed = 7;
+    const rng = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let i = 0; i < 500; i++) {
+      const d = absenceFor(cat, rng).days;
+      assert.ok(d >= lo && d <= hi, `${cat}: 부재 일수가 범위를 벗어났다 ${d}`);
+    }
+  }
 });
