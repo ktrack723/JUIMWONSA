@@ -100,6 +100,11 @@ export const TUNING = {
   // 분위기는 가라앉는다(행복↓). LLM은 점검 소견(장면)만 쓴다.
   inspect: { gara: -1, happy: -1 },
 
+  // 가라 내역 — 「가라 4」가 실제로 무엇 넷인가. 적발 확률은 부대 지능이 정한다:
+  // 머리 좋은 부대일수록 잘 숨긴다. 공군의 병사간 룰이 이미 그렇게 적혀 있다
+  // (「단체 채팅방에서 한 명만 빼고 방을 새로 파는 식이라 표가 안 난다」).
+  gara: { spotBase: 1.1, spotIntelPer: 0.07, spotFloor: 0.3, spotCeil: 0.95 },
+
   roster: { size: 16 },
   goal: 100,   // 무사고 연속 100일
 };
@@ -251,6 +256,178 @@ export function categoryFor(event, escalated = false) {
   const cat = INCIDENT_CATEGORIES[id];
   if (!cat) return null;
   return { id, ...cat, art: artFor(id), className: CATEGORY_CLASSES[cat.class] };
+}
+
+// ── 가라 내역 — 「가라 4」가 실제로 무엇 넷인가 ─────────────
+// 가라는 오래도록 게이지 눈금 하나였다. 그 눈금에 **내용물**을 붙인 것이 이 표다:
+// 부대에서 지금 돌아가고 있는 편법 관행의 목록이고, 게이지의 수치는 곧 그 목록의 길이다.
+//
+//   가라 4  =  이 표의 항목 넷이 지금 돌고 있다
+//
+// 그래서 계기판은 「몇 개인가」를 말하고, 내역은 「무엇인가」를 말한다. 그 사이의 틈이
+// 이 게임에 남은 마지막 안개다 — 플레이어는 개수를 알지만 정체는 모르고, 그걸 사는 것이
+// 불시점검이다. 확인한 것은 명부에 오르고, 명부는 **확인한 그날의 사실**이지 지금의 사실이
+// 아니다. 그래서 낡는다.
+//
+// 필드가 한국어(화면)와 영어(프롬프트)로 갈려 있는 이유는 §9.4 때문이다 — 지시문은 영어로
+// 간다. label·desc는 화면 몫이고, en은 공지 판정(N)과 점검 소견(I-2)·사건 장면(E-1)에 실린다.
+//   place  — 어느 자리에 들이닥쳐야 보이는가 (PLACES의 열쇠)
+//   weight — 새 가라가 생길 때의 추첨 가중. 흔한 것일수록 크다
+export const GARA_POOL = [
+  {
+    id: 'proxy-rollcall', place: 'barracks', weight: 3,
+    label: '대리 점호', desc: '없는 놈 몫까지 번호를 대신 외친다 — 인원은 언제나 맞는다',
+    en: 'shouting the count for a man who is not there, so the roll call always comes out right',
+  },
+  {
+    id: 'phone-box-dodge', place: 'barracks', weight: 3,
+    label: '폰통 미투입', desc: '수거함에는 넣은 척만 하고 진짜 폰은 관물대 뒤에 둔다',
+    en: 'keeping a phone back instead of putting it in the collection box at lights-out',
+  },
+  {
+    id: 'night-duty-swap', place: 'barracks', weight: 2,
+    label: '불침번 몰아주기', desc: '새벽 시간대를 짬 안 되는 놈들에게만 몰아서 짠다',
+    en: 'stacking the worst night-watch shifts onto the most junior men',
+  },
+  {
+    id: 'sick-call-block', place: 'barracks', weight: 1,
+    label: '환자 열외 막기', desc: '의무대 보내면 인원이 빈다고 아픈 놈을 그냥 세운다',
+    en: 'keeping a sick man on duty because sending him to the aid station would leave a slot empty',
+  },
+  {
+    id: 'borrowed-bodies', place: 'office', weight: 2,
+    label: '인원 대여', desc: '검열 날에 옆 부대에서 사람을 빌려와 머릿수를 맞춘다',
+    en: 'borrowing men from a neighbouring unit on inspection day to make the headcount',
+  },
+  {
+    id: 'ghost-logbook', place: 'office', weight: 3,
+    label: '근무일지 선작성', desc: '근무를 서기도 전에 일지를 한 주치 미리 다 써 둔다',
+    en: 'filling in the duty logbook in advance, before the shifts have been stood',
+  },
+  {
+    id: 'gate-log-blank', place: 'office', weight: 2,
+    label: '출입 기록 공란', desc: '출입 기록을 그때그때 안 쓰고 나중에 몰아서 채운다',
+    en: 'leaving the gate log blank and filling a week of entries in one sitting afterwards',
+  },
+  {
+    id: 'safety-gear-off', place: 'worksite', weight: 3,
+    label: '안전장구 미착용', desc: '덥다고 안전모·귀마개를 벗고 작업한다',
+    en: 'working without the hard hat and ear protection because it is too hot to wear them',
+  },
+  {
+    id: 'training-skip', place: 'worksite', weight: 2,
+    label: '훈련 서류상 이수', desc: '체력단련과 정신교육을 서류로만 돌린다',
+    en: 'signing off physical training and safety education that nobody actually held',
+  },
+  {
+    id: 'fake-inventory', place: 'storage', weight: 3,
+    label: '재고 맞추기', desc: '없어진 보급품을 장부에서만 맞춰 놓는다',
+    en: 'balancing the supply ledger on paper for stock that is not on the shelf',
+  },
+  {
+    id: 'stash-corner', place: 'storage', weight: 2,
+    label: '창고 사제 반입', desc: '창고 구석에 사제 물품과 먹을 것을 쟁여 둔다',
+    en: 'keeping contraband snacks and unauthorised gear stashed in a corner of the store room',
+  },
+  {
+    id: 'meal-count-pad', place: 'messhall', weight: 2,
+    label: '식수 인원 부풀리기', desc: '식수 인원을 넉넉히 올려 남는 것을 따로 챙긴다',
+    en: 'padding the headcount for meals so there is extra food to put aside',
+  },
+  {
+    id: 'smoke-on-duty', place: 'smoking', weight: 3,
+    label: '근무 중 이탈', desc: '근무자가 자리를 비우고 흡연장에 잠깐 다녀온다',
+    en: 'a man on watch slipping off his post for a smoke and coming back',
+  },
+  {
+    id: 'ammo-count-later', place: 'armory', weight: 2,
+    label: '탄약 수불 나중에', desc: '실탄 수불을 그 자리에서 안 적고 나중에 장부를 맞춘다',
+    en: 'signing live ammunition out and back in on paper afterwards instead of at the counter',
+  },
+  {
+    id: 'gate-pass-wave', place: 'guardpost', weight: 2,
+    label: '얼굴 보고 통과', desc: '아는 얼굴은 신분 확인 없이 그냥 들여보낸다',
+    en: 'waving a familiar face through the gate without checking his pass',
+  },
+];
+
+export const GARA_IDS = GARA_POOL.map(g => g.id);
+export const GARA_BY_ID = Object.fromEntries(GARA_POOL.map(g => [g.id, g]));
+
+// 표 검증 — 새 항목을 아무렇게나 못 붙이게. 장소가 대응표 밖이면 점검으로 영원히 못 본다.
+for (const g of GARA_POOL) {
+  if (!PLACES[g.place]) throw new Error(`params.js: 가라 「${g.id}」의 장소가 대응표에 없다 — ${g.place}`);
+  if (!(g.weight > 0)) throw new Error(`params.js: 가라 「${g.id}」의 가중이 없다`);
+  if (!g.label || !g.desc || !g.en) throw new Error(`params.js: 가라 「${g.id}」의 표기가 부실하다`);
+}
+if (new Set(GARA_IDS).size !== GARA_IDS.length) throw new Error('params.js: 가라 id 중복');
+
+/** 지침이 막아 놓은 것을 뺀 가라 정원. 금지가 늘수록 가라가 오를 수 있는 천장이 내려간다. */
+export const garaCap = (banned = []) => GARA_IDS.filter(id => !banned.includes(id)).length;
+
+/**
+ * 목록을 수치에 맞춘다. **수치가 원본이고 목록이 따라간다** — 단 하나의 예외가 지침 금지로,
+ * 그때는 목록이 먼저 줄고 수치가 따라온다(engine의 postNotice).
+ *   active  — 지금 돌고 있는 id들
+ *   target  — 맞춰야 할 개수(= params.gara)
+ *   banned  — 지침으로 막힌 id들. 여기 있으면 돌지도, 새로 생기지도 않는다
+ * 순수 함수다 — 새 배열을 돌려주고 원본은 안 건드린다.
+ *
+ * ── 줄일 때 왜 무작위인가 (한 번 물리고 고친 자리) ──────
+ * 「불시점검에서 적발된 것부터 멎게 한다」를 먼저 넣었다가 재 보고 물렸다. 가라 4에서 한 자리에
+ * 도는 관행은 평균 한 건이라, 적발한 그 한 건이 점검의 −1에 그대로 먹혀서 **털고 나면 명부가
+ * 언제나 비었다**(브라우저 실측 3회 연속 「확인 0」). 평판 −1을 치르고 산 정보가 같은 개입의
+ * 부수효과에 지워지는 구조였다.
+ * 그래서 역할을 갈랐다: **점검은 정체를 사고, 지침은 관행을 끊는다.** 점검의 −1은 「각이
+ * 잡혔다」는 일반 효과로 남아 아무거나 하나를 멎게 한다 — 그게 방금 확인한 것이면 명부는
+ * 그 자리에서 낡기 시작한다. 그것도 안개의 일부고, 특수 처리 없이 저절로 그렇게 된다.
+ */
+export function syncGaraList(active, target, { banned = [], rng = Math.random } = {}) {
+  let list = active.filter(id => GARA_BY_ID[id] && !banned.includes(id));
+  const want = Math.max(0, Math.min(target, garaCap(banned)));
+
+  while (list.length > want) list.splice(Math.floor(rng() * list.length), 1);
+  // 늘릴 때 — 안 돌고 안 막힌 것 중에서 가중 추첨. 플레이어에게는 아무 통보도 없다.
+  while (list.length < want) {
+    const pool = GARA_POOL.filter(g => !list.includes(g.id) && !banned.includes(g.id));
+    if (!pool.length) break;
+    list.push(pool[weightedPick(pool.map(g => g.weight), rng)].id);
+  }
+  return list;
+}
+
+/**
+ * 들이닥쳤을 때 하나를 실제로 잡아낼 확률. **부대 지능이 정한다** — 머리가 좋을수록 잘 숨긴다.
+ * 그래서 확인된 내역은 부대마다 다른 방식으로 틀린다: 둔한 부대는 다 보이고,
+ * 영리한 부대는 절반쯤만 보인다.
+ */
+export function spotChance(intel) {
+  const G = TUNING.gara;
+  return Math.max(G.spotFloor, Math.min(G.spotCeil, G.spotBase - intel * G.spotIntelPer));
+}
+
+/** 그 장소에서 지금 돌고 있는 가라들. */
+export const garaAt = (active, placeKey) => active.filter(id => GARA_BY_ID[id]?.place === placeKey);
+
+/**
+ * 들이닥친 결과가 **확인 명부**를 어떻게 고치는가. 순수 함수다.
+ *
+ * 세 가지가 한꺼번에 일어난다:
+ *   1. 그 자리에서 **없어진 것은 지워진다** — 들어가 봤으니 안다.
+ *   2. 그 자리에서 **잡힌 것은 오늘 날짜로 오른다** — 이미 알던 것이면 날짜만 새로 찍힌다.
+ *   3. 그 자리에서 **숨긴 것은 안 보인다** — 이미 알고 있었다면 그 믿음은 그대로 남는다.
+ *
+ * 그래서 명부는 두 방향으로 틀릴 수 있다. 낡아서 틀리고(안 가 본 자리는 그날의 사실이 남는다),
+ * 못 봐서 빈다(지능 높은 부대는 절반쯤 숨긴다). 그게 이 게임에 남은 마지막 안개다.
+ */
+export function inspectGara({ active, known = [], placeKey, intel, on, rng = Math.random }) {
+  const here = garaAt(active, placeKey);
+  const p = spotChance(intel);
+  const spotted = here.filter(() => rng() < p);
+  const kept = known.filter(k => GARA_BY_ID[k.id]?.place !== placeKey || here.includes(k.id));
+  const next = kept.filter(k => !spotted.includes(k.id));
+  for (const id of spotted) next.push({ id, on });
+  return { spotted, missed: here.filter(id => !spotted.includes(id)), known: next };
 }
 
 // ── 사건 풀 — 후보와 심각도는 코드가 뽑고, LLM은 장면만 쓴다 ──

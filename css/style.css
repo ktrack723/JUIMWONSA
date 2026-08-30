@@ -1028,6 +1028,8 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .hud-v { font-family: var(--font-mono); }
 .hud-v.big { font-size: var(--fs-lg); font-weight: 700; color: var(--stamp-deep); }
 
+/* 타임라인은 무대 밑에 붙는다 — 시계와 같은 채널이다 */
+.stage-wrap .timeline-slots { padding: var(--s2) var(--s3); border-top: 1px solid var(--dlg-edge); }
 .timeline-slots { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; }
 .timeline-slots li {
   font-family: var(--font-mono); font-size: var(--fs-xs); padding: 3px 7px;
@@ -1042,6 +1044,57 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 
 .notice-list { list-style: none; font-size: var(--fs-sm); }
 .notice-list li { padding: 3px 0; border-bottom: 1px dashed var(--ink-soft); display: flex; justify-content: space-between; gap: var(--s2); align-items: center; }
+.notice-list .nt-body { min-width: 0; }
+.notice-list .nt-bans {
+  display: block; margin-top: 2px; font-family: var(--font-mono);
+  font-size: var(--fs-xs); color: var(--ok);
+}
+
+/* ── 가라 내역 — 계기판의 개수에 붙는 내용물 ─────────────
+   제일 위 줄이 이 패널의 핵심이다: 돌고 있음 / 확인 / 미확인.
+   「미확인」이 0이 아닌 한 계기판은 진실의 절반만 말하고 있다. */
+.gara-tally {
+  display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2);
+  font-family: var(--font-mono); font-size: var(--fs-xs); margin-bottom: var(--s2);
+}
+.gara-tally > span { padding: 2px 6px; border: 1px solid var(--dlg-edge); background: var(--dlg-lit); }
+.gara-tally b { font-size: var(--fs-md); }
+.gara-tally .gt-run { border-color: #b08d1e; }
+.gara-tally .gt-unknown.on { border-color: var(--stamp); color: var(--stamp-deep); background: #f6e6e4; }
+.gara-tally .gt-stale { border-color: var(--warn); color: var(--warn); background: #f6efdc; }
+.gara-tally .gt-ban { border-color: var(--ok); color: var(--ok); }
+
+.gara-list { list-style: none; font-size: var(--fs-sm); }
+.gara-list li {
+  display: grid; grid-template-columns: 54px 1fr auto; gap: 2px var(--s2);
+  align-items: baseline; padding: var(--s1) 0 var(--s1) var(--s2);
+  border-bottom: 1px dashed var(--dlg-edge); border-left: 3px solid var(--dlg-edge);
+}
+/* 빈 목록 한 줄은 3단 격자를 타면 안 된다 — 54px 칸에 갇혀 한 글자씩 접힌다 */
+.gara-list li.empty { display: block; border-left-color: var(--dlg-edge); }
+.gara-list li.fresh { border-left-color: var(--ok); }
+.gara-list li.aging { border-left-color: var(--warn); }
+.gara-list li.stale { border-left-color: var(--stamp); }
+.gk-place { font-size: var(--fs-xs); color: var(--ink-soft); }
+.gk-label { font-weight: 600; }
+.gk-age { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-soft); }
+.gara-list li.stale .gk-age { color: var(--stamp-deep); font-weight: 600; }
+.gk-desc { grid-column: 2 / -1; font-size: var(--fs-xs); color: var(--ink-mid); }
+.gara-list.banned li { grid-template-columns: 54px 1fr; border-left-color: var(--ok); opacity: .85; }
+
+.gara-sub {
+  margin: var(--s2) 0 var(--s1); font-size: var(--fs-xs); font-weight: 600;
+  color: var(--ink-soft); letter-spacing: .04em;
+}
+.gara-seen { display: flex; flex-wrap: wrap; gap: 4px; }
+.gara-seen .gs {
+  font-family: var(--font-mono); font-size: var(--fs-xs); padding: 2px 5px;
+  border: 1px solid var(--dlg-edge); background: var(--dlg-lit); color: var(--ink-soft);
+}
+.gara-seen .gs.fresh { border-color: var(--ok); color: var(--ok); }
+.gara-seen .gs.aging { border-color: var(--warn); color: var(--warn); }
+.gara-seen .gs.stale { border-color: var(--stamp); color: var(--stamp-deep); }
+.gara-seen .gs.never { border-style: dashed; border-color: var(--stamp); color: var(--stamp-deep); background: #f6e6e4; }
 
 .day-window { min-height: 340px; max-height: 56vh; overflow-y: auto; padding: var(--s3); }
 .day-entry { white-space: pre-wrap; margin-bottom: var(--s3); padding: var(--s2) var(--s3); font-size: var(--fs-md); }
@@ -1088,8 +1141,31 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .iv-log .iv-a { background: var(--dlg-lit); padding: var(--s2); margin-bottom: var(--s2); white-space: pre-wrap; }
 #btn-hold.armed { background: var(--stamp); color: #fff; }
 
+/* 한 열로 접히는 순간 「왼쪽/오른쪽」이라는 구분이 사라지고 **순서**만 남는다.
+   그래서 두 열을 display:contents로 풀어 패널 하나하나를 직접 세운다. 기준은 손가락의 동선이다:
+     ① 지금 어떤 상태인가 (상황판·계기판)  — 짧고, 매 순간 본다
+     ② 지금 무슨 일이 벌어지는가 (무대·기록) — 화면의 주인공
+     ③ 지금 무엇을 입력해야 하는가 (사건 대응·하루 마감)
+     ④ 무엇을 할까 (개입 콘솔) — 그리고 **그 결정에 쓰는 자료를 바로 밑에 붙인다**
+   개입 콘솔을 열면 가라 내역과 병력 현황이 곧바로 이어지는 것이 이 순서의 핵심이다.
+   콘솔 위에 자료를 두면 열 때마다 위로 되감아야 한다. */
 @media (max-width: 900px) {
-  .day-grid { grid-template-columns: 1fr; }
+  .day-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+  .day-left, .day-right { display: contents; }
+  .day-left > *, .day-right > * { min-width: 0; }
+  .hud            { order: 1; }
+  .gauges         { order: 2; }
+  .stage-wrap     { order: 3; }
+  .pace-bar       { order: 4; }
+  .day-window     { order: 5; }
+  .chat-advance   { order: 6; }
+  #incident-panel { order: 7; }
+  #dayend-panel   { order: 8; }
+  #promo-panel    { order: 9; }
+  #intervene-panel{ order: 10; }
+  .gara-panel     { order: 11; }
+  .roster-panel   { order: 12; }
+  .notice-board   { order: 13; }
 }
 
 /* ── 일과 무대 — 해·하늘·병사 판때기·말풍선 ─────────────── */
