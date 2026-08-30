@@ -63,8 +63,31 @@ export const TUNING = {
   // 등급·인성 하위가 두꺼워진다. slope는 모집단 수치 1당 가중 기울기.
   grade: { baseWeights: [1, 2, 4, 2, 1], slope: 0.16, floor: 0.05 },
 
-  // 사건 연루자 선정 — 등급이 낮을수록 잘 걸린다.
-  involve: { gradeWeights: [5, 3, 2, 1.5, 1] },  // 폐급 → 에이스
+  // 사건 연루자 선정 — 등급이 낮을수록, 멘탈이 낮을수록 잘 걸린다.
+  involve: {
+    gradeWeights: [5, 3, 2, 1.5, 1],  // 폐급 → 에이스
+    mentalPer: 0.2,                   // 멘탈이 기준(6)에서 1 내려갈 때마다 가중 +20%
+    mentalBase: 6,
+  },
+
+  // 병사별 멘탈 — 부대 파라미터와 달리 **저장되는** 개인 상태다 (0~10).
+  // 부대 분위기(행복·갈등)가 매일 쓸어가고, 사건이 깎고, 면담(상담)이 회복시킨다.
+  mental: {
+    start: { base: 6, jitter: 2 },    // 전입 시 base ± jitter에서 굴린다
+    charPenalty: { '최악': -2, '하': -1 },  // 인성 하위는 낮게 시작한다 — 버티는 힘도 인성이다
+    driftHappyHigh: 8, driftHappyLow: 3,    // 부대가 밝으면 +1, 어두우면 −1
+    driftConflictHigh: 7,                   // 눌린 부대는 추가로 −1
+    incidentHit: -1,                  // 사건에 연루되면
+    escalationHit: -1,                // 그 사건이 사고가 되면 추가로
+    counsel: +1,                      // 면담(상담) 한 번에
+    dangerAt: 2,                      // 이 이하로 떨어진 병사가 있으면 큰 사고 전용 위험이 열린다
+    dangerPer: 0.02,                  // 위험 눈금 1칸당
+    default: 6,                       // 멘탈 없는 옛 저장분을 읽을 때
+  },
+
+  // 불시점검(군기 점검)의 효과 — 순수 코드다. 들이닥치면 일은 각이 잡히고(가라↓)
+  // 분위기는 가라앉는다(행복↓). LLM은 점검 소견(장면)만 쓴다.
+  inspect: { gara: -1, happy: -1 },
 
   roster: { size: 16 },
   goal: 100,   // 무사고 연속 100일
@@ -195,23 +218,31 @@ export const EVENT_POOL = [
 
 // ── 사고 판정 롤 (LLM 없음) ───────────────────────────────
 // 하루 9개 일과 슬롯마다 한 번씩 굴린다. rng는 주입식이다 — 테스트가 결정적으로 돈다.
-export function incidentRisk({ gara, conflict }, { intel, macho, difficulty }) {
-  const R = TUNING.roll;
+// minMental은 명부에서 제일 낮은 멘탈이다. 갈등이 부대 단위로 여는 큰 사고와 별개로,
+// **한 명이 무너지는 것**도 큰 사고(자해·탈영)를 연다 — 그 한 명이 누구인지가 보이는 게임이라
+// 상담으로 미리 막을 수 있고, 그게 면담의 존재 이유다.
+export function incidentRisk({ gara, conflict, minMental = 10 }, { intel, macho, difficulty }) {
+  const R = TUNING.roll, M = TUNING.mental;
   const small = Math.max(0,
     R.base
     + macho * R.machoPer
     + Math.max(0, gara + difficulty - 10) * R.hardSloppyPer
     + Math.max(0, gara - intel) * R.dumbSloppyPer
     - (conflict >= R.suppressAt ? R.suppress : 0));
-  const big = conflict >= R.big.open ? (conflict - R.big.open + 1) * R.big.per : 0;
-  return { small, big };
+  const fromConflict = conflict >= R.big.open ? (conflict - R.big.open + 1) * R.big.per : 0;
+  const fromMental = minMental <= M.dangerAt ? (M.dangerAt - minMental + 1) * M.dangerPer : 0;
+  return { small, big: fromConflict + fromMental, bigCause: fromMental > fromConflict ? 'mental' : 'conflict' };
 }
 
-/** 슬롯 하나의 롤. 성공하면 { tier } — 사건 발생. 사건은 아직 사고가 아니다. */
+/**
+ * 슬롯 하나의 롤. 성공하면 사건 발생 — { tier, cause? }. 사건은 아직 사고가 아니다.
+ * cause는 큰 사건이 어디서 열렸는가다: 'conflict'(부대가 눌렸다) | 'mental'(한 명이 무너졌다).
+ * 엔진이 이걸 보고 연루자를 고른다 — 무너진 놈의 사고는 그 놈에게 간다.
+ */
 export function rollSlot(params, unitStats, slotKind, rng = Math.random) {
-  const { small, big } = incidentRisk(params, unitStats);
+  const { small, big, bigCause } = incidentRisk(params, unitStats);
   const mult = TUNING.roll.slotMult[slotKind] ?? 1;
-  if (big > 0 && rng() < big * mult) return { tier: 'major' };
+  if (big > 0 && rng() < big * mult) return { tier: 'major', cause: bigCause };
   if (rng() < small * mult) return { tier: 'minor' };
   return null;
 }
@@ -246,16 +277,63 @@ export function rollGrades(unit, rng = Math.random) {
   return { grade, character };
 }
 
-/** 사건 연루 병사 선정 — 등급이 낮을수록 잘 걸린다. n명, 중복 없음. */
+/** 병사 하나의 연루 가중 — 등급이 낮을수록, 멘탈이 낮을수록 크다. 테스트가 단조성을 잰다. */
+export function involveWeight(s) {
+  const I = TUNING.involve;
+  const grade = I.gradeWeights[Math.max(0, GRADES.indexOf(s.grade))];
+  const mental = 1 + Math.max(0, I.mentalBase - (s.mental ?? I.mentalBase)) * I.mentalPer;
+  return grade * mental;
+}
+
+/** 사건 연루 병사 선정. n명, 중복 없음. */
 export function pickInvolved(roster, n, rng = Math.random) {
   const pool = roster.slice();
   const picked = [];
   while (picked.length < n && pool.length) {
-    const weights = pool.map(s => TUNING.involve.gradeWeights[Math.max(0, GRADES.indexOf(s.grade))]);
-    const i = weightedPick(weights, rng);
+    const i = weightedPick(pool.map(involveWeight), rng);
     picked.push(pool.splice(i, 1)[0]);
   }
   return picked;
+}
+
+// ── 멘탈 — 병사별 저장 상태. 굴림·드리프트·상담 전부 코드다 ──
+/** 전입 시 멘탈 굴림. 인성 하위는 낮게 시작한다. */
+export function rollMental(character, rng = Math.random) {
+  const M = TUNING.mental;
+  const jitter = Math.floor(rng() * (M.start.jitter * 2 + 1)) - M.start.jitter;
+  return clamp(M.start.base + jitter + (M.charPenalty[character] || 0));
+}
+
+/**
+ * 하루 마감의 멘탈 드리프트 — 부대 분위기가 전원을 같은 방향으로 쓸어간다.
+ * 개인차는 여기가 아니라 사건 연루(−)와 상담(+)이 만든다.
+ */
+export function mentalDrift(mental, params) {
+  const M = TUNING.mental;
+  let d = 0;
+  if (params.happy >= M.driftHappyHigh) d += 1;
+  if (params.happy <= M.driftHappyLow) d -= 1;
+  if (params.conflict >= M.driftConflictHigh) d -= 1;
+  return clamp(mental + Math.max(-1, Math.min(1, d)));
+}
+
+/** 면담(상담) 한 번의 회복. */
+export const counselMental = mental => clamp(mental + TUNING.mental.counsel);
+/** 사건 연루 한 번의 타격. escalated면 더 깎인다. */
+export const incidentMental = (mental, escalated) =>
+  clamp(mental + TUNING.mental.incidentHit + (escalated ? TUNING.mental.escalationHit : 0));
+
+/** 명부에서 제일 낮은 멘탈 — 큰 사고 위험의 입력이다. 빈 명부면 안전값. */
+export const minMentalOf = roster =>
+  roster.length ? Math.min(...roster.map(s => s.mental ?? TUNING.mental.default)) : 10;
+
+// ── 불시점검(군기 점검) — 순수 코드 효과 ─────────────────
+export function applyInspection(params) {
+  return {
+    ...params,
+    gara: clamp(params.gara + TUNING.inspect.gara),
+    happy: clamp(params.happy + TUNING.inspect.happy),
+  };
 }
 
 // ── 파라미터 상태 ─────────────────────────────────────────

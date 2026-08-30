@@ -1,8 +1,9 @@
 // game.js — 화면·입력. 게임 규칙은 여기 없다 — engine.js를 손잡이(handlers)로만 만진다.
 //
 // 화면 셋: 부팅 → 부대 선택 → 하루(브리핑·타임라인·사건·개입).
-// 파라미터 계기판은 없다 — 브리핑의 증상을 읽는 것이 게임이다. 화면에 뜨는 수치는
-// 무사고 카운터·날짜·진급 심사일·사고 누계뿐이다.
+// 부대 파라미터 다섯과 병사별 멘탈은 **계기판에 상시 노출**된다 — 화면은 숫자를 본다.
+// 프롬프트는 여전히 밴드까지만 본다: 노출은 화면의 일이고 차단은 프롬프트의 일이다
+// (근거와 전환 이유는 docs/design.md).
 //
 // 일과 무대(sprites.js)는 연출이다 — 해가 움직이고 병사 판때기들이 장소를 옮겨 다니며
 // 말풍선을 띄운다. 그 대사는 **부임 때 한 번 받아 둔 캐시 풀**(ambient.js)에서 나오므로
@@ -12,7 +13,7 @@ import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
-import { PLACES, slotsFor, weekdayOf, dayFraction } from './params.js';
+import { PLACES, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, TUNING } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
@@ -154,7 +155,7 @@ async function startCampaign(unitId, savedState) {
   runOneDay();
 }
 
-// ── 상황판 ──────────────────────────────────────────────
+// ── 상황판 · 계기판 ─────────────────────────────────────
 function renderHud() {
   const s = state.engine.snapshot();
   $('#hud-date').textContent = `${s.date} (${s.weekday}) · 부임 ${s.day}일차`;
@@ -162,6 +163,40 @@ function renderHud() {
   $('#hud-review').textContent = s.reviewDate;
   $('#hud-accidents').textContent = `${s.accidents}건`;
   $('#hud-unit').textContent = `${state.unit.name} · 병력 ${s.roster}명`;
+  renderGauges();
+}
+
+// 부대 계기판 — 다섯 파라미터 상시 노출. 갈등 바에는 8부터 열리는 위험 구간 눈금을 새긴다.
+// 난이도는 오늘의 실효값(계절·주말 보정 후)이다 — static이지만 달력이 만지는 것이 보여야 한다.
+const GAUGE_DEFS = [
+  { k: 'difficulty', label: '일과 난이도', cls: 'diff', note: '오늘 실효치 — 계절·주말이 정한다' },
+  { k: 'gara', label: '가라', cls: 'gara', note: '높으면 편하지만, 힘든 일을 대충 하면 다친다' },
+  { k: 'happy', label: '행복도', cls: 'happy', note: '낮으면 싸움이 늘고 멘탈이 쓸려 내려간다' },
+  { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: TUNING.roll.big.open, note: '8부터 탈영·자해급 사고의 문이 열린다' },
+  { k: 'rep', label: '평판', cls: 'rep', note: '개입마다 −1 · 조용한 날 +1. 낮으면 지침이 안 먹힌다' },
+];
+function renderGauges() {
+  const p = state.engine.state.params;
+  const values = { ...p, difficulty: effectiveDifficulty(state.unit.difficulty, state.engine.state.date) };
+  $('#gauge-box').innerHTML = GAUGE_DEFS.map(g => {
+    const v = values[g.k];
+    const dangerNow = g.danger != null && v >= g.danger;
+    return `<div class="pgauge ${g.cls}${dangerNow ? ' danger-now' : ''}" title="${escapeHtml(g.note)}">
+      <span class="pg-label">${escapeHtml(g.label)}</span>
+      <div class="pg-bar">
+        <div class="pg-fill" style="width:${v * 10}%"></div>
+        ${g.danger != null ? `<i class="pg-danger" style="left:${g.danger * 10}%"></i>` : ''}
+      </div>
+      <span class="pg-num">${v}<small>/10</small></span>
+    </div>`;
+  }).join('');
+}
+
+// 병사 멘탈 미니 게이지 — 명부·면담 선택에 같이 쓴다. 2 이하는 큰 사고의 문이다.
+function mentalBadge(m) {
+  const v = m ?? TUNING.mental.default;
+  const cls = v <= TUNING.mental.dangerAt ? 'mg-danger' : v <= 4 ? 'mg-low' : 'mg-ok';
+  return `<span class="mgauge ${cls}" title="멘탈 ${v}/10"><i style="width:${v * 10}%"></i></span><b class="mg-num">${v}</b>`;
 }
 
 function renderTimeline(activeIndex = -1) {
@@ -180,8 +215,10 @@ function openStage() {
     addEventListener('resize', () => state.stage?.resize());
   }
   // 장소 팻말은 params.js의 대응표가 그대로 그린다 — 화면이 자리를 따로 알 필요가 없다.
+  // 팻말도 가운데 피벗이라 끝(흡연장 x=0.97)이 잘린다 — 중심을 [6%, 94%]로 죈다.
+  const clampP = x => Math.min(0.94, Math.max(0.06, x));
   $('#stage-places').innerHTML = Object.values(PLACES)
-    .map(pl => `<span class="stage-place" style="left:${(pl.x * 100).toFixed(1)}%">${escapeHtml(pl.label)}</span>`).join('');
+    .map(pl => `<span class="stage-place" style="left:${(clampP(pl.x) * 100).toFixed(1)}%">${escapeHtml(pl.label)}</span>`).join('');
 }
 
 /** 슬롯 하나로 무대를 옮긴다 — 해·하늘·통근·말풍선. */
@@ -219,7 +256,7 @@ function markIncident(on) {
   const el = document.createElement('div');
   el.className = 'incident-mark';
   el.textContent = '❗';
-  el.style.left = `${(p.x * 100).toFixed(1)}%`;
+  el.style.left = `${(Math.min(0.9, Math.max(0.1, p.x)) * 100).toFixed(1)}%`;
   box.appendChild(el);
 }
 
@@ -230,6 +267,10 @@ function speak(chatter) {
   box.querySelectorAll('.bubble').forEach(b => b.remove());
   if (!chatter?.length) return;
   const pos = state.stage?.ok ? state.stage.positions() : [];
+  // 피벗은 가운데(translateX(-50%))다 — 무대 끝에 선 놈의 말풍선이 잘리지 않으려면
+  // 중심이 [반폭, 1−반폭] 안에 있어야 한다. css의 max-width가 48%(반폭 24%)이므로
+  // [25%, 75%]로 죈다. 꼬리도 가운데라 어긋나 보이지 않는다 (css).
+  const clampX = x => Math.min(0.75, Math.max(0.25, x));
   chatter.slice(0, 3).forEach((c, i) => {
     const el = document.createElement('div');
     el.className = `bubble ${c.kind}${c.kind === 'song' && c.mode === 'broadcast' ? ' broadcast' : ''}`;
@@ -239,7 +280,7 @@ function speak(chatter) {
       : c.text;
     if (c.kind === 'song') el.title = c.title;
     const p = pos[(i * 4 + 1) % Math.max(1, pos.length)];
-    el.style.left = `${((p ? p.x : 0.2 + i * 0.3) * 100).toFixed(1)}%`;
+    el.style.left = `${(clampX(p ? p.x : 0.2 + i * 0.3) * 100).toFixed(1)}%`;
     el.style.bottom = `${34 + i * 17}%`;
     box.appendChild(el);
   });
@@ -254,13 +295,15 @@ function renderRoster() {
     .sort((a, b) => a.cohort - b.cohort);
   $('#roster-list').innerHTML = rows.map(({ s, cohort, rank }) =>
     `<details class="roster-row"><summary><span class="rk rk-${rank}">${escapeHtml(rank)}</span> ${escapeHtml(s.name)}
+      ${mentalBadge(s.mental)}
       <span class="dim">${cohort}기 · ${escapeHtml(s.job)} · ${escapeHtml(s.grade)}/${escapeHtml(s.character)}</span></summary>
       <p>${escapeHtml(s.sheet) || '<span class="dim">인사기록 미도착</span>'}</p>
-      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)}</p></details>`).join('')
+      <p class="dim small">군번 ${escapeHtml(s.serial)} · 전입 ${escapeHtml(s.joined)} · 멘탈 ${s.mental ?? TUNING.mental.default}/10</p></details>`).join('')
     || '<p class="dim">병력 없음</p>';
-  // 면담 대상 목록도 같은 원장에서 — 부를 때도 기수·계급이 보여야 한다
-  $('#interview-who').innerHTML = rows.map(({ s, cohort, rank }) =>
-    `<option value="${escapeHtml(s.serial)}">${cohort}기 ${escapeHtml(rank)} ${escapeHtml(s.name)} (${escapeHtml(s.job)})</option>`).join('');
+  // 면담(상담) 대상 목록 — **멘탈 낮은 순**으로 세운다. 누굴 불러야 하는지가 목록 자체다.
+  const byNeed = rows.slice().sort((a, b) => (a.s.mental ?? 6) - (b.s.mental ?? 6));
+  $('#interview-who').innerHTML = byNeed.map(({ s, cohort, rank }) =>
+    `<option value="${escapeHtml(s.serial)}">[멘탈 ${s.mental ?? TUNING.mental.default}] ${cohort}기 ${escapeHtml(rank)} ${escapeHtml(s.name)} (${escapeHtml(s.job)})</option>`).join('');
 }
 
 function renderNotices() {
@@ -422,8 +465,10 @@ async function doInterview() {
     const h = await withLoading('병사 호출 중', () => state.engine.interview(serial, q));
     state.interviewHandle = h;
     const who = `${rankLine(state.unit, h.soldier, state.engine.state.date)} ${h.soldier.name}`;
-    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who)}: ${escapeHtml(h.reply)}</p>`;
+    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who)}: ${escapeHtml(h.reply)}</p>`
+      + `<p class="iv-heal">멘탈 ${h.mental.before} → <b>${h.mental.after}</b> — 들어준 만큼은 남는다</p>`;
     $('#interview-more').classList.remove('hidden');
+    renderHud(); renderRoster();
     saveCampaign();
   } catch (e) {
     toast(errMsg(e));
@@ -446,10 +491,11 @@ async function doInterviewMore() {
 async function doInspect() {
   const key = $('#inspect-where').value;
   try {
-    const out = await withLoading('불시점검 중', () => state.engine.inspect(key));
-    await addEntry('inspect', `🔦 불시점검 · ${out.place}\n${out.findings}`, { typed: false });
+    const out = await withLoading('군기 점검 중', () => state.engine.inspect(key));
+    await addEntry('inspect', `🔦 군기 점검 · ${out.place}\n${out.findings}`, { typed: false });
+    renderHud();
     saveCampaign();
-    toast('점검 소견이 동향 기록에 붙었다. (평판 −1)');
+    toast('각 잡혔다 — 가라 −1 · 행복 −1 · 평판 −1');
   } catch (e) { toast(errMsg(e)); }
 }
 
@@ -460,6 +506,7 @@ async function doNotice() {
     const out = await withLoading('공지 게시 중', () => state.engine.postNotice(text));
     $('#notice-input').value = '';
     renderNotices();
+    renderHud();
     saveCampaign();
     await addEntry('sys', `📢 공지 게시. 어디선가 한마디 — "${out.reaction}"`, { typed: false });
   } catch (e) { toast(errMsg(e)); }
