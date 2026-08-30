@@ -20,7 +20,7 @@ import {
   ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf,
 } from './params.js';
 import { AmbientPool } from './ambient.js';
-import { Stage } from './sprites.js';
+import { Stage, GROUND, BUBBLE_GAP, bubbleSpots } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
 import * as pace from './pacing.js';
 import { $, $$, escapeHtml, sget, sset, toast, withLoading } from './ui.js';
@@ -472,28 +472,48 @@ function markIncident(on, cat = null) {
   box.querySelector('.incident-mark')?.remove();
   if (!on) return;
   const pos = state.stage?.ok ? state.stage.positions() : [];
-  const p = pos.length ? pos[Math.floor(Math.random() * pos.length)] : { x: 0.5 };
+  const p = pos.length ? pos[Math.floor(Math.random() * pos.length)] : { x: 0.5, head: GROUND + 0.3 };
   const el = document.createElement('div');
   el.className = 'incident-mark';
   // 유형의 글자를 세운다 — 무슨 일이 터졌는지가 무대에서도 한눈에 갈린다.
   el.textContent = cat?.icon || '❗';
   el.title = cat?.label || '사건';
-  el.style.left = `${(Math.min(0.9, Math.max(0.1, p.x)) * 100).toFixed(1)}%`;
+  // 말풍선과 같은 규칙으로 그 놈의 정수리 위에 세운다. 예전에는 bottom이 30%로 박혀 있어서
+  // 판때기 가슴팍에 ❗가 걸렸다 — 「어느 판때기가 사고를 쳤는가」가 안 보이는 자리였다.
+  el.style.left = `${(p.x * 100).toFixed(2)}%`;
+  el.style.bottom = `${((p.head + BUBBLE_GAP) * 100).toFixed(2)}%`;
   box.appendChild(el);
 }
 
-/** 말풍선. 스프라이트가 서 있는 자리에 붙는다 — 대사는 캐시 풀에서 왔고 콜은 없다. */
+/**
+ * 말풍선을 무대에 붙인다 — **꼬리는 말한 놈의 정수리를 가리킨다.**
+ *
+ * 예전에는 세로가 34%·51%·68%의 고정 사다리였고 가로는 [25%, 75%]로 죄여 있었다.
+ * 판때기 정수리는 48~54%에 있고 판때기는 3%~97%를 걸어 다니므로, 첫 풍선은 가슴팍을
+ * 찌르고 셋째 풍선은 허공에 떴으며, 끝에 선 놈의 풍선은 아무도 없는 자리를 가리켰다.
+ *
+ * 가로를 죄었던 이유 자체는 진짜다 — 피벗이 가운데(translateX(-50%))라 끝에 선 놈의
+ * 풍선은 무대 밖으로 잘린다. 다만 **죌 것은 몸통이지 꼬리가 아니다.** 몸통만 안쪽으로
+ * 밀고(--shift) 꼬리는 그만큼 되밀면, 잘리지도 않고 가리키는 자리도 안 틀어진다.
+ * 미는 폭은 실제로 그려진 폭을 재서 정한다 — max-width가 `min(48%, 230px)`이라
+ * 퍼센트로만 어림하면 좁은 화면에서 또 어긋난다.
+ */
 function speak(chatter) {
   const box = $('#stage-bubbles');
   // ❗는 대응이 끝날 때까지 살아 있어야 한다 — 말풍선만 갈아 끼운다.
   box.querySelectorAll('.bubble').forEach(b => b.remove());
   if (!chatter?.length) return;
   const pos = state.stage?.ok ? state.stage.positions() : [];
-  // 피벗은 가운데(translateX(-50%))다 — 무대 끝에 선 놈의 말풍선이 잘리지 않으려면
-  // 중심이 [반폭, 1−반폭] 안에 있어야 한다. css의 max-width가 48%(반폭 24%)이므로
-  // [25%, 75%]로 죈다. 꼬리도 가운데라 어긋나 보이지 않는다 (css).
-  const clampX = x => Math.min(0.75, Math.max(0.25, x));
-  chatter.slice(0, 3).forEach((c, i) => {
+  // **좁은 무대에는 적게 띄운다.** 풍선 하나가 무대 폭의 절반까지 벌어지므로, 폰에서 셋을
+  // 띄우면 서로 밀어 올리다가 꼬리가 제 주인에게서 한참 떠 버린다(실측 380px: 가운데 풍선이
+  // 정수리에서 무대 높이의 0.3만큼 올라갔다). 떠 있는 풍선은 누가 한 말인지 못 알아본다 —
+  // 셋을 다 보여 주는 것보다 둘이 제자리에 있는 편이 낫다. 잡담은 어차피 곁가지다.
+  const room = box.clientWidth >= 560 ? 3 : 2;
+  const lines = chatter.slice(0, room);
+  // 어디에 세울지는 무대가 정한다 — 좌표계를 아는 쪽이 아는 값이다(sprites.js의 bubbleSpots).
+  const spots = bubbleSpots(pos, lines.length);
+
+  lines.forEach((c, i) => {
     const el = document.createElement('div');
     el.className = `bubble ${c.kind}${c.kind === 'song' && c.mode === 'broadcast' ? ' broadcast' : ''}`;
     // 군가는 누가 부르는지가 아니라 어디서 오는지가 다르다 — 목이냐 스피커냐.
@@ -501,11 +521,49 @@ function speak(chatter) {
       ? (c.mode === 'broadcast' ? `📻 ♪ ${c.text}` : `♪ ${c.text}`)
       : c.text;
     if (c.kind === 'song') el.title = c.title;
-    const p = pos[(i * 4 + 1) % Math.max(1, pos.length)];
-    el.style.left = `${(clampX(p ? p.x : 0.2 + i * 0.3) * 100).toFixed(1)}%`;
-    el.style.bottom = `${34 + i * 17}%`;
+    const spot = spots[i];
+    el.style.left = `${(spot.x * 100).toFixed(2)}%`;
+    el.style.bottom = `${(spot.bottom * 100).toFixed(2)}%`;
     box.appendChild(el);
+    keepInStage(el, spot.x, box);
+    liftOffOthers(el, box);
   });
+}
+
+/**
+ * 앞서 놓인 풍선과 **실제로 겹치면** 그만큼 올려 세운다.
+ *
+ * bubbleSpots가 이미 말할 놈을 가로로 흩어 골라 두지만, 그건 **꼬리 자리**끼리의 거리다.
+ * 몸통은 좁은 화면에서 무대 폭의 절반까지 벌어지므로, 꼬리가 멀어도 몸통은 겹친다
+ * (실측 380px: 꼬리가 0.53과 0.97인데 몸통이 [0.51,0.61]과 [0.51,0.99]로 물렸다).
+ * 몸통 폭은 붙여서 그려 봐야 알 수 있는 값이라 이 판정은 여기서만 할 수 있다.
+ */
+function liftOffOthers(el, box) {
+  const step = el.offsetHeight + 4;
+  const others = [...box.querySelectorAll('.bubble')].filter(b => b !== el);
+  if (!others.length || !box.clientHeight) return;
+  const hits = r => others.some(b => {
+    const o = b.getBoundingClientRect();
+    return r.left < o.right && r.right > o.left && r.top < o.bottom && r.bottom > o.top;
+  });
+  // 두 칸까지만 올린다. 그 위로는 하늘도 좁고, 셋이 한 줄로 겹치는 날은 드물다.
+  for (let n = 1; n <= 2 && hits(el.getBoundingClientRect()); n++) {
+    el.style.bottom = `${(parseFloat(el.style.bottom) + (step / box.clientHeight) * 100).toFixed(2)}%`;
+  }
+}
+
+/**
+ * 무대 밖으로 삐져나가는 만큼 **몸통만** 안으로 민다. 꼬리는 css에서 같은 값만큼
+ * 되밀리므로 가리키는 자리는 안 변한다 — 그게 이 함수가 존재하는 이유다.
+ * 붙인 뒤에 부르는 이유는 실제로 그려진 폭을 재야 하기 때문이다.
+ */
+function keepInStage(el, x, box) {
+  const stageW = box.clientWidth;
+  if (!stageW) return;                       // 아직 레이아웃 전 — 다음 슬롯에서 다시 붙는다
+  const half = el.offsetWidth / 2;
+  const cx = x * stageW;
+  const shift = Math.min(Math.max(cx, half + 2), stageW - half - 2) - cx;
+  el.style.setProperty('--shift', `${shift.toFixed(1)}px`);
 }
 
 function renderRoster() {
