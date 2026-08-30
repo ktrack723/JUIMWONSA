@@ -173,3 +173,40 @@ export function attachSkip(root, doc = document) {
   doc.addEventListener('keydown', onKey);
   return () => { root.removeEventListener('pointerup', onPointer); doc.removeEventListener('keydown', onKey); };
 }
+
+// ── 일과 세우기 / 재개 ───────────────────────────────────
+//
+// ⏸ 버튼은 오래도록 **예약 토글**이기만 했다: 누르면 「다음 슬롯 경계에서 선다」가 켜지고,
+// 다시 누르면 그 예약이 꺼진다. 그런데 사람은 이 버튼을 **재생/일시정지**로 읽는다 —
+// 멈춘 뒤에 다시 누르면 재개될 거라고 생각한다. 실제로는 아무 일도 안 일어났고,
+// 재개는 개입 콘솔 **안쪽**의 「콘솔 닫기」 버튼에만 있었다.
+//
+// 더 나빴던 것은 그 헛누름이 조용하지 않았다는 점이다. 멈춘 상태에서 ⏸를 누르면
+// 「다음 슬롯 세우기」가 다시 예약돼서, 콘솔을 닫아 재개하는 순간 **한 칸 가고 또 섰다.**
+// 브라우저로 재현한 순서가 이랬다: ⏸(멈춤) → ⏸(아무 일 없음) → 재개(한 칸 가고 콘솔이
+// 도로 열림). 눌러도 안 되고 풀어도 도로 서니 통째로 고장 난 것으로 보인다.
+//
+// 그래서 상태를 셋으로 못박고 버튼 하나가 셋을 다 맡는다. 화면(game.js)은 DOM만 만지고
+// 규칙은 여기 있다 — 이 갈래가 코드에 흩어져 있어서 「멈춰 있을 때 누르면」 칸이 빈 것이다.
+export const HOLD = { idle: 'idle', armed: 'armed', held: 'held' };
+
+/** 지금 상태에서 ⏸를 누르면 무엇이 되는가. act는 화면이 실제로 할 일이다. */
+export function holdPress(state) {
+  if (state === HOLD.held) return { state: HOLD.idle, act: 'resume' };
+  if (state === HOLD.armed) return { state: HOLD.idle, act: 'disarm' };
+  return { state: HOLD.armed, act: 'arm' };
+}
+
+/** 버튼에 뭐라고 쓸 것인가. 상태가 글자에 안 나오면 누르기 전에는 알 수가 없다. */
+export function holdLabel(state) {
+  if (state === HOLD.held) return '▶ 일과 재개';
+  if (state === HOLD.armed) return '⏸ 세우는 중…';
+  return '⏸ 일과 세우기';
+}
+
+/** 눌렀을 때 띄울 말. 재개는 화면이 통째로 바뀌므로 말이 필요 없다. */
+export function holdToast(act) {
+  if (act === 'arm') return '다음 슬롯 경계에서 일과가 선다.';
+  if (act === 'disarm') return '세우기 취소.';
+  return null;
+}
