@@ -290,9 +290,12 @@ export const ESCALATION_SCHEMA = {
       type: 'string', enum: ['contained', 'escalated'],
       description: 'contained = the situation ended without lasting damage. escalated = it became a reportable accident — injury, desertion, abuse case, anything that lands on a commander\'s desk',
     },
-    gara: { type: 'string', enum: ['up', 'down', 'same'], description: 'Did this outcome push the unit toward cutting corners (up) or doing things by the book (down)?' },
-    happy: { type: 'string', enum: ['up', 'down', 'same'], description: 'Did the mood of the unit rise or fall from this outcome?' },
-    conflict: { type: 'string', enum: ['up', 'down', 'same'], description: 'Did pressure and abuse between soldiers grow or ease from this outcome?' },
+    // 기준선은 **이 부대의 평범한 하루**다. 「완벽한 하루와 비교해서」로 읽히면 심판이
+    // 사건 장면을 볼 때마다 나쁜 쪽을 찍는다 — 사건은 정의상 유쾌하지 않아서다.
+    // 실측(같은 장면 48개를 두 문구로 다시 읽힘): 아래 문구가 same을 15%에서 50%로 올렸다.
+    gara: { type: 'string', enum: ['up', 'down', 'same'], description: 'Compared with an ordinary day in this unit, does this outcome leave the unit MORE likely to cut corners tomorrow (up) or LESS (down)? An incident that changed no habit is same' },
+    happy: { type: 'string', enum: ['up', 'down', 'same'], description: 'Compared with an ordinary day in this unit, is the mood tomorrow better (up) or worse (down)? Most incidents are forgotten by the next meal: same. down is for something the unit will still be carrying tomorrow' },
+    conflict: { type: 'string', enum: ['up', 'down', 'same'], description: 'Compared with an ordinary day in this unit, is there MORE friction between soldiers tomorrow (up) or LESS (down)? A quarrel that ended is same, not up' },
   },
   required: ['outcome', 'gara', 'happy', 'conflict'],
   additionalProperties: false,
@@ -309,7 +312,11 @@ readings and nothing else — no commentary, no score, no explanation.
   contained. Escalated is reserved for real damage: it is the rarer answer, but when the
   scene shows real damage you must say so — a major-tier situation left to rot usually is
   real damage.
-· the three directions — how this outcome bends the unit. same is the honest default.
+· the three directions — how this outcome bends the unit **compared with an ordinary day in
+  this unit**, not compared with a perfect day. Incidents are ordinary here: most of them leave
+  nothing behind by tomorrow. **same is the answer most of the time, in every direction** —
+  reserve up/down for a change the unit will still be carrying tomorrow. Answering "down" merely
+  because the scene was unpleasant is the mistake to avoid.
 
 You do not know what orders were given or what the unit's condition is. Only the scene.`;
 

@@ -52,7 +52,7 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
-  minMentalOf, applyInspection, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
+  minMentalOf, applyInspection, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
   GARA_BY_ID, garaCap, garaAt, syncGaraList, inspectGara,
   farewellTone, pickSendoff, PARAM_KEYS,
 } from './params.js';
@@ -350,7 +350,9 @@ export class Engine {
     const incidents = [];   // 오늘의 사건 기록 (코드 요약용)
     // 새벽의 바늘. 하루가 끝나면 여기와 비교해 「오늘 무엇이 얼마나 움직였나」를 만든다 —
     // 개입·판정·드리프트가 각자 조용히 미는 값이라, 이 차이 말고는 화면이 알 길이 없다.
+    // 사건 판정도 이걸 본다: 하루의 총 이동은 축마다 한 칸이다(params.js의 capDay).
     const dawn = { ...s.params };
+    this.dawn = dawn;
 
     try {
       // 병영 소음이 아직 없으면 여기서 한 번 채운다 (부임 첫날 한 콜).
@@ -522,7 +524,10 @@ export class Engine {
     await this.h.outcome?.({ scene: outcomeScene, directive });
     const verdict = await judging;
 
-    s.params = applyDirections(s.params, verdict);
+    // 판정도 드리프트와 같은 속도 제한을 받는다 — 사건이 다섯 건 나는 날에도 하루 한 걸음이다.
+    // 안 묶어 두면 가라가 하루 +5까지 뛰고, 가라가 오르면 사고 롤이 커져 사건이 더 나는
+    // 되먹임이 붙는다(실측: 난이도 높은 부대는 부임 일주일이면 100%가 가라 천장에 붙었다).
+    s.params = capDay(applyDirections(s.params, verdict), this.dawn || s.params);
     this.#syncGara();   // 가라가 움직였으면 관행 하나가 새로 돌기 시작했거나 멎었다
     const escalated = verdict?.outcome === 'escalated';
     // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.

@@ -719,6 +719,24 @@ export function applyDirections(params, verdict) {
   };
 }
 
+/**
+ * 하루의 이동량 상한. 드리프트는 처음부터 하루 ±1로 묶여 있었는데 **판정은 안 묶여 있었다** —
+ * 같은 눈금에 속도 제한이 둘이었던 셈이다. 사건이 하루 다섯 건 나는 날(난이도가 높게
+ * 저작된 부대에서는 흔하다) 가라가 하루에 +5까지 뛰었고, 가라가 오르면 사고 롤이 커져 사건이
+ * 더 나는 되먹임이 붙어 부임 일주일이면 가라가 천장에 붙었다(실측: 100%가 그렇게 됐다).
+ *
+ * dawn은 그날 새벽의 파라미터다. 사건이 몇 건이 나든 하루의 총 이동은 축마다 한 칸이다 —
+ * 「어제와 오늘 사이에 부대가 한 걸음 움직인다」는 규칙이 이제 판정에도 걸린다.
+ */
+export function capDay(params, dawn) {
+  const out = { ...params };
+  for (const k of PARAM_KEYS) {
+    if (dawn[k] == null) continue;
+    out[k] = clamp(dawn[k] + Math.max(-1, Math.min(1, params[k] - dawn[k])));
+  }
+  return out;
+}
+
 /** 개입 하나(면담·점검·공지)의 평판 비용. 순수 코드 — 개입 횟수가 곧 평판이다. */
 export function applyIntervention(params) {
   return { ...params, rep: clamp(params.rep + TUNING.rep.perIntervention) };
@@ -744,8 +762,13 @@ export function applyDrift(params, difficulty, { interventions = 0, baseline = d
 
   if (params.gara >= D.garaHigh) dHappy += 1;          // 편하니까
   if (params.gara <= D.garaLow) dHappy -= 1;           // FM대로 굴리면 힘들다
-  if (load >= D.hardOver) dConflict -= 1;              // 힘들면 싸울 기력도 없다
-  else if (load <= -D.easyUnder) dHappy += 1;          // 평소보다 편한 날 — 숨통이 트인다
+  // 달력은 **제자리로 되돌리는 힘이지 제자리를 넘기는 힘이 아니다.** 힘든 날은 갈등을
+  // 평소까지 눌러 주고, 편한 날은 행복을 평소까지 올려 준다 — 그 너머로 미는 것은
+  // 사건과 개입의 몫이다. 이 단서가 없으면 계절이 한 방향으로만 작동한다: 여름 평일마다
+  // 갈등 −1이 붙어서 부임 열흘이면 갈등이 0에 붙고 여름 내내 거기 눌러앉았다(실측).
+  // 그러면 갈등 축이 통째로 죽고, 큰 사고의 문이 영영 안 열린다.
+  if (load >= D.hardOver) { if (params.conflict > TUNING.start.conflict) dConflict -= 1; }
+  else if (load <= -D.easyUnder) { if (params.happy < TUNING.start.happy) dHappy += 1; }
   if (params.conflict >= D.conflictHigh) dHappy -= 1;  // 눌린 부대는 어둡다
   if (params.happy <= D.happyLow) dConflict += 1;      // 불행하면 싸운다
   if (params.happy >= D.happyHigh) dConflict -= 1;     // 행복하면 덜 싸운다

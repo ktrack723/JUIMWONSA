@@ -591,3 +591,40 @@ test('명부는 두 방향으로 틀릴 수 있다 — 낡아서 틀리고, 못 
     PM.inspectGara({ active: [here[1]], known: stale, placeKey: 'storage', intel: 5, on: 'd9', rng: () => 0 }).known,
     stale, '엉뚱한 자리를 털었는데 명부가 고쳐졌다');
 });
+
+// ── 하루의 이동량 상한 — 판정도 드리프트와 같은 속도 제한을 받는다 ──
+test('사건이 몇 건이 나든 하루의 총 이동은 축마다 한 칸이다', () => {
+  const dawn = { gara: 4, happy: 5, conflict: 3, rep: 5 };
+  // 사건 다섯 건이 전부 가라를 올린 하루
+  let p = { ...dawn };
+  for (let i = 0; i < 5; i++) p = PM.applyDirections(p, { gara: 'up', happy: 'down', conflict: 'up' });
+  assert.equal(p.gara, 9, '전제 확인 — 판정만으로는 다섯 칸이 뛴다');
+  const capped = PM.capDay(p, dawn);
+  assert.equal(capped.gara, dawn.gara + 1);
+  assert.equal(capped.happy, dawn.happy - 1);
+  assert.equal(capped.conflict, dawn.conflict + 1);
+});
+
+test('한 칸 안에서 움직인 날은 상한이 아무것도 안 건드린다', () => {
+  const dawn = { gara: 4, happy: 5, conflict: 3, rep: 5 };
+  const one = PM.applyDirections(dawn, { gara: 'up', happy: 'same', conflict: 'down' });
+  assert.deepEqual(PM.capDay(one, dawn), one);
+  // 평판은 판정이 못 건드리지만, 개입으로 여러 칸 깎인 날은 그대로 둬야 한다 —
+  // 상한은 「하루 한 걸음」 규칙이지 평판 환불이 아니다… 평판도 같은 규칙을 받는다.
+  const spent = PM.applyIntervention(PM.applyIntervention(PM.applyIntervention(dawn)));
+  assert.equal(spent.rep, 2);
+  assert.equal(PM.capDay(spent, dawn).rep, 4, '평판도 하루 한 걸음으로 묶인다');
+});
+
+test('달력은 제자리를 넘어서 밀지 않는다 — 계절이 한 축을 죽이지 않게', () => {
+  const S = PM.TUNING.start;
+  // 힘든 날: 갈등이 평소보다 높을 때만 눌러 준다
+  const high = PM.applyDrift({ gara: 5, happy: 5, conflict: S.conflict + 2, rep: 5 }, 9, { interventions: 1, baseline: 8 });
+  assert.equal(high.conflict, S.conflict + 1, '평소보다 높은 갈등이 안 눌렸다');
+  const atRest = PM.applyDrift({ gara: 5, happy: 5, conflict: S.conflict, rep: 5 }, 9, { interventions: 1, baseline: 8 });
+  assert.equal(atRest.conflict, S.conflict, '힘든 날이 갈등을 평소 아래로 밀었다');
+  // 여름 평일을 40일 이어 붙여도 갈등 축이 안 죽는다
+  let p = PM.initialParams();
+  for (let d = 0; d < 40; d++) p = PM.applyDrift(p, 9, { interventions: 1, baseline: 8 });
+  assert.equal(p.conflict, S.conflict, `계절이 갈등을 ${p.conflict}까지 밀었다 — 축이 죽으면 큰 사고의 문이 안 열린다`);
+});
