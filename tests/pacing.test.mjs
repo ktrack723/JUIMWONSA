@@ -102,3 +102,39 @@ test('없는 속도 키는 무시하고 쓰던 속도를 유지한다', () => {
   const before = pace.getPace();
   assert.equal(pace.setPace('그런속도없음'), before);
 });
+
+// ── 일과 세우기 / 재개 ───────────────────────────────────
+// ⏸ 버튼이 오래도록 **예약 토글**이기만 했다. 사람은 이걸 재생/일시정지로 읽는데,
+// 멈춘 상태에서 누르면 아무 일도 안 일어났다(재개는 개입 콘솔 안쪽에만 있었다).
+// 게다가 그 헛누름이 세우기를 다시 예약해서, 콘솔을 닫으면 한 칸 가고 또 섰다.
+// 브라우저로 재현한 뒤 갈래를 여기로 옮겨 왔다 — 화면은 DOM만 만진다.
+test('멈춰 있을 때 누르면 재개다 — 이 갈래가 없어서 버튼이 죽어 있었다', () => {
+  const r = pace.holdPress(pace.HOLD.held);
+  assert.equal(r.act, 'resume', '멈춘 채로 눌렀는데 재개가 아니다');
+  assert.equal(r.state, pace.HOLD.idle, '재개했는데 세우기가 남아 있다 — 다음 슬롯에서 또 선다');
+});
+
+test('버튼 하나가 셋을 다 맡는다 — 예약 · 취소 · 재개', () => {
+  const arm = pace.holdPress(pace.HOLD.idle);
+  assert.deepEqual(arm, { state: pace.HOLD.armed, act: 'arm' });
+  const off = pace.holdPress(pace.HOLD.armed);
+  assert.deepEqual(off, { state: pace.HOLD.idle, act: 'disarm' });
+  // 어느 상태에서 눌러도 다음 상태가 셋 안에 있다 — 빠진 칸이 그때 그 버그였다
+  for (const st of Object.values(pace.HOLD)) {
+    const next = pace.holdPress(st);
+    assert.ok(Object.values(pace.HOLD).includes(next.state), `${st}에서 상태 밖으로 나갔다`);
+    assert.ok(['arm', 'disarm', 'resume'].includes(next.act), `${st}에서 모르는 동작: ${next.act}`);
+  }
+  // 모르는 값이 들어와도 죽지 않고 예약으로 떨어진다(저장분·초기화 순서)
+  assert.equal(pace.holdPress(undefined).act, 'arm');
+});
+
+test('상태가 버튼 글자에 나온다 — 누르기 전에 무엇이 될지 보여야 한다', () => {
+  const labels = Object.values(pace.HOLD).map(pace.holdLabel);
+  assert.equal(new Set(labels).size, labels.length, '두 상태의 글자가 같다');
+  assert.match(pace.holdLabel(pace.HOLD.held), /재개/, '멈춘 상태인데 버튼이 재개라고 안 한다');
+  assert.match(pace.holdLabel(pace.HOLD.idle), /세우기/);
+  // 재개는 화면이 통째로 바뀌므로 토스트가 필요 없다 — 예약·취소만 말한다
+  assert.equal(pace.holdToast('resume'), null);
+  assert.ok(pace.holdToast('arm') && pace.holdToast('disarm'));
+});

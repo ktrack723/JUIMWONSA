@@ -34,8 +34,8 @@ const state = {
   roster: null,
   engine: null,
   screen: 'boot',
-  holdWanted: false,     // ⏸ 눌림 — 다음 슬롯 경계에서 선다
-  holdRelease: null,     // 개입 콘솔이 닫힐 때 부르는 손잡이
+  hold: pace.HOLD.idle,  // idle · armed(다음 슬롯에서 선다) · held(지금 서 있다)
+  holdRelease: null,     // 서 있는 일과를 다시 굴리는 손잡이
   interviewHandle: null, // 진행 중인 면담 왕복 손잡이
   stage: null,           // 일과 무대 (three.js). WebGL이 없으면 null인 채로 돈다
 };
@@ -822,6 +822,11 @@ function makeHandlers() {
 
 async function runOneDay() {
   panel('#dayend-panel', false);
+  // 앞의 하루가 선 채로 끝났으면(회선 오류 뒤 재시도 따위) 죽은 손잡이가 남는다.
+  // 그대로 두면 버튼이 「재개」라고 쓰인 채 아무것도 안 하는 물건이 된다 — 여기서 턴다.
+  state.holdRelease = null;
+  setHold(pace.HOLD.idle);
+  panel('#intervene-panel', false);
   try {
     await state.engine.runDay();
   } catch (e) {
@@ -967,21 +972,38 @@ function askDirective() {
 }
 
 // ── ⏸ 개입 게이트 ──────────────────────────────────────
+/**
+ * 슬롯 경계. 세우기가 예약돼 있으면 여기서 서고, 재개될 때까지 엔진이 기다린다.
+ * 서는 것과 푸는 것이 **버튼 하나**로 다 되는 것이 요점이다 — 예전에는 세우는 버튼과
+ * 푸는 버튼이 따로였고, 멈춘 채 세우기 버튼을 누르면 아무 일도 안 일어났다(pacing.js).
+ */
 function holdGate() {
-  if (!state.holdWanted) return Promise.resolve();
-  state.holdWanted = false;
-  $('#btn-hold').classList.remove('armed');
+  if (state.hold !== pace.HOLD.armed) return Promise.resolve();
+  setHold(pace.HOLD.held);
   panel('#intervene-panel', true);
   renderInspectClock();
   renderCost();
   showIvTab('interview');
   return new Promise(resolve => { state.holdRelease = resolve; });
 }
+
+/** 서 있던 일과를 다시 굴린다. 서 있지 않으면 아무 일도 안 한다. */
 function releaseHold() {
   panel('#intervene-panel', false);
   closeInterview();
+  setHold(pace.HOLD.idle);
   const f = state.holdRelease; state.holdRelease = null;
   if (f) f();
+}
+
+/** 상태를 옮기고 버튼 글자를 맞춘다. 상태가 글자에 안 나오면 누르기 전에는 알 수가 없다. */
+function setHold(next) {
+  state.hold = next;
+  const btn = $('#btn-hold');
+  if (!btn) return;
+  btn.textContent = pace.holdLabel(next);
+  btn.classList.toggle('armed', next === pace.HOLD.armed);
+  btn.classList.toggle('danger', next === pace.HOLD.held);
 }
 function showIvTab(tab) {
   for (const t of ['interview', 'inspect', 'notice']) panel(`#iv-${t}`, t === tab);
@@ -1199,12 +1221,18 @@ function wire() {
   pace.attachSkip($('#screen-day'));
   pace.onWaitChange(v => $('#day-advance').classList.toggle('on', v));
 
+  // 버튼 하나가 셋을 다 맡는다 — 세우기 예약 · 예약 취소 · **재개**.
+  // 마지막 갈래가 없어서 멈춘 채로 누르면 아무 일도 안 일어났고, 그 헛누름이 조용하지도
+  // 않았다: 세우기가 다시 예약돼서 콘솔을 닫자마자 한 칸 가고 또 섰다.
   $('#btn-hold').addEventListener('click', () => {
     sfx.click();
-    state.holdWanted = !state.holdWanted;
-    $('#btn-hold').classList.toggle('armed', state.holdWanted);
-    toast(state.holdWanted ? '다음 슬롯 경계에서 일과가 선다.' : '세우기 취소.');
+    const { state: next, act } = pace.holdPress(state.hold);
+    if (act === 'resume') { releaseHold(); return; }
+    setHold(next);
+    const msg = pace.holdToast(act);
+    if (msg) toast(msg);
   });
+  setHold(pace.HOLD.idle);
   $$('.iv-tab').forEach(b => b.addEventListener('click', () => { sfx.click(); showIvTab(b.dataset.tab); }));
   $('#btn-intervene-close').addEventListener('click', () => { sfx.click(); releaseHold(); });
   $('#btn-interview-send').addEventListener('click', doInterview);
