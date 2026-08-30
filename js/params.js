@@ -7,6 +7,7 @@
 //   · 장소-파라미터 대응표 (불시점검이 어느 파라미터를 드러내는가)
 //   · 사건 후보 풀과 심각도 티어 (LLM은 장면만 쓴다 — 풀 밖 창작은 없다)
 //   · 사고 유형 열둘과 유형별 그림 자리 (사건이 확전하면 유형이 넘어가는 표까지)
+//   · 부재 규칙 (어느 유형의 사고가 병사를 며칠 빼내는가 — 탈영은 사라지고 부상은 입원한다)
 //   · 날짜 규칙 (부임일 = 오늘 − 100일 · 계절 · 주말)
 //   · 파라미터 → 5단계 밴드 변환 (수치는 프롬프트에 절대 안 나간다)
 //
@@ -104,6 +105,24 @@ export const TUNING = {
   // 머리 좋은 부대일수록 잘 숨긴다. 공군의 병사간 룰이 이미 그렇게 적혀 있다
   // (「단체 채팅방에서 한 명만 빼고 방을 새로 파는 식이라 표가 안 난다」).
   gara: { spotBase: 1.1, spotIntelPer: 0.07, spotFloor: 0.3, spotCeil: 0.95 },
+
+  // 사고가 사람을 데려간다 — 확전한 사건은 연루자 하나를 부대에서 실제로 빼낸다.
+  // 카운터만 0으로 돌리는 사고는 종이 위의 일이었다. 탈영은 그 자리를 비우고,
+  // 부상은 병원으로 보낸다 — 남은 열다섯으로 며칠을 버티는 것이 사고의 값이다.
+  // days는 [최소, 최대] 복귀일까지의 일수. 굴림은 게임 난수를 쓴다.
+  absence: {
+    rules: {
+      absent:   { kind: 'awol',     days: [4, 14] },  // 군무이탈 — 헌병대가 데려오거나 제 발로 온다
+      selfharm: { kind: 'hospital', days: [7, 21] },  // 신상 — 국군병원 보호입원
+      injury:   { kind: 'hospital', days: [3, 10] },  // 부상 — 의무대·후송
+      vehicle:  { kind: 'hospital', days: [5, 14] },
+      blast:    { kind: 'hospital', days: [5, 14] },
+      health:   { kind: 'hospital', days: [2, 7] },
+    },
+    // 사건당 몇 명이 빠지는가. 연루자가 여럿이어도 실려 가는 것은 하나다 —
+    // 족구를 같이 했다고 둘 다 입원하지는 않는다.
+    perIncident: 1,
+  },
 
   roster: { size: 16 },
   goal: 100,   // 무사고 연속 100일
@@ -428,6 +447,36 @@ export function inspectGara({ active, known = [], placeKey, intel, on, rng = Mat
   const next = kept.filter(k => !spotted.includes(k.id));
   for (const id of spotted) next.push({ id, on });
   return { spotted, missed: here.filter(id => !spotted.includes(id)), known: next };
+}
+
+// ── 부재 — 사고가 데려간 사람이 어디에 있는가 ──────────────
+// 유형 열둘 중 여섯만 사람을 빼낸다(TUNING.absence.rules). 나머지는 징계·행정이라
+// 부대 안에서 끝난다 — 폰 걸린 놈이 사라지지는 않는다.
+// en은 프롬프트로 나가는 표기다(브리핑에 「지금 없는 사람」으로 실린다 — §9.4).
+export const ABSENCE_KINDS = {
+  hospital: {
+    label: '입원', icon: '🏥', where: '국군병원',
+    en: 'in a military hospital after the accident',
+    line: (name, until) => `${name}은(는) 국군병원으로 후송됐다. 복귀 예정 ${until}.`,
+    back: name => `${name} 퇴원 복귀 신고. 명부에 다시 오른다.`,
+  },
+  awol: {
+    label: '이탈', icon: '🚪', where: '부대 밖',
+    en: 'absent without leave — gone from the unit',
+    line: (name, until) => `${name}은(는) 부대에 없다. 군무이탈 보고가 올라갔다 — 복귀 예정 ${until}.`,
+    back: name => `${name} 복귀. 조사는 조사대로 남지만, 우선 인원은 채워졌다.`,
+  },
+};
+
+/**
+ * 이 사고가 사람을 빼내는가. 빼낸다면 며칠인가.
+ * 유형(열둘 중 하나)만 보고 정한다 — 판정 호출은 늘지 않는다. 폭은 언제나 코드다.
+ */
+export function absenceFor(categoryId, rng = Math.random) {
+  const rule = TUNING.absence.rules[categoryId];
+  if (!rule) return null;
+  const [lo, hi] = rule.days;
+  return { kind: rule.kind, days: lo + Math.floor(rng() * (hi - lo + 1)) };
 }
 
 // ── 사건 풀 — 후보와 심각도는 코드가 뽑고, LLM은 장면만 쓴다 ──
