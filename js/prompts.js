@@ -82,6 +82,8 @@ ${unit.soldierRules}
 ${unit.intel.desc}
 [THE BLOOD — how macho this population is]
 ${unit.macho.desc}
+[THE BOND — how much these men actually have each other's backs]
+${unit.comrade.desc}
 [THE SONGS — what this unit's music is, and how it reaches the soldiers]
 ${unit.songMode === 'chorus'
     ? 'Sung out loud, by the throat, in formation. Getting the words wrong in front of everyone is its own small disaster.'

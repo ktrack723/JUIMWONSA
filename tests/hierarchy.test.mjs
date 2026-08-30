@@ -19,7 +19,7 @@ import * as P from '../js/prompts.js';
 // ── 표식 부대·병사·입력 ─────────────────────────────────
 const M = {
   cult: 'CULT표식', regs: 'REGS표식', srules: 'SRULES표식',
-  intelDesc: 'INTELDESC표식', machoDesc: 'MACHODESC표식',
+  intelDesc: 'INTELDESC표식', machoDesc: 'MACHODESC표식', comradeDesc: 'BONDDESC표식',
   sheet: 'SHEET표식', othersheet: 'NEWCOMER표식',   // ⚠ 표식끼리 서로를 품으면 안 된다
   bandGara: 'BANDGARA표식', bandHappy: 'BANDHAPPY표식', bandConf: 'BANDCONF표식', bandDiff: 'BANDDIFF표식',
   feltRoom: 'FELTROOM표식', feltWork: 'FELTWORK표식', spirit: 'SPIRITBAND표식',
@@ -33,6 +33,7 @@ const unit = {
   culture: M.cult, rules: M.regs, soldierRules: M.srules,
   intel: { score: 7, desc: M.intelDesc },
   macho: { score: 9, desc: M.machoDesc },
+  comrade: { score: 4, desc: M.comradeDesc },
   difficulty: 8, serviceMonths: 18, serial: { branchCode: '3', seqBase: 70000000 },
   cohort: { base: 1300, at: '2023-11' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
   jobs: ['j'],
@@ -305,6 +306,7 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
     id: 'ascii', name: 'Fort Probe', branch: 'Navy', desc: 'a probe unit',
     culture: 'old and proud', rules: 'no phones', soldierRules: 'juniors clean',
     intel: { score: 5, desc: 'sharp enough' }, macho: { score: 5, desc: 'mild' },
+    comrade: { score: 5, desc: 'they get along' },
     difficulty: 5, serviceMonths: 18, serial: { branchCode: '5', seqBase: 20000000 },
     cohort: { base: 800, at: '2020-01' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
     jobs: ['cook'],

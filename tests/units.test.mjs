@@ -14,7 +14,7 @@ test('구현 대상 부대는 해병 성채 · 공군 체계단 둘이다', () =
   assert.deepEqual(names, ['공군 체계단', '해병 성채']);
 });
 
-test('부대마다 다섯 절이 전부 있다 — ①문화 ②규정 ③병사간 룰 ④지능 ⑤마초', () => {
+test('부대마다 여섯 절이 전부 있다 — ①문화 ②규정 ③병사간 룰 ④지능 ⑤마초 ⑥전우애', () => {
   for (const u of UNITS) {
     for (const f of ['culture', 'rules', 'soldierRules']) {
       assert.ok(u[f].trim().length >= 20, `${u.id}.${f} 절이 부실하다`);
@@ -41,7 +41,7 @@ test('④⑤는 수치+서술 한 쌍이다 — 기획서의 초기 데이터 �
 
 test('스키마 밖 필드가 없다 — 검증은 로드 시 이미 죽였겠지만, 목록도 못박는다', () => {
   assert.deepEqual([...UNIT_FIELDS].sort(), [
-    'branch', 'cohort', 'culture', 'desc', 'difficulty', 'id', 'intel', 'jobs',
+    'branch', 'cohort', 'comrade', 'culture', 'desc', 'difficulty', 'id', 'intel', 'jobs',
     'macho', 'name', 'nameStyle', 'rankMonths', 'rules', 'serial', 'serviceMonths',
     'soldierRules', 'songMode', 'songSlots', 'songs',
   ]);
@@ -173,5 +173,39 @@ test('llm.js가 아는 업자 전부에 저가 모델이 배정돼 있다', asyn
     assert.ok(cheapPrice, `저가 모델 ${cheap}의 단가를 가격표가 모른다`);
     assert.ok(cheapPrice[0] < basePrice[0],
       `${provider}의 저가 모델 ${cheap}($${cheapPrice[0]})이 기본 모델($${basePrice[0]})보다 안 싸다`);
+  }
+});
+
+// ── ⑥ 전우애 — 빡센 부대일수록 높다 ─────────────────────
+test('전우애는 수치+서술 한 쌍이고 0~10이다', () => {
+  for (const u of UNITS) {
+    assert.ok(u.comrade.score >= 0 && u.comrade.score <= 10, `${u.id}: 전우애가 눈금 밖이다`);
+    assert.ok(u.comrade.desc.length > 5, `${u.id}: 전우애 서술이 없다`);
+  }
+});
+
+test('빡센 부대일수록 전우애가 높다 — 일과 난이도와 같이 간다', () => {
+  const byHard = UNITS.slice().sort((a, b) => a.difficulty - b.difficulty);
+  for (let i = 1; i < byHard.length; i++) {
+    assert.ok(byHard[i].comrade.score >= byHard[i - 1].comrade.score,
+      `${byHard[i].id}가 더 빡센데 전우애가 낮다 — 규칙이 뒤집혔다`);
+  }
+  // 두 부대의 실제 값
+  assert.equal(UNIT_BY_ID['marine-fort'].comrade.score, 10);
+  assert.equal(UNIT_BY_ID['airforce-sys'].comrade.score, 2);
+});
+
+test('④⑤⑥의 수치는 프롬프트에 안 나간다 — 서술만 간다', async () => {
+  const P = await import('../js/prompts.js');
+  // 부대 프롬프트에는 복무기간·연도 같은 정당한 숫자가 있다(문화·규정 원문).
+  // 그러니 「숫자가 없다」로는 못 잰다. **수치만 바꿔도 프롬프트가 바이트 동일한가**로 잰다 —
+  // 그게 「수치는 코드로, 서술은 프롬프트로」를 직접 증명하는 방법이다.
+  for (const u of UNITS) {
+    const base = P.unitPrompt(u);
+    assert.ok(base.includes(u.comrade.desc), `${u.id}: 전우애 서술이 프롬프트에 없다`);
+    for (const f of ['intel', 'macho', 'comrade']) {
+      const bumped = P.unitPrompt({ ...u, [f]: { ...u[f], score: u[f].score === 10 ? 0 : 10 } });
+      assert.equal(bumped, base, `${u.id}: ${f} 수치가 프롬프트에 샌다`);
+    }
   }
 });

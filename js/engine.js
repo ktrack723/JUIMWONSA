@@ -334,7 +334,8 @@ export class Engine {
         });
 
         const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.soldiers) }, {
-          intel: this.unit.intel.score, macho: this.unit.macho.score, difficulty: effDiff,
+          intel: this.unit.intel.score, macho: this.unit.macho.score,
+          comrade: this.unit.comrade.score, difficulty: effDiff,
         }, slot.kind, this.rng);
         if (!roll) continue;
 

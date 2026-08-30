@@ -1,12 +1,17 @@
 // units.js — 부대 프롬프트 대장. couples.js 포지션 — 전부 손으로 쓴 고정 데이터다.
 //
-// 군마다 다른 것은 단 하나, 이 부대 프롬프트다. 다섯 절(①문화 ②규정 ③병사간 룰
-// ④지능 ⑤마초)이 병사의 생활을 뽑아내는 엔진의 재료로 들어가고, 신규 전입 병사의
-// 프로필을 뽑을 때도 들어간다.
+// 군마다 다른 것은 단 하나, 이 부대 프롬프트다. 여섯 절(①문화 ②규정 ③병사간 룰
+// ④지능 ⑤마초 ⑥전우애)이 병사의 생활을 뽑아내는 엔진의 재료로 들어가고, 신규 전입
+// 병사의 프로필을 뽑을 때도 들어간다.
 //
-// ④·⑤는 수치+서술 한 쌍이다 — **서술은 프롬프트로, 수치는 코드로** 간다.
-// 지능·마초는 생성 텍스트의 말투를 정하는 동시에 사고 확률 공식(params.js)의 입력이다.
+// ④·⑤·⑥은 수치+서술 한 쌍이다 — **서술은 프롬프트로, 수치는 코드로** 간다.
+// 셋 다 생성 텍스트의 말투를 정하는 동시에 사고 확률 공식(params.js)의 입력이다.
 // 같은 원천에서 한 번만 정의한다. 수치가 프롬프트 문자열에 새면 테스트가 깨진다.
+//
+// ⑥전우애는 부대의 **완충재**다. 빡세게 같이 구른 부대일수록 높고, 편한 부대일수록 낮다.
+// 낮을수록 작은 갈등이 그대로 사건이 되고, 사건이 큰 사고로 번지는 문턱도 앞당겨진다
+// (params.js의 comradeEffect). 그래서 두 부대가 서로 다른 방식으로 위험해진다 —
+// 빡센 쪽은 잔사고가 잦고(마초·난이도), 편한 쪽은 잔사고가 드문 대신 한 번에 무너진다.
 //
 // 셋째 군은 이 파일에 항목 하나를 더하는 것으로 끝나야 한다.
 // **코드 어디에도 특정 부대를 아는 분기를 두지 않는다.**
@@ -57,6 +62,8 @@ export const UNITS = [
     intel: { score: 4, desc: '머리보다 몸이 먼저 나간다' },
     // ⑤ 마초 — 위와 같다
     macho: { score: 9, desc: '다치는 걸 자랑으로 아는 놈들' },
+    // ⑥ 전우애 — 갈등을 흡수하는 완충재. 높을수록 웬만한 마찰은 자기들끼리 삼킨다
+    comrade: { score: 10, desc: '같이 굴렀으니 같이 덮는다. 치고받고도 저녁이면 같이 담배 피운다' },
     difficulty: 8,          // 일과 난이도 — static. 주임원사가 못 건드린다
     serviceMonths: 18,      // 복무기간 (①의 수치판 — 전역 판정은 코드가 한다)
     // 군번은 전 군 공통으로 「입대연도 두 자리 + 여덟 자리」다. 군을 가르는 것은 표기가
@@ -109,6 +116,7 @@ export const UNITS = [
 겉으로는 전원이 존댓말을 쓰고, 그래서 무슨 일이 있어도 소리가 밖으로 안 샌다.`,
     intel: { score: 8, desc: '수능 다시 보러 온 것 같은 놈들' },
     macho: { score: 2, desc: '체력 검정이 최대 위기' },
+    comrade: { score: 2, desc: '옆자리 군번은 알아도 사람은 모른다. 틀어지면 아무도 안 말린다' },
     difficulty: 3,
     serviceMonths: 21,
     serial: { branchCode: '5', seqBase: 20000000 },
@@ -136,7 +144,7 @@ export const UNITS = [
 // ── 검증 — 스키마 밖의 필드가 생기거나 절이 비면 로드 자체가 죽는다 ──────
 export const UNIT_FIELDS = new Set([
   'id', 'name', 'branch', 'desc', 'culture', 'rules', 'soldierRules',
-  'intel', 'macho', 'difficulty', 'serviceMonths', 'serial', 'jobs',
+  'intel', 'macho', 'comrade', 'difficulty', 'serviceMonths', 'serial', 'jobs',
   'songMode', 'songSlots', 'songs',
   'cohort', 'rankMonths', 'nameStyle',
 ]);
@@ -152,7 +160,7 @@ for (const u of UNITS) {
   for (const f of ['culture', 'rules', 'soldierRules']) {
     if (typeof u[f] !== 'string' || u[f].trim().length < 20) throw new Error(`units.js: ${u.id}.${f} 절이 부실하다`);
   }
-  for (const f of ['intel', 'macho']) {
+  for (const f of ['intel', 'macho', 'comrade']) {
     const v = u[f];
     if (!v || typeof v.score !== 'number' || v.score < 0 || v.score > 10) throw new Error(`units.js: ${u.id}.${f}.score는 0~10이어야 한다`);
     if (typeof v.desc !== 'string' || v.desc.length < 2) throw new Error(`units.js: ${u.id}.${f}.desc 서술이 없다`);

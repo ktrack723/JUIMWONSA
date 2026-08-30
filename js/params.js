@@ -56,6 +56,16 @@ export const TUNING = {
   // 평판 — LLM이 못 건드린다. 개입(면담·점검·공지)마다 −1, 조용한 날 +1 회복.
   rep: { perIntervention: -1, quietDay: +1 },
 
+  // 전우애 — 부대의 완충재. 갈등이 사건·사고로 번지는 것을 흡수한다.
+  // 빡센 부대일수록 높다(같이 굴렀으니까). 편한 부대일수록 낮다 — 서로 남이다.
+  // 중립은 5. 이보다 높으면 문턱이 올라가고 초과분 가중이 줄고, 낮으면 반대다.
+  comrade: {
+    neutral: 5,
+    openPer: 0.4,     // 전우애 1당 큰사고 문턱(갈등)이 이만큼 움직인다
+    bigPer: 0.08,     // 전우애 1당 초과분 가중이 이만큼 (낮을수록 크게 번진다)
+    smallPer: 0.004,  // 전우애 1당 작은사건 위험 (낮을수록 잦다)
+  },
+
   // 계절 보정 — 여름 혹서기·겨울 제설이 일과 난이도에 +1. 주말은 일과 없음.
   season: { summerBonus: 1, winterBonus: 1, weekendDifficulty: 1 },
 
@@ -221,15 +231,36 @@ export const EVENT_POOL = [
 // minMental은 명부에서 제일 낮은 멘탈이다. 갈등이 부대 단위로 여는 큰 사고와 별개로,
 // **한 명이 무너지는 것**도 큰 사고(자해·탈영)를 연다 — 그 한 명이 누구인지가 보이는 게임이라
 // 상담으로 미리 막을 수 있고, 그게 면담의 존재 이유다.
-export function incidentRisk({ gara, conflict, minMental = 10 }, { intel, macho, difficulty }) {
+/**
+ * 전우애가 만드는 완충. 부대 static 축이라 부임 내내 안 변한다.
+ *   open  — 큰 사고가 열리는 갈등 문턱. 전우애가 높을수록 뒤로 밀린다
+ *   scale — 문턱 초과분의 가중 배수. 전우애가 낮을수록 크게 번진다
+ *   small — 작은 사건 위험 가산. 전우애가 낮을수록 잔갈등이 사건이 된다
+ * 전우애를 안 주면(옛 부대 데이터) 중립으로 떨어져 예전 수치가 그대로 나온다.
+ */
+export function comradeEffect(comrade) {
+  const C = TUNING.comrade, R = TUNING.roll;
+  const gap = C.neutral - (comrade ?? C.neutral);   // 중립보다 얼마나 부족한가
+  return {
+    open: R.big.open - gap * C.openPer,
+    scale: Math.max(0, 1 + gap * C.bigPer),
+    small: gap * C.smallPer,
+  };
+}
+
+export function incidentRisk({ gara, conflict, minMental = 10 }, { intel, macho, difficulty, comrade }) {
   const R = TUNING.roll, M = TUNING.mental;
+  const C = comradeEffect(comrade);
   const small = Math.max(0,
     R.base
     + macho * R.machoPer
     + Math.max(0, gara + difficulty - 10) * R.hardSloppyPer
     + Math.max(0, gara - intel) * R.dumbSloppyPer
+    + C.small                                       // 전우애가 얕으면 잔갈등이 사건이 된다
     - (conflict >= R.suppressAt ? R.suppress : 0));
-  const fromConflict = conflict >= R.big.open ? (conflict - R.big.open + 1) * R.big.per : 0;
+  // 전우애가 문턱을 밀고, 넘어선 뒤의 번짐 폭도 정한다 —
+  // 같은 갈등 8이라도 끈끈한 부대에서는 아직 안 열리고, 서로 남인 부대에서는 이미 열려 있다.
+  const fromConflict = conflict >= C.open ? (conflict - C.open + 1) * R.big.per * C.scale : 0;
   const fromMental = minMental <= M.dangerAt ? (M.dangerAt - minMental + 1) * M.dangerPer : 0;
   return { small, big: fromConflict + fromMental, bigCause: fromMental > fromConflict ? 'mental' : 'conflict' };
 }
