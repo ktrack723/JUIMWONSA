@@ -240,7 +240,7 @@ Write the morning briefing and the ambient slot lines.`;
 // 여기 실린다고 플레이어가 그걸 아는 것은 아니다: 장면이 그것을 입 밖에 낼 수도 있고
 // 안 낼 수도 있으며, **확인 명부는 이 호출로는 절대 안 채워진다.** 읽어서 눈치채는 것은
 // 플레이어의 몫이고, 도장을 찍어 주는 것은 여전히 불시점검뿐이다.
-export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [], garaHere = [] }) {
+export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [], garaHere = [], abuseHere = [] }) {
   return `[INCIDENT — the machine rolled one. Write the scene as it is found]
 · when: ${slotLabel}
 · where: ${place}
@@ -252,6 +252,10 @@ ${involved.map(soldierSheet).join('\n\n')}
 [WHAT IS ALREADY BEING CUT HERE — standing practice in this place. Let the incident grow
 out of one of these where it fits naturally; never announce it as a finding]
 ${garaHere.length ? garaHere.map(g => `· ${g}`).join('\n') : '(nothing worth noting — this place is run straight)'}
+[WHAT IS ALREADY BEING DONE BETWEEN THESE MEN — standing, before today. Where a name is
+given, that man is in this scene. Let the incident come out of the relationship that is
+already there; never announce it as a finding]
+${abuseHere.length ? abuseHere.map(a => `· ${a.en}${a.by && a.to ? ` — ${a.by} to ${a.to}` : ''}`).join('\n') : '(nothing standing between them — whatever happens here starts today)'}
 [STANDING NOTICES — directives the sergeant major has posted. They shape how soldiers behave]
 ${notices.length ? notices.map((n, i) => `${i + 1}. ${n}`).join('\n') : '(none posted)'}
 
@@ -359,13 +363,25 @@ ${KO}`;
 
 export const interviewSystem = unit => sys(unit, I1_ROLE);
 
-export function interviewOpen({ soldier, felt, honesty, question }) {
+export function interviewOpen({ soldier, felt, honesty, question, suffered = [], guilty = false }) {
   return `[YOU ARE]
 ${soldierSheet(soldier)}
 [WHAT IT FEELS LIKE FROM WHERE YOU STAND — words for you only, never repeat them]
 · your barracks room lately: ${label(felt.room)}
 · your work detail lately: ${label(felt.work)}
 [HOW MUCH YOU LET HIM IN TODAY] ${label(honesty)}
+[WHAT IS BEING DONE TO YOU — and you have decided, today, to let it out]
+${suffered.length
+    ? suffered.map(x => `· ${x.en}`).join('\n')
+      + `\nSay it. Not as a report and not all at once — the way a man says a thing he has been
+carrying: sideways, understated, one detail too specific to be invented. You are not asking
+for anything. Do not name the man who does it unless he asks you again.`
+    : `(nothing you are willing to put into words today — either there is nothing, or there is
+and you are not saying it. Either way, do not raise it: if he wants it he has to come back)`}
+${guilty ? `[SOMETHING YOU ARE DOING TO SOMEONE ELSE]
+You do it and you know it. **You will not bring it up and you will not admit it** — but it is
+in how you answer: a shade too smooth about how the room is doing, a beat of nothing when he
+asks who has it hard.` : ''}
 
 [THE SERGEANT MAJOR SAYS]
 """
@@ -388,6 +404,13 @@ what is pinned to the wall, who looked at whom. The condition readings arrive as
 repeat the words or any number — convert them into things a career soldier would notice
 and read instantly. No dialogue, no conclusions, no advice: findings only.
 
+[WHAT HE WALKED IN ON — the people, not the paperwork]
+Some findings are not a ledger but a room: a man standing when everyone else is sitting, one
+locker nobody goes near, two of them going quiet at the same moment. When such a thing is
+listed as caught, **write it as the room he walked into** — the posture, the distance between
+two men, who stopped mid-sentence. Do not name anyone, do not narrate what led to it, and do
+not have him intervene. He sees it; that is the whole finding.
+
 [WHAT HE CAUGHT]
 The machine has already decided which corner-cutting he actually catches in the act and
 which stays hidden. Whatever is listed as caught, **show it as physically found** — the
@@ -399,7 +422,7 @@ ${KO}`;
 
 export const inspectSystem = unit => sys(unit, I2_ROLE);
 
-export function inspectUser({ place, readings, found = [], when = null }) {
+export function inspectUser({ place, readings, found = [], caught = [], when = null }) {
   return `[PLACE] ${place}
 [TIME HE WALKED IN] ${when || '(unspecified hour)'}
 [WHAT THIS PLACE CAN REVEAL — words for you only, never repeat them]
@@ -408,6 +431,9 @@ ${Object.entries(readings).map(([k, v]) => `· ${k}: ${label(v)}`).join('\n')}
 ${found.length
     ? found.map(f => `· ${typeof f === 'string' ? f : `${f.en}  [${f.grade}]`}`).join('\n')
     : '(nothing caught — whatever was running here got put away in time, or this hour is simply the wrong hour for it)'}
+
+[CAUGHT BETWEEN THE MEN — show every one of these as the room he walks into]
+${caught.length ? caught.map(c => `· ${c.en}  [${c.grade}]`).join('\n') : '(nothing between the men that showed itself)'}
 
 Write the inspection findings. The hour matters: a room at lights-out is not the same
 room at midday, and what he does not find may simply not happen at this time of day.`;

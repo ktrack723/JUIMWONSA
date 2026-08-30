@@ -1184,6 +1184,23 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .iv-cost .free { color: var(--ok); }
 .iv-cost .cost { color: var(--stamp-deep); }
 
+/* ── 부조리 내역 — 가라 내역의 짝. 다른 것은 하나: 이름이 붙는다 ────── */
+.tier-crime { color: var(--stamp-deep); border-color: var(--stamp); background: #f6e6e4; font-weight: 700; }
+.tier-hazing { color: var(--warn); border-color: var(--warn); background: #f6efdc; }
+.tier-nagging { color: var(--ink-soft); border-color: var(--dlg-edge); }
+.abuse-list li.tier-crime { border-left-color: var(--stamp); }
+.abuse-list li.tier-hazing { border-left-color: var(--warn); }
+.abuse-list li.shut { opacity: .7; }
+.ab-pair {
+  grid-column: 2 / -1; font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--ink-mid); font-weight: 600;
+}
+.ab-pair i { font-style: normal; color: var(--stamp); margin: 0 2px; }
+.iv-told {
+  margin-top: var(--s2); padding: var(--s2); font-size: var(--fs-sm);
+  border-left: 4px solid var(--stamp); background: #f6e6e4;
+}
+
 /* 안 통한 면담 — 평판을 태우고 아무것도 못 얻은 자리. 눈에 띄어야 배운다. */
 .iv-heal.miss { color: var(--stamp-deep); }
 
