@@ -242,6 +242,19 @@ export class Roster {
   }
 
   /** 오늘 등장할 병사들 — 브리핑 명부 발췌용 표본. 부재자는 무대에 없다. */
+  /**
+   * 지금 제일 낮은 놈들. **아침 브리핑이 이걸 본다** — 무작위 넷을 보여 주면 산문이 명부에
+   * 대해 거짓말을 한다(실측: 브리핑이 「오만근이 새벽까지 화면 켜 놓고 앉아 있다」를 썼는데
+   * 그 놈 멘탈은 6이었다. 그 부대에서 실제로 무너지고 있던 것은 다른 놈이었다).
+   * 브리핑이 쓰는 것은 **부대의 증상**이고, 증상은 제일 아픈 데서 나온다.
+   */
+  lowestMental(n, fallback = 6) {
+    return this.present
+      .slice()
+      .sort((a, b) => (a.mental ?? fallback) - (b.mental ?? fallback))
+      .slice(0, n);
+  }
+
   sample(n, rng = Math.random) {
     const pool = this.present;
     const picked = [];

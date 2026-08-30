@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { Engine } from '../js/engine.js';
 import { Roster } from '../js/roster.js';
 import { AmbientPool } from '../js/ambient.js';
-import { TUNING, INCIDENT_CATEGORIES, absenceFor, incidentRisk, PLACES } from '../js/params.js';
+import { TUNING, INCIDENT_CATEGORIES, absenceFor, incidentRisk, PLACES, SLOT_KEYS } from '../js/params.js';
 import { RECRUIT_SCHEMA as P_RECRUIT } from '../js/prompts.js';
 
 // ── 가짜 LLM — label로 갈라 결정적 응답을 준다 ──────────
@@ -145,7 +145,7 @@ test('브리핑 user에는 밴드 라벨이 실리고 원수치는 실리지 않
 // ── 2일차: 사건 → 확전(사고) ────────────────────────────
 // rng 소비 순서: 명부 표본 4 → 슬롯 롤들. 슬롯2(오전일과)에서 0.001로 사건을 켠다.
 const incidentRng = () => seqRng([
-  0.999, 0.999, 0.999, 0.999,   // sample(4)
+  // 브리핑 명부 발췌는 난수를 안 쓴다 — 제일 낮은 넷은 굴리는 게 아니라 고르는 것이다.
   0.999, 0.999,                 // 아침점호 · 아침식사 롤
   0.001,                        // 오전일과 롤 — 사건 발생
   0.001,                        // 보고 롤 — 올라온다 (표식부대는 중립이라 0.95)
@@ -154,7 +154,6 @@ const incidentRng = () => seqRng([
 
 /** 같은 사건인데 **안 올라가는** 날. 보고 롤만 뒤집는다 — 그 한 칸이 이 게임의 절반이다. */
 const buryRng = () => seqRng([
-  0.999, 0.999, 0.999, 0.999,
   0.999, 0.999,
   0.001,                        // 사건 발생
   0.99,                         // 보고 롤 — 안 올라간다
@@ -225,6 +224,95 @@ test('판정이 민 가라는 그날 안에서는 살아 있다 — 되돌리는
   await engine.runDay();
   assert.equal(seen[0], dawn + 1, '판정 직후에 가라가 안 올랐다 — 그날의 사고 롤이 이걸 본다');
   assert.equal(state.params.gara, dawn + 1, '움직인 축이 그날 저녁에 제자리로 끌려갔다');
+});
+
+// ── 임기 — 100일이면 끝난다. 진급이든 아니든 ──────────────
+test('100일이 지나면 임기가 끝난다 — 예전에는 진급할 때까지 무한히 굴러갔다', async () => {
+  const { engine, state } = fixture({ rng: seqRng([0.999]) });
+  state.day = TUNING.goal - 1;
+  state.streak = 3;              // 사고를 여러 번 낸 임기
+  state.accidents = [{ date: '2026-06-01' }, { date: '2026-07-01' }];
+  const snap = await engine.runDay();
+  assert.equal(state.over, true, '임기 만료일이 지났는데 안 끝났다');
+  assert.equal(state.promoted, false, '무사고 100일이 아닌데 진급했다');
+  assert.equal(snap.over, true, '화면이 임기 종료를 못 받았다');
+});
+
+test('무사고 100일은 여전히 진급이다 — 완봉의 자리는 안 건드렸다', async () => {
+  const { engine, state } = fixture({ rng: seqRng([0.999]) });
+  state.day = TUNING.goal - 1;
+  state.streak = TUNING.goal - 1;
+  const snap = await engine.runDay();
+  assert.equal(snap.promoted, true);
+  assert.equal(snap.over, true, '진급한 날도 임기는 끝난다');
+});
+
+test('최장 무사고 연속은 안 돌아간다 — 카운터가 0이 돼도 갔던 자리는 남는다', async () => {
+  const { engine, state } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  state.streak = 42;
+  await engine.runDay();
+  assert.equal(state.streak, 0, '사고인데 카운터가 안 0이 됐다');
+  assert.equal(state.record.bestStreak, 42, '갔던 자리가 안 남았다 — 심사가 보는 것이 그거다');
+});
+
+test('임기 장부가 끊은 것을 센다 — 그전에는 아무도 안 세어 줬다', async () => {
+  const { engine, state } = fixture({ garaRng: () => 0 });
+  state.gara.active = GARA.GARA_IDS.slice();
+  state.params.gara = 10;
+  const before = { ...state.record };
+  await engine.inspect('barracks');
+  assert.equal(state.record.inspects, before.inspects + 1, '점검 횟수가 안 늘었다');
+  assert.ok(state.record.garaCut >= before.garaCut, '끊은 관행이 거꾸로 갔다');
+});
+
+// ── 낌새 — 코드가 고르고 브리핑이 흘린다 ──────────────────
+test('아침마다 낌새가 하나 굴러 나오고, 자리와 시간만 프롬프트로 간다', async () => {
+  const { llm, engine, state } = fixture({ rng: seqRng([0.999]), garaRng: () => 0.5 });
+  await engine.runDay();
+  const lead = state.lead;
+  assert.ok(lead, '돌고 있는 것이 있는데 낌새가 안 나왔다');
+  assert.ok(PLACES[lead.place], `자리가 대응표 밖이다: ${lead.place}`);
+  assert.ok(SLOT_KEYS.includes(lead.slot), `시간대가 슬롯 밖이다: ${lead.slot}`);
+
+  const brief = llm.byLabel('아침 브리핑')[0].messages[0].content;
+  assert.ok(brief.includes('SOMETHING IN THE AIR'), '브리핑에 낌새 절이 없다');
+  assert.ok(brief.includes(PLACES[lead.place].label), '낌새의 자리가 프롬프트에 없다');
+  // **무엇이 도는지는 절대 안 나간다** — 그걸 주면 들이닥칠 이유가 사라진다
+  for (const id of state.gara.active) {
+    assert.ok(!brief.includes(GARA.GARA_BY_ID[id].en), `낌새가 관행의 정체를 흘렸다: ${id}`);
+  }
+  // 참/거짓도 안 나간다 — 브리핑이 알면 말투에서 샌다
+  assert.ok(!/sound|true|false/i.test(brief.split('SOMETHING IN THE AIR')[1].split('Write the morning')[0]),
+    '낌새가 참인지 거짓인지를 프롬프트가 알고 있다');
+  assert.equal(engine.snapshot().lead.sound, undefined, '화면이 참·거짓을 받았다');
+});
+
+test('아무것도 안 돌거나 이미 다 아는 부대는 낌새가 없다 — 없는 말을 지어내지 않는다', async () => {
+  const { llm, engine, state } = fixture({ rng: seqRng([0.999]) });
+  state.params.gara = 0;
+  state.gara.active = [];
+  state.abuse.active = [];
+  state.params.conflict = 0;
+  await engine.runDay();
+  assert.equal(state.lead, null, '빈 부대에서 낌새가 나왔다');
+  const brief = llm.byLabel('아침 브리핑')[0].messages[0].content;
+  assert.ok(brief.includes('do not invent one'), '없을 때 지어내지 말라는 금지가 없다');
+});
+
+test('브리핑이 보는 넷은 제일 낮은 넷이다 — 산문이 아픈 사람을 찾을 수 있어야 한다', async () => {
+  const { llm, engine, roster } = fixture({ rng: seqRng([0.999]) });
+  const worst = roster.present[7];
+  worst.mental = 1;
+  roster.save();
+  await engine.runDay();
+  const brief = llm.byLabel('아침 브리핑')[0].messages[0].content;
+  const block = brief.split('THE FOUR LOWEST MEN')[1];
+  assert.ok(block, '발췌 절이 없다');
+  assert.ok(block.includes(worst.name), '제일 낮은 놈이 브리핑에 안 실렸다');
+  assert.ok(block.includes('spirit:'), '멘탈 밴드가 안 실렸다 — 그러면 산문이 아무나 아프게 쓴다');
 });
 
 // ── 안 올라간 사건 — 이 게임에서 화면도 콜도 없는 유일한 사건 ──────
@@ -1411,7 +1499,7 @@ test('수습된 사건과 징계 유형의 사고는 아무도 데려가지 않�
   // 징계 유형(경계 실패·규정위반 따위)은 사고가 돼도 부대 안에서 끝난다 —
   // 폰 걸린 놈이 사라지지는 않는다. 취침 슬롯에서 사건을 열어 뽑는다.
   const disc = fixture({
-    rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.001, 0, 0]),
+    rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.999, 0.001, 0, 0]),
     judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
   });
   disc.engine._directive = null;

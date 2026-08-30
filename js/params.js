@@ -378,7 +378,16 @@ export const TUNING = {
   },
 
   roster: { size: 16 },
-  goal: 100,   // 무사고 연속 100일
+  goal: 100,   // 임기 100일 = 무사고 목표 100일. 둘이 같은 수인 것이 이 게임의 전부다
+  // 임기 심사의 눈금. 사고 건수가 먼저 읽히고, 최장 무사고 연속이 그 다음이다.
+  // 실측(100일 방치): 두 부대 다 사고 3건대 → 방치는 전출이다. 매일 점검한 해병은 1.4건 →
+  // 유임에 닿는다. **플레이가 결말을 바꾸는 폭**이 여기 있어야 해서 눈금을 그 사이에 뒀다.
+  review: { retainAccidents: 2, retainStreak: 50, transferAccidents: 5 },
+
+  // 낌새 — 아침에 도는 말. 매일 오지 않는다(pickLead의 주석이 이유를 든다).
+  // base 0.3에 등급 1당 +0.2 → 가벼운 것만 도는 부대는 사흘에 한 번, 재판급·형사건이
+  // 돌고 있는 부대는 이틀에 한 번 넘게 말이 돈다. 위험한 부대일수록 단서가 잦다.
+  lead: { base: 0.3, perRank: 0.2, ceil: 0.7, rankWeight: 1.5 },
 };
 
 // ── 밴드 — 숨은 파라미터는 프롬프트에 수치로 들어가지 않는다 ──────
@@ -441,7 +450,13 @@ export function effectiveDifficulty(baseDifficulty, iso) {
   return clamp(baseDifficulty + bonus);
 }
 /** 진급 심사일 — 지금부터 무사고로 완주하면 심사를 받는 날. 터뜨릴수록 미래로 밀린다. */
-export const reviewDate = (currentDate, streak) => dateAdd(currentDate, TUNING.goal - streak);
+/**
+ * 심사일 — **임기 만료일이다. 안 움직인다.**
+ * 예전에는 `오늘 + (100 − 무사고연속)`이었다: 「지금부터 아무 일도 없으면 진급하는 날」.
+ * 그 날짜는 사고가 날 때마다 미래로 밀렸고, 밀리는 것에 끝이 없었다. 임기가 100일로
+ * 닫힌 뒤로 그 셈은 뜻이 없다 — 심사는 그날 열리고, 갈리는 것은 성적이다.
+ */
+export const reviewDate = (startDate, _streak) => dateAdd(startDate, TUNING.goal);
 
 // ── 일과 타임라인 — 슬롯 아홉 ─────────────────────────────
 // kind는 사고 롤 보정(roll.slotMult)의 열쇠다. 주말에는 일과 슬롯이 개인정비로 바뀐다.
@@ -461,6 +476,7 @@ export const SLOTS = [
   { key: 'sleep', label: '수면', kind: 'sleep', time: '22:30', at: 'barracks' },
 ];
 export const SLOT_KEYS = SLOTS.map(s => s.key);
+export const SLOT_BY_KEY = Object.fromEntries(SLOTS.map(s => [s.key, s]));
 
 export function slotsFor(iso) {
   const weekend = isWeekend(iso);
@@ -1312,6 +1328,72 @@ export function inspectGara({ active, known = [], placeKey, slotKey = null, inte
   return { spotted, missed: here.filter(id => !spotted.includes(id)), known: next };
 }
 
+// ── 낌새 — 아침에 도는 말 ─────────────────────────────────
+//
+// **이 게임의 두 히든 리스트에는 진입점이 하나뿐이었다.** 어디를 언제 털지는 명부가
+// 알려주는데, 명부를 채우려면 털어야 한다. 실측(실제 API 플레이): 성실하게 굴린
+// 해병 30일 · 가라 확인 1건, 공군 20일 · **0건**. 게임 이름이 걸린 축이 스무 날 동안
+// 한 번도 안 열렸다. 부조리 쪽은 멀쩡했는데(30일에 8건) 이유가 분명하다 —
+// 거기에는 면담 실토라는 진입점이 있다. **정답이 이미 게임 안에 있었다.**
+//
+// 그래서 가라 쪽에도 문을 하나 낸다. 다만 공짜로 정체를 주지는 않는다:
+// 낌새가 말해 주는 것은 **자리와 시간**뿐이고, 거기서 무엇이 도는지는 여전히 들이닥쳐야 안다.
+// 「점심때 창고 쪽에 뭔가 있다더라」까지가 낌새고, 그게 뭔지는 가 봐야 아는 것이다.
+//
+// 그리고 이 자리가 **LLM이 이 게임에서 하는 일의 값**이다. 코드가 고른 것을 브리핑이
+// 산문으로 흘리므로, 플레이어는 계기판이 아니라 **아침 브리핑을 읽어서** 오늘 어디를 설지
+// 정한다. 산문이 장식이 아니라 계기가 되는 유일한 방법이다 — 그리고 그 계기는 사람이
+// 흘린 말이라 **틀릴 수 있다.**
+//
+// 틀리는 정도는 평판이 정한다(repBite). 씹히는 주임원사에게는 아무도 제대로 말해 주지
+// 않는다: 평판 0이면 넷 중 하나만 맞는 자리를 가리킨다. 평판이 정보의 질이 되는 자리가
+// 이 게임에 없었는데(방치하면 평판이 10에 붙어 있기만 했다), 여기가 그 자리다.
+/**
+ * 오늘 아침에 도는 말 하나. 없으면 null (아무것도 안 돌거나 이미 다 아는 부대).
+ *   place / slot — 자리와 시간대. **무엇이 도는지는 안 준다**
+ *   sound        — true면 실제로 거기 뭔가 있다. false면 헛소문이다. 화면에는 안 나간다
+ * 아직 명부에 없는 것만 고른다 — 아는 걸 또 알려 줄 이유가 없다.
+ */
+export function pickLead({ gara = [], abuse = [], knownGara = [], knownAbuse = [] }, rep = 10, rng = Math.random) {
+  const pool = [
+    ...gara.filter(id => GARA_BY_ID[id] && !knownGara.includes(id))
+      .map(id => ({ place: GARA_BY_ID[id].place, when: GARA_BY_ID[id].when, rank: garaTierOf(id).rank })),
+    ...abuse.filter(a => ABUSE_BY_ID[a?.id]
+      && !knownAbuse.some(k => k.id === a.id && k.by === a.by && k.to === a.to))
+      .map(a => ({ place: ABUSE_BY_ID[a.id].place, when: ABUSE_BY_ID[a.id].when, rank: abuseTierOf(a.id).rank })),
+  ].filter(x => x.when?.length);
+  if (!pool.length) return null;
+
+  // **말이 매일 도는 것은 아니다.** 매일 하나씩 뜨면 그건 낌새가 아니라 일일 퀘스트 표시고,
+  // 화면이 매일 「오늘은 여기를 털어라」라고 말하는 게 된다. 그러면 플레이어는 매일 털고,
+  // 매일 털면 가라가 0에 붙고, 가라가 0이면 병사가 힘들어진다 — 이 게임의 코어 딜레마가
+  // 통째로 우회된다(실측: 낌새를 매일 따라간 공군이 사고 3.13 → 6.83, 해임 60%).
+  // 도는 빈도는 **무거운 것이 돌고 있을수록** 높다. 재판급 관행이나 형사건은 사람들 입에
+  // 오르고, 가벼운 것은 아무도 말 안 한다. 그래서 낌새가 뜬 날은 그 자체로 정보가 된다.
+  const heaviest = Math.max(...pool.map(x => x.rank ?? 0));
+  const L = TUNING.lead;
+  if (rng() >= Math.min(L.ceil, L.base + heaviest * L.perRank)) return null;
+
+  // 무거운 것일수록 그 말이 돈다 — 뽑기도 등급을 탄다.
+  const weights = pool.map(x => 1 + (x.rank ?? 0) * L.rankWeight);
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = rng() * total, idx = 0;
+  for (; idx < weights.length; idx++) { r -= weights[idx]; if (r < 0) break; }
+  const hit = pool[Math.min(idx, pool.length - 1)];
+  const slot = hit.when[Math.floor(rng() * hit.when.length)];
+  // 말이 제대로 오는가 — 개입이 먹히는 계수를 그대로 쓴다. 씹히는 사람에게는 말도 안 온다.
+  if (rng() < repBite(rep)) return { place: hit.place, slot, sound: true };
+
+  // 헛소문. **아무 자리·아무 시간**이지 「진짜와 비슷한 자리」가 아니다 —
+  // 틀린 말이 진짜 근처를 맴돌면 그건 힌트지 헛소문이 아니다.
+  const places = Object.keys(PLACES);
+  return {
+    place: places[Math.floor(rng() * places.length)],
+    slot: SLOT_KEYS[Math.floor(rng() * SLOT_KEYS.length)],
+    sound: false,
+  };
+}
+
 // ── 검열 — 정기적으로 부대를 헤집는 외부의 눈 ─────────────
 //
 // 불시점검이 주임원사가 **사는** 정보라면, 검열은 **당하는** 것이다. 선글라스에 검은 옷을 입은
@@ -1865,12 +1947,18 @@ export function applyCensor(params, effect = {}) {
  * 이 한 줄이 없으면 **부조리를 쫓는 플레이가 성립하지 않는다.** 부조리는 자리와 시간을 맞춰
  * 여러 번 들이닥쳐야 잡히는데 걸음마다 −1이면, 잡을 때쯤 부대가 죽어 있다(실측: 부조리를
  * 쫓은 플레이의 행복이 0.0, 멘탈 0.1 — 아무것도 안 한 플레이보다 나빴다).
+ *
+ * **근거를 갖고 간 걸음도 같다**(warranted). 아침에 그 자리·그 시간 말이 돌아서 갔으면,
+ * 서랍이 비어 있어도 그건 헛걸음이 아니다 — 병사들도 주임원사가 왜 왔는지 안다.
+ * 이게 없으면 낌새가 레버가 아니라 함정이 된다: 머리 좋은 부대는 자리와 시간을 맞춰 가도
+ * 절반은 숨기므로(공군 적발률 0.54), 낌새를 따라간 플레이가 방치보다 나빠졌다
+ * (실측 100일: 사고 3.13 → 6.93, 해임 10% → 73%). 화면이 매일 권하는 길이 함정이면 안 된다.
  */
-export function applyInspection(params, { found = false } = {}) {
+export function applyInspection(params, { found = false, warranted = false } = {}) {
   return {
     ...params,
     gara: clamp(params.gara + TUNING.inspect.gara),
-    happy: found ? params.happy : clamp(params.happy + TUNING.inspect.happy),
+    happy: (found || warranted) ? params.happy : clamp(params.happy + TUNING.inspect.happy),
   };
 }
 
@@ -2036,6 +2124,96 @@ export function endOfDayStreak(streak, accidentToday) {
 }
 
 export const isPromoted = streak => streak >= TUNING.goal;
+
+// ── 임기 심사 — 100일이 끝나면 반드시 온다 ────────────────
+//
+// 예전에는 끝이 하나였다: 무사고 100일을 찍으면 진급, 못 찍으면 **계속**. 사고가 나면
+// 카운터가 0으로 돌아가고 임기가 무한히 늘어났다. 실측으로 재 봤더니 진급까지 중앙값이
+// 해병 649일(1,602콜) · 공군 360일(743콜)이었고, 스무 판 중 두 판은 1,500일에도 못 끝냈다.
+// 자기 API 키로 값을 치르는 게임에서 그건 끝이 아니라 없는 끝이다. 그리고 끝이 없으면
+// **실패도 없다** — 사고가 나도 잃는 것이 시간뿐이라 그 순간에 무게가 안 실린다.
+//
+// 이제 임기는 100일로 닫히고, 갈리는 것은 성적이다.
+//
+// **심사가 보는 것은 둘뿐이다: 사고 몇 건이었나, 제일 길게 며칠을 갔나.**
+// 끊은 가라도, 구한 사람도, 묻힌 채 끝난 것도 여기 안 올라간다. 그게 이 게임의 요지라서
+// 그렇다 — 군이 세는 것은 **보고된 사고**이고, 그 부대에서 실제로 무슨 일이 있었는지는
+// 마지막 밤의 장부에만 남는다(engine.farewell의 silence). 성적표가 두 장인 이유가 그거다.
+export const TOUR_VERDICTS = {
+  promoted: {
+    label: '원사 진급',
+    line: '무사고 100일. 상신이 통과됐다. 이 부대에서 당신이 마지막으로 하는 일은 짐을 싸는 것이다.',
+  },
+  retained: {
+    label: '유임 — 재신임',
+    line: '터뜨린 적은 있지만 오래 끌고 갔다. 진급은 다음이고, 이 자리는 그대로다. 만년상사라는 말이 한 해 더 붙는다.',
+  },
+  transferred: {
+    label: '전출',
+    line: '심사표에 사고 건수가 먼저 적혔다. 아무도 당신을 나무라지 않았고, 그게 답이었다.',
+  },
+  relieved: {
+    label: '보직 해임',
+    line: '주임원사는 사고를 막으라고 있는 자리다. 그 문장이 심사장에서 그대로 읽혔다.',
+  },
+};
+
+const VERDICT_ORDER = ['relieved', 'transferred', 'retained', 'promoted'];
+
+/**
+ * **지금 이대로 끝나면 무엇이고, 한 등급 위는 무엇이 필요한가.**
+ *
+ * 이 함수가 없으면 이 게임에는 목표가 하나뿐이고 그 하나가 **부임 3주쯤에 죽는다** —
+ * 사고가 한 번 나는 순간 무사고 100일은 산술적으로 불가능해지고(실측: 첫 사고의 중앙값이
+ * 20~30일차다), 남은 일흔 날은 이미 못 딴 상을 향해 걷는 시간이 된다.
+ * 목표가 자리를 옮겨야 한다: 진급이 닫히면 유임이 열리고, 그것도 닫히면 전출을 지킨다.
+ *
+ * 화면은 이걸 매일 한 줄로 말한다. 「무엇을 하면 결말이 바뀌는가」를 아는 것이
+ * 이 게임에서 플레이어가 가진 유일한 장기 동기다.
+ */
+export function tourOutlook({ accidents = 0, bestStreak = 0, streak = 0, dayNo = 1 } = {}) {
+  const T = TUNING.review;
+  const now = tourVerdict({ accidents, bestStreak });
+  const left = Math.max(0, TUNING.goal - dayNo + 1);   // 오늘 포함, 남은 임기
+  const up = VERDICT_ORDER[VERDICT_ORDER.indexOf(now.id) + 1];
+  if (!up) return { now, next: null, need: null, reachable: false, left };
+
+  // 한 등급 위가 요구하는 것을 **지금 상태에서 모자란 것**으로 말한다.
+  if (up === 'promoted') {
+    // 사고가 한 건이라도 있으면 영영 닫힌다 — 그 사실을 숨기지 않는다.
+    const reachable = accidents === 0 && left >= TUNING.goal - streak;
+    return {
+      now, next: TOUR_VERDICTS.promoted, left, reachable,
+      need: accidents > 0 ? '사고가 이미 있다 — 이 임기에는 닫혔다'
+        : `남은 ${left}일을 전부 무사고로`,
+    };
+  }
+  if (up === 'retained') {
+    const needStreak = Math.max(0, T.retainStreak - bestStreak);
+    const overAcc = accidents > T.retainAccidents;
+    return {
+      now, next: TOUR_VERDICTS.retained, left,
+      reachable: !overAcc && needStreak <= left,
+      need: overAcc ? `사고 ${T.retainAccidents}건 이하라야 한다 — 이미 ${accidents}건이다`
+        : needStreak === 0 ? `사고를 ${T.retainAccidents}건 안에서 끝내면 된다`
+          : `무사고 ${T.retainStreak}일 연속 (지금 최장 ${bestStreak}일, ${needStreak}일 더)`,
+    };
+  }
+  return {
+    now, next: TOUR_VERDICTS.transferred, left, reachable: true,
+    need: `사고를 ${T.transferAccidents}건 안에서 끝내면 된다 — 지금 ${accidents}건`,
+  };
+}
+
+/** 100일이 끝난 자리의 판정. 사고 건수가 먼저고, 최장 연속이 그 다음이다. */
+export function tourVerdict({ accidents = 0, bestStreak = 0 } = {}) {
+  const T = TUNING.review;
+  const id = accidents === 0 ? 'promoted'
+    : (accidents <= T.retainAccidents && bestStreak >= T.retainStreak) ? 'retained'
+      : accidents <= T.transferAccidents ? 'transferred'
+        : 'relieved';
+  return { id, ...TOUR_VERDICTS[id] };
+}
 
 // ── 마지막 씬 — 환송회 ────────────────────────────────────
 // 100일을 찍으면 원사 진급이고, 진급은 이 부대를 뜬다는 뜻이다. 그 마지막 밤이

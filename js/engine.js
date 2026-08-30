@@ -55,7 +55,7 @@ import {
   minMentalOf, counselTakes, applyInspection, applyCensor, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
   reportChance,
   GARA_BY_ID, GARA_TIERS, garaCap, garaAt, garaWeight, garaOverreach, garaTierOf,
-  syncGaraList, inspectGara,
+  syncGaraList, inspectGara, pickLead, SLOT_BY_KEY,
   ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf, abuseAt, abuseOn, abuseBy,
   syncAbuseList, inspectAbuse, ripenAbuse, tellChance,
   censorOn, censorAhead, censorSweep, censorReport, custodyFor,
@@ -139,9 +139,17 @@ export class Engine {
       // 상태다. 콜도 안 쓴다(장면이 없으니까): 주임원사가 못 본 것을 LLM이 쓸 이유가 없다.
       // 쌓이면 큰 사고의 문턱이 앞당겨지고, 한 번 터지면 전부 같이 올라오면서 비워진다.
       buried: [],
+      // 오늘 아침에 도는 말 — 자리와 시간. 하루짜리라 매일 아침 다시 굴린다.
+      lead: null,
       // 임기 누계. **마지막 밤에만 드러난다** — 100일을 조용히 보낸 부대가 실제로는
       // 무슨 일을 겪었는지가 이 두 숫자의 차이다.
       silence: { happened: 0, buried: 0, surfaced: 0 },
+      // 임기 장부 — **100일이 끝나면 이게 성적표가 된다.**
+      // 무사고 카운터는 임기 중에 몇 번이고 0으로 돌아가지만 이 숫자들은 안 돌아간다.
+      // 그전까지 가라·부조리를 끊는 일에는 **종점 가치가 없었다**: 그날의 게이지를 한 칸
+      // 미는 것이 전부라, 임기가 끝나고 나면 무엇을 몇 개나 끊었는지 아무도 안 세어 줬다.
+      record: { bestStreak: 0, garaCut: 0, abuseCut: 0, rescued: 0, counsels: 0, inspects: 0, notices: 0 },
+      over: false,        // 임기 종료. 100일이 지나면 그날로 끝난다 — 진급이든 아니든
       // 축마다 이어진 「사유 없는 날」 수. 제자리 회복이 이 카운터를 본다 —
       // 매일 당기면 판정이 민 한 칸이 그날 저녁에 도로 돌아와서 바늘이 언다(params.js의 restDays).
       calm: { gara: 0, happy: 0, conflict: 0 },
@@ -172,6 +180,9 @@ export class Engine {
     ab.known = (ab.known || []).filter(a => ABUSE_BY_ID[a?.id]);
     // 묻힌 더미가 없던 시절의 저장분 — 빈 더미로 들어온다. 지난 일을 소급해서 묻지는 않는다.
     s.buried = Array.isArray(s.buried) ? s.buried : [];
+    s.lead = s.lead && s.lead.place ? s.lead : null;
+    s.record = { bestStreak: s.streak || 0, garaCut: 0, abuseCut: 0, rescued: 0, counsels: 0, inspects: 0, notices: 0, ...(s.record || {}) };
+    s.over = !!s.over;
     s.silence = { happened: 0, buried: 0, surfaced: 0, ...(s.silence || {}) };
     // 옛 저장분에는 시간대·등급이 없던 가라가 있을 수 있다 — 표에서 사라진 id는 여기서 떨어진다.
     s.censors = (s.censors || []).map(c => ({
@@ -238,9 +249,14 @@ export class Engine {
       // 언제나 뒤쪽이다 — 첫날에 「부임 0일차」라고 쓰면 달력과 한 칸 어긋난다.
       dayNo: s.day + 1,
       streak: s.streak, goal: TUNING.goal,
-      reviewDate: reviewDate(s.date, s.streak),
+      // 심사일은 임기 만료일이다 — 부임일에 정해지고 안 움직인다.
+      reviewDate: reviewDate(s.startDate),
+      daysLeft: Math.max(0, TUNING.goal - s.day),
       accidents: s.accidents.length,
       promoted: s.promoted,
+      // 임기가 끝났는가. 진급과 별개다 — 100일이 지나면 어떤 성적이든 그날로 끝난다.
+      over: s.over,
+      record: { ...s.record },
       farewell: s.farewell ? { ...s.farewell } : null,
       // 병력은 **오늘 부대에 있는 인원**이다. 입원·이탈은 명부에 남아도 병력이 아니다.
       roster: this.roster.present.length,
@@ -269,6 +285,10 @@ export class Engine {
         next: censorAhead(s.day + 1),
         history: s.censors.map(c => ({ ...c, findings: [...c.findings], blows: [...c.blows] })),
       },
+      // 오늘 아침에 들은 말. **참인지 거짓인지는 화면에도 안 준다** — 그걸 주면 낌새가
+      // 아니라 계기판이 된다. 화면이 말할 수 있는 것은 「이 부대에서 이런 말이 얼마나
+      // 맞는 편인가」(평판)까지고, 이 한 건이 맞는지는 가 봐야 안다.
+      lead: s.lead ? { place: s.lead.place, slot: s.lead.slot } : null,
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
       params: { ...s.params },
       calm: { ...s.calm },
@@ -438,6 +458,12 @@ export class Engine {
     // 사건 판정도 이걸 본다: 하루의 총 이동은 축마다 한 칸이다(params.js의 capDay).
     const dawn = { ...s.params };
     this.dawn = dawn;
+    // **최장 연속은 안 돌아간다.** 사고가 카운터를 0으로 돌려도 「거기까지는 갔다」는 사실은
+    // 남아야 한다 — 심사가 보는 것이 그거고, 플레이어가 100일 내내 붙잡는 것도 그거다.
+    // 새벽에 한 번 찍어 두는 이유는 카운터를 0으로 돌리는 자리가 여럿이기 때문이다
+    // (확전·검열). 마감에서만 재면 42일을 갔다가 터진 임기와 사흘 만에 터진 임기가
+    // 같은 기록으로 남는다.
+    s.record.bestStreak = Math.max(s.record.bestStreak, s.streak);
 
     try {
       // 병영 소음이 아직 없으면 여기서 한 번 채운다 (부임 첫날 한 콜).
@@ -453,7 +479,21 @@ export class Engine {
       const away = this.roster.absent;
 
       // D. 아침 브리핑 — 하루 스레드의 첫 user/assistant 쌍.
-      const excerpt = this.roster.sample(4, this.rng);
+      // 브리핑이 보는 넷은 **지금 제일 낮은 넷**이다. 무작위였을 때는 산문이 아픈 사람을
+      // 못 찾아서 아무나 아픈 것처럼 썼고, 그래서 플레이어가 그 놈을 불러 보면 멀쩡했다.
+      // 이 한 줄이 「브리핑을 읽고 누구를 부를지 정한다」를 실제로 성립시킨다.
+      const excerpt = this.roster.lowestMental(4, TUNING.mental.default);
+
+      // 오늘 아침에 도는 말 하나 — **코드가 고르고 브리핑이 흘린다.**
+      // 이 게임에서 산문이 계기가 되는 유일한 자리다: 플레이어는 계기판이 아니라 브리핑을
+      // 읽어서 오늘 어디를 설지 정한다. 자리와 시간만 주고 정체는 안 준다 —
+      // 정체를 사는 것은 여전히 들이닥치는 일이고, 그게 이 게임의 틀이다.
+      // 난수는 **가라 통**을 쓴다: 낌새는 「무엇이 도는가」쪽 사실이라 사고 롤을 밀면 안 된다.
+      s.lead = pickLead({
+        gara: s.gara.active, abuse: s.abuse.active,
+        knownGara: s.gara.known.map(k => k.id), knownAbuse: s.abuse.known,
+      }, s.params.rep, this.garaRng);
+
       this.thread.push({
         role: 'user',
         content: P.briefingUser({
@@ -465,6 +505,8 @@ export class Engine {
           // 지금 부대에 없는 사람들 — 장면에 세우면 안 된다. 돌아온 사람은 오늘 아침의 뉴스다.
           away: away.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away', until: x.away.until })),
           returns: returns.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away' })),
+          // 자리와 시간만. **참인지 거짓인지는 안 나간다** — 브리핑이 알면 말투에서 새어 나온다.
+          lead: s.lead && { place: PLACES[s.lead.place]?.label || s.lead.place, when: SLOT_BY_KEY[s.lead.slot]?.label || s.lead.slot },
         }),
       });
       let brief;
@@ -594,11 +636,22 @@ export class Engine {
       // 묻힌 것이 삭는다 — 아무 일도 안 일어난 채 지나간 것들. 더미를 평형으로 만드는 자리다.
       // 여기가 없으면 침묵이 두꺼운 부대의 문턱이 부임 3주 만에 상한에 붙어 안 돌아온다.
       s.buried = s.buried.filter(b => s.day - (b.day ?? s.day) < TUNING.comrade.buried.fadeDays);
+      // 최장 연속은 **안 돌아간다.** 사고가 카운터를 0으로 돌려도 「거기까지는 갔다」는
+      // 사실이 남아야 한다 — 심사가 보는 것이 그거고, 플레이어가 100일 내내 붙잡는 것도 그거다.
+      // 그래서 0으로 돌리기 **전**의 자리도 같이 잰다. 마감 뒤 값만 보면 사고 난 날의 봉우리가
+      // 통째로 사라져서, 42일을 갔다가 터진 임기와 사흘 만에 터진 임기가 같은 기록이 된다.
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
+      s.record.bestStreak = Math.max(s.record.bestStreak, s.streak);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
       s.day += 1;
       if (isPromoted(s.streak)) s.promoted = true;
+      // **임기는 100일이다.** 무사고 100일을 찍으면 그날이 진급이고, 못 찍어도 그날로 끝난다.
+      // 예전에는 끝이 진급 하나뿐이라 사고 한 번에 카운터가 0으로 돌아가고 임기가 무한히
+      // 늘어났다(실측: 진급까지 중앙값 해병 649일 · 1,602콜, 공군 360일 · 743콜. 스무 판 중
+      // 두 판은 1,500일에도 못 끝냈다). 자기 API 키로 내는 게임에서 그건 끝이 아니다.
+      // 이제 100일이 지나면 반드시 심사가 있고, **성적이 갈릴 뿐이다.**
+      if (s.day >= TUNING.goal) s.over = true;
 
       // 오늘의 장부 — 화면이 마감에 「무슨 일이 있었고 바늘이 어디로 갔는지」를 쓴다.
       const ledger = {
@@ -842,6 +895,9 @@ export class Engine {
     // 서류에 적어 놓은 것이라, 「아무거나 하나 멎는다」로 뭉갤 수가 없다.
     s.gara.active = s.gara.active.filter(id => !report.findings.includes(id));
     s.params.gara = Math.max(0, s.params.gara - report.findings.length);
+    // 검열이 끊은 것도 끊긴 것이다. 다만 주임원사가 끊은 게 아니라 **당해서** 끊긴 것이라,
+    // 성적표는 이걸 같은 줄에 안 세운다 (아래 tourVerdict의 주석 참고).
+    s.record.garaCut += report.findings.length;
     // 명부에서도 내린다 — 검열이 끊었으니 안 돌아간다는 것은 주임원사도 안다.
     s.gara.known = s.gara.known.filter(k => !report.findings.includes(k.id));
     this.#syncGara();
@@ -967,6 +1023,7 @@ export class Engine {
       const kind = ABSENCE_KINDS[soldier.away.kind];
       throw new Error(`${soldier.name}은(는) 지금 부대에 없다 — ${kind?.label || '부재'}, 복귀 예정 ${soldier.away.until}`);
     }
+    this.state.record.counsels += 1;
     this.#charge();
 
     // 병사의 체감 밴드 — 부대 지표가 아니라 자기 주변이다. 한 칸 오차의 사견이 낀다.
@@ -1091,7 +1148,14 @@ export class Engine {
     // 명부는 여기서 안 건드린다. 무엇이 멎었는지는 주임원사가 알 길이 없고, 방금 확인한 것이
     // 조용히 멎었다면 그 줄은 그날부터 낡기 시작한다 — 그게 이 게임에 남겨 둔 안개다.
     // 성과가 있으면 분위기를 안 깎는다 — 장부든 사람이든, 뭔가 나온 걸음은 헛걸음이 아니다.
-    s.params = applyInspection(s.params, { found: res.spotted.length > 0 || hit.caught.length > 0 });
+    // 근거가 있었는가 — 오늘 아침 낌새가 **바로 이 자리·이 시간**을 가리켰는가.
+    // 그랬으면 빈손으로 나와도 헛걸음이 아니다. 낌새를 따라가는 것이 값을 치르면
+    // 화면이 매일 권하는 길이 함정이 된다.
+    const warranted = !!(s.lead && s.lead.place === placeKey && s.lead.slot === slot?.key);
+    s.params = applyInspection(s.params, {
+      found: res.spotted.length > 0 || hit.caught.length > 0,
+      warranted,
+    });
 
     // 덮친 부조리는 **그 자리에서 끊긴다.** 눈앞에서 후임을 세워 놓고 있는데 「정체를 샀다」로
     // 끝내고 나오는 주임원사는 없다 — 가라의 「점검은 사고 지침이 끊는다」 원칙이 여기서는
@@ -1120,12 +1184,18 @@ export class Engine {
       rescued.push(man);
     }
     if (hauled.length || rescued.length) this.roster.save();
+    // 사람 쪽에서 끊은 것. 이 숫자가 임기 성적표의 제일 값나가는 줄이다 —
+    // 가라는 관행이지만 부조리는 사람이라, 하나 끊을 때마다 누군가의 하루가 실제로 바뀐다.
+    s.record.abuseCut += hit.caught.length;
+    s.record.rescued += rescued.length;
 
     // 예외 하나 — **재판급은 보고도 두고 나올 수가 없다.** 눈앞에서 실탄이 나오는데
     // 「정체를 샀다」로 끝내는 주임원사는 없다. 그 자리에서 끊긴다(가라 추가 −1)이고,
     // 이것이 점검을 「정보 창구」에서 **검열 전에 폭탄을 뽑는 레버**로 만드는 자리다.
     // 가벼운 것과 징계감은 원래대로다: 정체만 사고, 끊는 것은 여전히 지침의 일이다.
     const pulled = res.spotted.filter(id => garaTierOf(id).blows);
+    s.record.inspects += 1;
+    s.record.garaCut += pulled.length;
     if (pulled.length) {
       s.gara.active = s.gara.active.filter(id => !pulled.includes(id));
       s.params.gara = Math.max(0, s.params.gara - pulled.length);
@@ -1154,7 +1224,8 @@ export class Engine {
     return {
       place: place.label, findings,
       // 헛걸음이었는가 — 화면이 「그래서 행복이 왜 안 깎였나」를 쓸 수 있어야 한다
-      wasted: res.spotted.length === 0 && hit.caught.length === 0,
+      wasted: res.spotted.length === 0 && hit.caught.length === 0 && !warranted,
+      warranted,
       slot: slot ? { key: slot.key, label: slot.label, time: slot.time } : null,
       effect: { ...TUNING.inspect },
       spotted: res.spotted.map(id => ({ ...GARA_BY_ID[id], grade: garaTierOf(id) })),
@@ -1202,6 +1273,8 @@ export class Engine {
     s.notices.push({ text: t, bans });
     // 막은 것 중 **실제로 돌고 있던** 것들. 이 개수가 곧 이 공지가 끊어낸 가라다.
     const cut = s.gara.active.filter(id => bans.includes(id));
+    s.record.notices += 1;
+    s.record.garaCut += cut.length;
 
     s.params = applyDirections(s.params, cut.length ? { ...out, gara: 'same' } : out);
     s.params.gara = Math.max(0, s.params.gara - cut.length);
