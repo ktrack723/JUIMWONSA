@@ -13,7 +13,7 @@ import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
-import { PLACES, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, TUNING } from './params.js';
+import { PLACES, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
@@ -98,6 +98,7 @@ function renderUnits() {
       <p class="dim">${escapeHtml(u.desc)}</p>
       <p class="unit-stats">지능 ${u.intel.score} — “${escapeHtml(u.intel.desc)}”<br>
         마초 ${u.macho.score} — “${escapeHtml(u.macho.desc)}”<br>
+        전우애 ${u.comrade.score} — “${escapeHtml(u.comrade.desc)}”<br>
         일과 난이도 ${u.difficulty} · 복무기간 ${u.serviceMonths}개월 · 정원 ${ROSTER_SIZE}명</p>
       <div class="radio-btns">
         <button class="btn95 big" data-unit="${u.id}" type="button">${saved ? '새로 부임 (기록 삭제)' : '이 부대로 부임'}</button>
@@ -172,24 +173,30 @@ const GAUGE_DEFS = [
   { k: 'difficulty', label: '일과 난이도', cls: 'diff', note: '오늘 실효치 — 계절·주말이 정한다' },
   { k: 'gara', label: '가라', cls: 'gara', note: '높으면 편하지만, 힘든 일을 대충 하면 다친다' },
   { k: 'happy', label: '행복도', cls: 'happy', note: '낮으면 싸움이 늘고 멘탈이 쓸려 내려간다' },
-  { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: TUNING.roll.big.open, note: '8부터 탈영·자해급 사고의 문이 열린다' },
+  { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: 'comrade', note: '이 눈금을 넘으면 탈영·자해급 사고의 문이 열린다 — 자리는 전우애가 정한다' },
   { k: 'rep', label: '평판', cls: 'rep', note: '개입마다 −1 · 조용한 날 +1. 낮으면 지침이 안 먹힌다' },
 ];
 function renderGauges() {
   const p = state.engine.state.params;
   const values = { ...p, difficulty: effectiveDifficulty(state.unit.difficulty, state.engine.state.date) };
+  // 큰 사고의 문턱은 부대마다 다르다 — 전우애가 그걸 민다(params.js의 comradeEffect).
+  // 눈금을 실제 문턱 자리에 그려야 계기판이 이 부대의 진실을 말한다.
+  const open = comradeEffect(state.unit.comrade.score).open;
   $('#gauge-box').innerHTML = GAUGE_DEFS.map(g => {
     const v = values[g.k];
-    const dangerNow = g.danger != null && v >= g.danger;
+    const mark = g.danger === 'comrade' ? open : g.danger;
+    const dangerNow = mark != null && v >= mark;
     return `<div class="pgauge ${g.cls}${dangerNow ? ' danger-now' : ''}" title="${escapeHtml(g.note)}">
       <span class="pg-label">${escapeHtml(g.label)}</span>
       <div class="pg-bar">
         <div class="pg-fill" style="width:${v * 10}%"></div>
-        ${g.danger != null ? `<i class="pg-danger" style="left:${g.danger * 10}%"></i>` : ''}
+        ${mark != null ? `<i class="pg-danger" style="left:${Math.min(100, mark * 10)}%"></i>` : ''}
       </div>
       <span class="pg-num">${v}<small>/10</small></span>
     </div>`;
   }).join('');
+  const note = $('#gauge-open-note');
+  if (note) note.textContent = `${open.toFixed(1)} (전우애 ${state.unit.comrade.score})`;
 }
 
 // 병사 멘탈 미니 게이지 — 명부·면담 선택에 같이 쓴다. 2 이하는 큰 사고의 문이다.

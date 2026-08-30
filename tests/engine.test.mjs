@@ -52,6 +52,7 @@ const unit = {
   id: 'probe', name: '표식부대', branch: '표식군', desc: '감사용',
   culture: 'CULT표식', rules: 'REGS표식', soldierRules: 'SRULES표식',
   intel: { score: 5, desc: '보통 머리' }, macho: { score: 5, desc: '보통 피' },
+  comrade: { score: 5, desc: '보통 사이' },
   difficulty: 5, serviceMonths: 18, serial: { branchCode: '3', seqBase: 70000000 },
   cohort: { base: 1300, at: '2023-11' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
   jobs: ['a', 'b', 'c', 'd'],
