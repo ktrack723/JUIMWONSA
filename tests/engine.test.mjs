@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { Engine } from '../js/engine.js';
 import { Roster } from '../js/roster.js';
 import { AmbientPool } from '../js/ambient.js';
-import { TUNING, INCIDENT_CATEGORIES, absenceFor } from '../js/params.js';
+import { TUNING, INCIDENT_CATEGORIES, absenceFor, incidentRisk, PLACES } from '../js/params.js';
 import { RECRUIT_SCHEMA as P_RECRUIT } from '../js/prompts.js';
 
 // ── 가짜 LLM — label로 갈라 결정적 응답을 준다 ──────────
@@ -145,8 +145,26 @@ const incidentRng = () => seqRng([
   0.999, 0.999, 0.999, 0.999,   // sample(4)
   0.999, 0.999,                 // 아침점호 · 아침식사 롤
   0.001,                        // 오전일과 롤 — 사건 발생
+  0.001,                        // 보고 롤 — 올라온다 (표식부대는 중립이라 0.95)
   0, 0,                         // pickEvent · pickInvolved
 ]);
+
+/** 같은 사건인데 **안 올라가는** 날. 보고 롤만 뒤집는다 — 그 한 칸이 이 게임의 절반이다. */
+const buryRng = () => seqRng([
+  0.999, 0.999, 0.999, 0.999,
+  0.999, 0.999,
+  0.001,                        // 사건 발생
+  0.99,                         // 보고 롤 — 안 올라간다
+  0, 0,                         // pickEvent · pickInvolved
+]);
+
+/** 침묵이 두꺼운 부대 — 잔사건 보고 확률 0.30. 표식부대와 성향만 다르다. */
+const silentUnit = {
+  ...unit,
+  id: 'silent', name: '침묵부대',
+  macho: { score: 9, desc: '증명해야 하는 피' },
+  comrade: { score: 10, desc: '같이 덮는다' },
+};
 
 test('사건은 E-1·E-2·E-3 세 콜이고, 확전이면 카운터만 0이 된다', async () => {
   const { llm, engine, state, roster } = fixture({
@@ -204,6 +222,186 @@ test('판정이 민 가라는 그날 안에서는 살아 있다 — 되돌리는
   await engine.runDay();
   assert.equal(seen[0], dawn + 1, '판정 직후에 가라가 안 올랐다 — 그날의 사고 롤이 이걸 본다');
   assert.equal(state.params.gara, dawn + 1, '움직인 축이 그날 저녁에 제자리로 끌려갔다');
+});
+
+// ── 안 올라간 사건 — 이 게임에서 화면도 콜도 없는 유일한 사건 ──────
+// 전우애가 높다고 사건이 덜 나는 것이 아니다. **안 올라올 뿐이다.** 그 차이가 코드에서
+// 갈리는 자리가 여기다: 같은 롤, 같은 씨앗, 같은 사람들 — 갈리는 것은 보고 롤 한 칸이다.
+test('안 올라간 사건은 콜도 화면도 안 쓴다 — 주임원사가 못 본 것을 쓸 수는 없다', async () => {
+  const { llm, engine, state, events } = fixture({ rng: buryRng() });
+  await engine.runDay();
+
+  assert.deepEqual(llm.labels(), ['아침 브리핑'], '안 올라간 사건이 콜을 썼다');
+  assert.ok(!events.some(([k]) => k === 'incident' || k === 'outcome' || k === 'verdict'),
+    '화면이 못 본 사건을 그렸다');
+  const [, ledger] = events.findLast(([k]) => k === 'dayEnd');
+  assert.equal(ledger.today.incidents, 0, '장부에 안 올라온 사건이 올랐다');
+  assert.equal(ledger.today.accidents, 0);
+  assert.equal(ledger.today.surfaced, 0, '안 터진 날에 뭔가 올라왔다');
+  // 그래도 일어난 일이다
+  assert.equal(state.buried.length, 1, '더미에 안 쌓였다');
+  assert.equal(state.silence.happened, 1, '누계가 사건을 안 셌다');
+  assert.equal(state.silence.buried, 1, '누계가 침묵을 안 셌다');
+  assert.equal(state.streak, 1, '안 올라간 사건이 무사고 카운터를 깼다 — 장부는 그걸 모른다');
+});
+
+test('묻힌 잔사건은 멘탈을 안 깎는다 — 이름이 오르는 것 자체는 상처가 아니다', async () => {
+  const { engine, state, roster } = fixture({ rng: buryRng() });
+  const before = new Map(roster.present.map(m => [m.serial, m.mental ?? TUNING.mental.default]));
+  let midday = null;
+  engine.h.slot = () => {
+    if (state.buried.length && !midday) midday = new Map(roster.present.map(m => [m.serial, m.mental]));
+  };
+  await engine.runDay();
+  assert.ok(midday, '사건이 안 묻혔다');
+  for (const man of roster.present.filter(m => state.buried[0].names.includes(m.name))) {
+    assert.equal(midday.get(man.serial), before.get(man.serial),
+      `${man.name}: 잔사건이 멘탈을 깎았다 — 묻혔다고 규칙이 달라지면 안 된다`);
+  }
+});
+
+test('덮였다는 것은 안 다쳤다는 뜻이 아니다 — 묻힌 중대 사건은 그대로 깎는다', async () => {
+  // 갈등을 천장까지 올려 큰 사고의 문을 열어 두고, 오전일과에서 한 건을 묻는다.
+  // 난수는 그 슬롯에 들어갈 때만 뒤집는다 — 인덱스를 세는 것보다 읽기 쉽고 안 깨진다.
+  let armed = 0;
+  const rng = () => (armed > 0 ? [0.001, 0.99, 0, 0][4 - armed--] : 0.999);
+  const { engine, state, roster } = fixture({ rng });
+  state.params.conflict = 10;
+
+  const before = new Map(roster.present.map(m => [m.serial, m.mental ?? TUNING.mental.default]));
+  let midday = null;
+  engine.h.slot = e => {
+    if (e.slot.key === 'amwork') armed = 4;                    // 발생 · 보고(안 올라감) · 씨앗 · 연루자
+    if (state.buried.length && !midday) midday = new Map(roster.present.map(m => [m.serial, m.mental]));
+  };
+  await engine.runDay();
+
+  assert.equal(state.buried.length, 1, '중대 사건이 안 묻혔다');
+  assert.equal(state.buried[0].tier, 'major');
+  assert.ok(midday, '사건 다음 슬롯을 못 잡았다');
+  const names = state.buried[0].names;
+  assert.ok(names.length > 0, '연루자가 없다');
+  for (const man of roster.present.filter(m => names.includes(m.name))) {
+    assert.ok(midday.get(man.serial) < before.get(man.serial),
+      `${man.name}: 묻힌 중대 사건에 연루됐는데 멘탈이 그대로다 — 침묵이 공짜가 됐다`);
+  }
+});
+
+test('묻힌 것이 쌓이면 큰 사고의 문턱이 앞당겨진다 — 계기판은 그걸 모른다', async () => {
+  const { engine, state } = fixture({ rng: seqRng([0.999]) });
+  const snap0 = engine.snapshot();
+  state.buried = Array.from({ length: 5 }, (_, i) => ({
+    date: '2026-05-10', tier: 'minor', desc: `묻힌${i}`, category: null,
+    place: 'barracks', slot: 'amwork', names: ['기존0'],
+  }));
+  const snap1 = engine.snapshot();
+  // 계기판이 읽는 것은 params뿐이고, 거기엔 더미가 없다
+  assert.deepEqual(snap1.params, snap0.params, '더미가 계기판 수치를 움직였다');
+  assert.equal(JSON.stringify(snap1).includes('묻힌0'), false, '스냅샷이 묻힌 것의 정체를 흘렸다');
+  // 위험은 실제로 갈린다
+  const stats = { macho: unit.macho.score, difficulty: unit.difficulty };
+  const risk = b => incidentRisk({ ...state.params, conflict: 7, buried: b }, stats).big;
+  assert.equal(risk(0), 0, '아무것도 안 묻었는데 갈등 7에서 문이 열렸다');
+  assert.ok(risk(5) > 0, '다섯 건을 묻어 뒀는데 갈등 7이 안전하다');
+});
+
+test('더미가 갈등의 바닥을 만든다 — 이유가 장부에 안 적힌 한 칸이다', async () => {
+  const { engine, state, events } = fixture({ rng: seqRng([0.999]) });   // 사건 없는 날
+  state.params.conflict = 2;
+  state.buried = Array.from({ length: 6 }, (_, i) => ({
+    date: '2026-05-10', day: state.day, tier: 'minor', desc: `묻힌${i}`,
+    category: null, place: 'barracks', slot: 'amwork', names: ['기존0'],
+  }));
+  await engine.runDay();
+
+  assert.equal(state.params.conflict, 3, '더미가 갈등을 안 밀었다 — 하루 한 칸이다');
+  const [, ledger] = events.findLast(([k]) => k === 'dayEnd');
+  assert.equal(ledger.today.incidents, 0, '사건이 없는 날이어야 한다');
+  assert.equal(ledger.today.interventions, 0, '개입이 없는 날이어야 한다');
+  // 이유가 아무 데도 없다. 바늘만 올라간다 — 그게 침묵의 값이다.
+  assert.equal(ledger.today.moved.conflict, 1, '움직인 자리가 장부에 안 남았다');
+  assert.equal(state.calm.conflict, 0, '민 축이 「조용한 날」로 잡혔다 — 저녁에 도로 끌려간다');
+});
+
+test('바닥은 더미 크기까지다 — 래칫이 아니라 바닥이라 비면 같이 내려간다', async () => {
+  const { engine, state } = fixture({ rng: seqRng([0.999]) });
+  state.params.conflict = 4;
+  state.buried = [{ date: '2026-05-10', day: state.day, tier: 'minor', desc: 'x', category: null, place: 'barracks', slot: 'amwork', names: ['기존0'] }];
+  await engine.runDay();
+  assert.ok(state.params.conflict <= 4, '더미(1건)가 갈등 4를 더 밀어 올렸다 — 바닥이 아니라 래칫이다');
+});
+
+test('묻힌 것은 삭는다 — 아무 일도 안 일어난 채 지나간 일이 된다', async () => {
+  const { engine, state } = fixture({ rng: seqRng([0.999]) });
+  const fade = TUNING.comrade.buried.fadeDays;
+  state.buried = [
+    { date: '2026-05-01', day: state.day - fade, tier: 'minor', desc: '오래된것', category: null, place: 'barracks', slot: 'amwork', names: ['기존0'] },
+    { date: '2026-05-17', day: state.day, tier: 'minor', desc: '어제것', category: null, place: 'barracks', slot: 'amwork', names: ['기존0'] },
+  ];
+  await engine.runDay();
+  assert.deepEqual(state.buried.map(b => b.desc), ['어제것'], '삭는 규칙이 안 돌거나 산 것까지 지웠다');
+  // 삭은 것은 **올라온 것이 아니다.** 아무도 모른 채로 끝난 것이라 누계가 움직이면 안 된다.
+  assert.equal(state.silence.surfaced, 0, '삭은 것이 「뒤늦게 올라온 것」으로 세어졌다');
+});
+
+test('사고가 나면 더미가 같이 터진다 — 그날 올라오는 것은 오늘 것이 아니다', async () => {
+  const { engine, state, events } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  state.buried = Array.from({ length: 3 }, (_, i) => ({
+    date: '2026-05-10', tier: 'minor', desc: `묻힌${i}`, category: null,
+    place: 'barracks', slot: 'amwork', names: ['기존0'],
+  }));
+  await engine.runDay();
+
+  assert.equal(state.buried.length, 0, '터졌는데 더미가 남았다');
+  assert.equal(state.accidents.at(-1).surfaced, 3, '사고 기재에 뒤늦게 올라온 개수가 없다');
+  assert.equal(state.silence.surfaced, 3, '누계가 올라온 것을 안 셌다');
+  const [, v] = events.findLast(([k]) => k === 'verdict');
+  assert.equal(v.surfaced, 3, '화면이 「전에도 있었다」를 못 받았다');
+  const [, ledger] = events.findLast(([k]) => k === 'dayEnd');
+  assert.equal(ledger.today.surfaced, 3, '장부에 안 실렸다');
+});
+
+test('확전이 아니면 더미는 그대로다 — 사건 하나 올라온 걸로 장부가 열리지는 않는다', async () => {
+  const { engine, state } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  state.buried = [{ date: '2026-05-10', tier: 'minor', desc: '묻힌0', category: null, place: 'barracks', slot: 'amwork', names: ['기존0'] }];
+  await engine.runDay();
+  assert.equal(state.buried.length, 1, '안 터졌는데 더미가 비었다');
+});
+
+test('E-1은 그 자리에 전에도 있었다는 것을 받는다 — 개수는 안 나간다', async () => {
+  const { llm, engine, state } = fixture({ rng: incidentRng() });
+  // 어느 자리에서 사건이 날지는 씨앗 추첨이 정하므로, 모든 자리에 한 건씩 묻어 둔다
+  state.buried = Object.keys(PLACES).map(place => ({
+    date: '2026-05-10', tier: 'minor', desc: '묻힌것', category: null,
+    place, slot: 'amwork', names: ['기존0'],
+  }));
+  await engine.runDay();
+  const e1 = llm.byLabel('사건 장면')[0];
+  const user = e1.messages.at(-1).content;
+  assert.ok(user.includes('NOBODY PUT UPSTAIRS'), 'E-1에 묻힌 이력 절이 없다');
+  assert.ok(user.includes('Never state the count'), '개수를 쓰지 말라는 금지가 없다');
+  assert.ok(!user.includes('묻힌것'), '묻힌 사건의 원문이 프롬프트로 샜다');
+});
+
+test('침묵이 두꺼운 부대는 장부가 조용하다 — 사건은 더 나는데 콜은 더 적다', async () => {
+  const pattern = [0.999, 0.999, 0.999, 0.999, 0.001, 0.5, 0, 0];
+  const loud = fixture({ rng: cycleRng(pattern) });
+  const quiet = fixture({ rng: cycleRng(pattern), unit: silentUnit });
+  for (let i = 0; i < 5; i++) { await loud.engine.runDay(); await quiet.engine.runDay(); }
+
+  // 같은 난수, 같은 롤 — 갈리는 것은 보고뿐이다
+  assert.equal(quiet.state.silence.happened, loud.state.silence.happened,
+    '보고 확률이 사건 발생 자체를 갈랐다 — 이 축은 발생을 안 만진다');
+  assert.ok(quiet.state.silence.buried > loud.state.silence.buried,
+    '침묵이 두꺼운데 더 많이 올라왔다');
+  assert.ok(quiet.llm.byLabel('사건 장면').length < loud.llm.byLabel('사건 장면').length,
+    '조용한 부대가 콜을 더 썼다');
 });
 
 test('E-3은 지침을 못 보고, 부대 프롬프트도 없다 — 결과 장면만 읽는다', async () => {
@@ -795,7 +993,7 @@ test('잔사건에 이름이 오르는 것은 상처가 아니다 — 남는 것
 
 test('부대가 어두우면 몇 명이 무너진다 — 전원이 아니라 그날 하필 그 사람들이다', async () => {
   const { engine, roster, state } = fixture();
-  state.params.happy = 0;   // 해병은 전우애 방패가 두꺼워 문턱이 낮다
+  state.params.happy = 0;   // 끈끈한 부대는 분위기 방패가 두꺼워 문턱이 낮다
   for (const man of roster.soldiers) man.mental = 6;
   await engine.runDay();
   const down = roster.soldiers.filter(s => s.mental < 6);
@@ -880,6 +1078,33 @@ test('들이닥치면 그 자리 것이 명부에 오른다 — 산 정보가 �
   const known = state.gara.known.map(k => k.id).sort();
   assert.deepEqual(known, here.slice().sort(), '적발한 것이 명부에 안 남았다');
   for (const k of state.gara.known) assert.equal(k.on, state.date);
+});
+
+test('들이닥치면 그 자리에 묻혀 있던 것이 하나 올라온다 — 다른 자리 것은 그대로다', async () => {
+  const { engine, state } = fixture({ garaRng: () => 0.999 });
+  const rec = (place, i) => ({
+    date: '2026-05-10', tier: 'minor', desc: `묻힌${place}${i}`, category: null,
+    place, slot: 'amwork', names: ['기존0'],
+  });
+  state.buried = [rec('barracks', 0), rec('barracks', 1), rec('worksite', 0)];
+
+  const out = await engine.inspect('barracks');
+  const per = TUNING.comrade.buried.surfacePerInspect;
+  assert.equal(out.surfaced.length, per, '들어가 봤는데 아무것도 안 나왔다');
+  assert.equal(out.surfaced[0].place, 'barracks', '안 간 자리 것이 나왔다');
+  assert.equal(state.buried.length, 3 - per, '올라온 것이 더미에서 안 빠졌다');
+  assert.ok(state.buried.some(b => b.place === 'worksite'), '다른 자리 것까지 같이 올라왔다');
+  assert.equal(state.silence.surfaced, per, '누계가 안 늘었다');
+  // 뒤에 몇 건이 더 있는지는 여전히 안 준다 — 그게 이 게임에 남은 안개다
+  assert.equal(out.buried, undefined, '점검이 더미 개수를 흘렸다');
+});
+
+test('아무것도 안 묻은 자리를 털면 조용하다 — 없는 것을 만들어 내지 않는다', async () => {
+  const { engine, state } = fixture({ garaRng: () => 0.999 });
+  state.buried = [];
+  const out = await engine.inspect('barracks');
+  assert.deepEqual(out.surfaced, [], '빈 더미에서 뭔가 나왔다');
+  assert.equal(state.silence.surfaced, 0);
 });
 
 test('머리 좋은 부대는 들이닥쳐도 숨긴다 — 명부가 빈 채로 남는다', async () => {

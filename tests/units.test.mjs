@@ -176,7 +176,7 @@ test('llm.js가 아는 업자 전부에 저가 모델이 배정돼 있다', asyn
   }
 });
 
-// ── ⑥ 전우애 — 빡센 부대일수록 높다 ─────────────────────
+// ── ⑥ 전우애 — 빡센 부대일수록 높다. 그리고 높을수록 **안 올라온다** ──
 test('전우애는 수치+서술 한 쌍이고 0~10이다', () => {
   for (const u of UNITS) {
     assert.ok(u.comrade.score >= 0 && u.comrade.score <= 10, `${u.id}: 전우애가 눈금 밖이다`);
@@ -193,6 +193,25 @@ test('빡센 부대일수록 전우애가 높다 — 일과 난이도와 같이 
   // 두 부대의 실제 값
   assert.equal(UNIT_BY_ID['marine-fort'].comrade.score, 10);
   assert.equal(UNIT_BY_ID['airforce-sys'].comrade.score, 2);
+});
+
+test('전우애가 높은 부대일수록 장부가 조용하다 — 사건이 아니라 보고가 갈린다', async () => {
+  const { reportChance, incidentRisk } = await import('../js/params.js');
+  const rate = u => reportChance('minor', { comrade: u.comrade.score, macho: u.macho.score });
+
+  const byHard = UNITS.slice().sort((a, b) => a.difficulty - b.difficulty);
+  for (let i = 1; i < byHard.length; i++) {
+    assert.ok(rate(byHard[i]) <= rate(byHard[i - 1]),
+      `${byHard[i].id}가 더 빡센데 보고가 더 잘 된다 — 규칙이 뒤집혔다`);
+  }
+  const marine = UNIT_BY_ID['marine-fort'], air = UNIT_BY_ID['airforce-sys'];
+  assert.ok(rate(marine) <= 0.35, `해병 장부가 너무 시끄럽다 (${rate(marine)})`);
+  assert.ok(rate(air) >= 0.9, `공군이 작은 것을 안 올린다 (${rate(air)})`);
+
+  // 그리고 **발생은 그 반대다.** 조용한 장부가 안전한 부대라는 뜻이 아니라는 것이
+  // 이 축의 전부라서, 두 문장이 같은 테스트 안에 있어야 한다.
+  const at = u => incidentRisk({ gara: 5, conflict: 3 }, { macho: u.macho.score, difficulty: u.difficulty }).small;
+  assert.ok(at(marine) > at(air), '장부가 조용한 부대에서 사건까지 덜 난다 — 그러면 옛 모형이다');
 });
 
 test('④⑤⑥의 수치는 프롬프트에 안 나간다 — 서술만 간다', async () => {

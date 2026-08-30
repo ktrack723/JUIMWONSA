@@ -53,6 +53,7 @@ import {
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalPass, counselMental, incidentMental,
   minMentalOf, counselTakes, applyInspection, applyCensor, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
+  reportChance,
   GARA_BY_ID, GARA_TIERS, garaCap, garaAt, garaWeight, garaOverreach, garaTierOf,
   syncGaraList, inspectGara,
   censorOn, censorAhead, censorSweep, censorReport, custodyFor,
@@ -127,6 +128,13 @@ export class Engine {
       //   known  — 확인 명부 [{id, on}]. 들이닥쳐서 잡은 것만 오른다. 확인한 그날의 사실이다
       //   seen   — 장소별 마지막 확인 날짜. 명부가 얼마나 낡았는지의 근거
       gara: { active: [], known: [], seen: {}, seenAt: {} },
+      // 묻힌 사건 — **위로 안 올라간 것들.** 이 게임에서 유일하게 개수조차 화면에 안 나가는
+      // 상태다. 콜도 안 쓴다(장면이 없으니까): 주임원사가 못 본 것을 LLM이 쓸 이유가 없다.
+      // 쌓이면 큰 사고의 문턱이 앞당겨지고, 한 번 터지면 전부 같이 올라오면서 비워진다.
+      buried: [],
+      // 임기 누계. **마지막 밤에만 드러난다** — 100일을 조용히 보낸 부대가 실제로는
+      // 무슨 일을 겪었는지가 이 두 숫자의 차이다.
+      silence: { happened: 0, buried: 0, surfaced: 0 },
       // 축마다 이어진 「사유 없는 날」 수. 제자리 회복이 이 카운터를 본다 —
       // 매일 당기면 판정이 민 한 칸이 그날 저녁에 도로 돌아와서 바늘이 언다(params.js의 restDays).
       calm: { gara: 0, happy: 0, conflict: 0 },
@@ -152,6 +160,9 @@ export class Engine {
     g.seen ||= {};
     g.seenAt ||= {};
     s.calm = { gara: 0, happy: 0, conflict: 0, ...(s.calm || {}) };
+    // 묻힌 더미가 없던 시절의 저장분 — 빈 더미로 들어온다. 지난 일을 소급해서 묻지는 않는다.
+    s.buried = Array.isArray(s.buried) ? s.buried : [];
+    s.silence = { happened: 0, buried: 0, surfaced: 0, ...(s.silence || {}) };
     // 옛 저장분에는 시간대·등급이 없던 가라가 있을 수 있다 — 표에서 사라진 id는 여기서 떨어진다.
     s.censors = (s.censors || []).map(c => ({
       ...c,
@@ -226,6 +237,9 @@ export class Engine {
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
       params: { ...s.params },
       calm: { ...s.calm },
+      // 침묵의 장부. **화면은 이걸 마지막 밤에만 읽는다** — 임기 중에 띄우면 더미가
+      // 계기판이 되고, 그러면 「안 올라온다」가 「빨간 숫자로 올라온다」가 된다.
+      silence: { ...s.silence, standing: s.buried.length },
     };
   }
 
@@ -473,11 +487,23 @@ export class Engine {
           minMental: minMentalOf(this.roster.present),
           overreach: garaOverreach(s.gara.active, this.unit.intel.score),
           heat: garaWeight(s.gara.active),
+          // 위험을 미는 것은 부대의 끈끈함이 아니라 **그 부대가 그동안 안 올린 것**이다.
+          buried: s.buried.length,
         }, {
-          intel: this.unit.intel.score, macho: this.unit.macho.score,
-          comrade: this.unit.comrade.score, difficulty: effDiff,
+          macho: this.unit.macho.score, difficulty: effDiff,
         }, slot.kind, this.rng);
         if (!roll) continue;
+
+        // 사건은 났다. 이제 갈리는 것은 **올라오느냐**다.
+        // 안 올라온 사건은 여기서 끝난다 — 장면도, 지침도, 판정도, 콜도 없다.
+        // 주임원사가 못 본 것을 화면에 쓸 수는 없다. 대신 더미에 눕고 다음을 민다.
+        s.silence.happened += 1;
+        if (this.rng() >= reportChance(roll.tier, {
+          comrade: this.unit.comrade.score, macho: this.unit.macho.score,
+        })) {
+          this.#bury(slot, roll.tier, roll.cause, date);
+          continue;
+        }
 
         const incident = await this.#runIncident(slot, roll.tier, roll.cause);
         if (incident) incidents.push(incident);
@@ -498,6 +524,13 @@ export class Engine {
       present.forEach((man, i) => { man.mental = after[i]; });
       this.roster.save();
 
+      // 안 올라간 것들이 부대를 민다 — 판정도 개입도 아니고, **장부에 이유가 안 적히는 한 칸**이다.
+      // 더미가 갈등의 **바닥**이 된다: 자기 크기까지만, 하루 한 칸씩. 상한이 아니라 바닥이라
+      // 래칫이 안 된다 — 더미가 삭으면 바닥이 같이 내려가고 갈등은 제자리로 걸어 돌아간다.
+      // 드리프트보다 먼저 와야 하고, 아래 touched가 이걸 「사유 있음」으로 잡아야 한다.
+      // 안 그러면 밀어 놓은 한 칸이 그날 저녁에 제자리로 끌려가서 아무 일도 안 일어난다.
+      if (s.buried.length > s.params.conflict) s.params.conflict = clamp10(s.params.conflict + 1);
+
       // 오늘 이 축이 **사유로** 움직였는가 — 판정·개입·검열이 민 것이 전부 여기 잡힌다.
       // 새벽 대비 차이 하나로 안다: 무엇이 밀었는지는 알 필요가 없고, 밀렸는지만 알면 된다.
       const touched = Object.fromEntries(['gara', 'happy', 'conflict'].map(k => [k, s.params[k] !== dawn[k]]));
@@ -512,6 +545,9 @@ export class Engine {
       // 드리프트도 가라를 민다 — 밀었으면 목록이 따라와야 한다. 이 한 줄이 없으면 개입 없는
       // 날마다 「게이지의 개수」와 「실제 목록」이 벌어지고, 그 틈만큼 검열도 급습도 헛돈다.
       this.#syncGara();
+      // 묻힌 것이 삭는다 — 아무 일도 안 일어난 채 지나간 것들. 더미를 평형으로 만드는 자리다.
+      // 여기가 없으면 침묵이 두꺼운 부대의 문턱이 부임 3주 만에 상한에 붙어 안 돌아온다.
+      s.buried = s.buried.filter(b => s.day - (b.day ?? s.day) < TUNING.comrade.buried.fadeDays);
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
@@ -523,6 +559,9 @@ export class Engine {
         date,
         incidents: incidents.length,
         accidents: incidents.filter(i => i.escalated).length,
+        // 오늘 사고와 함께 뒤늦게 올라온 것들. 안 터진 날은 언제나 0이다 —
+        // 장부는 조용한 날에 대해서는 아무것도 모른다.
+        surfaced: incidents.reduce((n, i) => n + (i.surfaced || 0), 0),
         interventions: this.interventionsToday,
         moved: PARAM_KEYS.reduce((acc, k) => {
           const d = s.params[k] - dawn[k];
@@ -547,9 +586,12 @@ export class Engine {
     }
   }
 
-  // 사건 하나 — E-1 장면 → 지침 → E-2 결과 → E-3 확전 판정.
-  async #runIncident(slot, tier, cause = null) {
-    const s = this.state;
+  /**
+   * 사건 하나의 **코드 결정분** — 씨앗과 연루자. 올라오는 사건과 묻히는 사건이 똑같이
+   * 여기를 지난다. 갈리는 것은 그 다음이지 여기가 아니다: 묻힌 사건도 진짜로 일어난
+   * 사건이라 같은 풀에서, 같은 당김으로, 같은 사람들에게 난다.
+   */
+  #seedIncident(slot, tier, cause) {
     // 씨앗은 풀 안에서 뽑되, **어느 씨앗이 자주 뽑히는가는 부대 성향이 당긴다** —
     // 마초가 높으면 증명하려고 하는 짓이, 전우애가 얕으면 아무도 안 들어가서 커지는 일이.
     const event = pickEvent(tier, slot.kind, this.rng, {
@@ -563,9 +605,53 @@ export class Engine {
         .slice(0, event.involved)
       : pickInvolved(this.roster.present, event.involved, this.rng);
     if (!involved.length) return null;
+    return { event, involved, category: categoryFor(event) };
+  }
+
+  /**
+   * **안 올라간 사건.** 났는데 아무도 위에 말하지 않았다.
+   *
+   * 여기에는 장면도 지침도 판정도 없다 — 주임원사가 그 자리에 없었고, 그가 못 본 것을
+   * 화면이 쓸 수는 없기 때문이다. 콜도 안 나간다. 그래서 침묵이 두꺼운 부대는 **더 싸다**:
+   * 사건이 더 많이 나는데 하루 콜은 더 적다. 그 조용함의 값은 다른 자리에서 치른다.
+   *
+   * 그래도 일어난 일은 일어난 일이다:
+   *   · 연루자의 멘탈은 깎인다. 덮였다는 것은 그 사람이 안 다쳤다는 뜻이 아니다
+   *   · 더미에 눕는다. 더미는 큰 사고의 문턱을 앞당기고 잔사건 위험을 올린다
+   *   · 누계에 잡힌다. 그 숫자는 마지막 밤에만 드러난다
+   * 사고 카운터는 안 건드린다 — 무사고 기록은 **보고된 사고**의 기록이고, 그게 정확히
+   * 이 게임이 하려는 말이다. 100일 완봉한 부대의 장부와 그 부대에서 있었던 일은 다르다.
+   */
+  #bury(slot, tier, cause, date) {
+    const s = this.state;
+    const seed = this.#seedIncident(slot, tier, cause);
+    if (!seed) return null;
+    const { event, involved, category } = seed;
+    for (const man of involved) {
+      man.mental = incidentMental(man.mental ?? TUNING.mental.default, false, tier);
+    }
+    this.roster.save();
+    const rec = {
+      date, day: s.day, tier, desc: event.desc, category: category?.id || null,
+      place: event.place, slot: slot.key,
+      names: involved.map(m => m.name),
+    };
+    s.buried.push(rec);
+    // 저장 크기 상한. 위험 계산은 이미 cap에서 잘리므로 오래된 것부터 흘려보낸다 —
+    // 더미가 커질수록 앞쪽은 기록으로만 남는다.
+    const keep = TUNING.comrade.buried.keep;
+    if (s.buried.length > keep) s.buried.splice(0, s.buried.length - keep);
+    s.silence.buried += 1;
+    return rec;
+  }
+
+  // 사건 하나 — E-1 장면 → 지침 → E-2 결과 → E-3 확전 판정.
+  async #runIncident(slot, tier, cause = null) {
+    const s = this.state;
+    const seed = this.#seedIncident(slot, tier, cause);
+    if (!seed) return null;
+    const { event, involved, category } = seed;
     const place = PLACES[event.place]?.label || event.place;
-    // 유형은 코드가 안다 — 그림도 기록도 이걸 본다. 판정 콜은 늘지 않는다.
-    const category = categoryFor(event);
 
     // E-1. 사건 장면 — 활성 지침 목록이 여기 주입된다.
     this.thread.push({
@@ -578,6 +664,10 @@ export class Engine {
         // 자리만이 아니라 **지금 이 시간에** 그 자리에서 돌던 것이다. 점호 때 도는 대리 점호가
         // 오후 작업장 사건의 재료가 되면 장면이 부대에 대해 거짓말을 한다.
         garaHere: garaAt(s.gara.active, event.place, slot.key).map(id => GARA_BY_ID[id].en),
+        // 이 자리에서 전에도 있었고 아무것도 위로 안 갔다. 장면이 「처음 있는 일」로
+        // 쓰이면 그 부대에 대해 거짓말이 된다 — 올라온 것이 처음일 뿐이다.
+        // 수치는 안 나간다. 나가는 것은 「전에도 있었다」와 몇 번이었나뿐이다.
+        buriedHere: s.buried.filter(b => b.place === event.place).length,
       }),
     });
     let scene;
@@ -597,10 +687,12 @@ export class Engine {
       role: 'user',
       content: P.outcomeUser({
         directive, standing: complianceOf(s.params.rep),
-        // 개입이 없을 때 이 사건을 붙잡는 것은 **부대 자신**이고, 그 힘이 전우애다.
-        // 확전 판정(E-3)은 결과 장면만 읽으므로 — 파라미터도 부대 프롬프트도 못 본다 —
-        // 전우애가 게임에 실제로 작용하려면 **장면 자체가 갈려야** 한다. 그 갈림이 여기서 난다:
-        // 끈끈한 부대는 자기들끼리 덮고, 서로 남인 부대는 그냥 번지게 둔다.
+        // **여기 실리는 사건은 이미 올라온 사건이다.** 안 올라간 것은 이 함수에 안 온다.
+        // 그래도 전우애는 여기서 한 번 더 작용한다 — 올라온 사건에 대해서도 부대가
+        // 어디까지 자기들 선에서 끝내느냐가 다르기 때문이다. 확전 판정(E-3)은 결과 장면만
+        // 읽으므로(파라미터도 부대 프롬프트도 못 본다) 그 갈림은 **장면 자체에서** 나야 한다:
+        // 끈끈한 부대는 그 자리에서 멎게 하고 위로는 아무것도 안 보내고, 서로 남인 부대는
+        // 아무도 안 움직여서 그냥 번지게 둔다. 덮인 것은 없어진 것이 아니다.
         bond: band(this.unit.comrade.score),
       }),
     });
@@ -635,20 +727,29 @@ export class Engine {
     this.roster.save();
     // 사고가 사람을 데려간다 — 탈영은 사라지고, 부상·자해는 실려 간다. 유형만 보고 코드가 정한다.
     const absences = escalated ? this.#takeAway(involved, stamped?.id) : [];
+    let surfaced = 0;
     if (escalated) {
       // 사건이 사고가 됐다 — 무사고 카운터는 0, 그리고 자리 하나가 빈다.
       // 날짜도 파라미터도 안 돌아가고, 빠진 병사는 지워지는 것이 아니라 복귀일을 달고 명부에 남는다.
       this.accidentToday = true;
       s.streak = 0;
+      // **더미가 같이 터진다.** 사람이 실려 나가면 그동안 안 올라갔던 것도 같이 올라온다 —
+      // 조사가 시작되고, 「전에도 있었느냐」는 질문이 나오고, 그때는 다들 말한다.
+      // 사고 기재에 그 개수가 남는 이유가 그거다: 오늘 터진 것은 오늘 난 일이 아니다.
+      surfaced = s.buried.length;
+      s.buried = [];
+      s.silence.surfaced += surfaced;
       s.accidents.push({
         date: s.date, desc: event.desc, tier, category: stamped?.id || null,
+        surfaced,
         away: absences.map(a => ({ name: a.soldier.name, serial: a.soldier.serial, kind: a.kind, until: a.until })),
       });
     }
-    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped, absences });
+    // surfaced는 **사고가 난 다음에야** 화면에 간다 — 그전에 알려 주면 더미가 계기판이 된다.
+    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped, absences, surfaced });
     return {
       desc: event.desc, tier, escalated, directive: !!directive,
-      category: stamped?.id || null, absences,
+      category: stamped?.id || null, absences, surfaced,
     };
   }
 
@@ -901,14 +1002,30 @@ export class Engine {
     }
     this.#syncGara();
 
+    // **그리고 여기서 묻힌 것이 하나 올라온다.**
+    //
+    // 점검이 가라의 정체를 사는 레버라면, 이건 같은 값으로 사는 두 번째 물건이다.
+    // 안 올라온 사건에 대해 주임원사가 가진 길은 이것뿐이다 — 아무도 말해 주지 않으니
+    // 직접 들어가서 보는 수밖에 없다. 걸어 들어간 자리 것만, 한 번에 한 건만 나온다.
+    // 이 게임에서 유일하게 **더미가 줄어드는, 주임원사가 고를 수 있는 길**이다.
+    // (나머지 하나는 사고다. 그때는 전부 한꺼번에 올라오고, 그건 고르는 게 아니다.)
+    const here = s.buried.filter(b => b.place === placeKey);
+    const surfaced = here.slice(0, TUNING.comrade.buried.surfacePerInspect);
+    if (surfaced.length) {
+      s.buried = s.buried.filter(b => !surfaced.includes(b));
+      s.silence.surfaced += surfaced.length;
+    }
+
     // 놓친 것의 **개수조차** 안 돌려준다. 「3건 중 1건 적발」이라고 말해 버리면
     // 그 자리의 진짜 개수가 통째로 새고, 숨긴다는 것 자체가 의미를 잃는다.
+    // 묻힌 것도 마찬가지다 — 올라온 그 한 건만 주고, 뒤에 몇 건이 더 있는지는 안 준다.
     return {
       place: place.label, findings,
       slot: slot ? { key: slot.key, label: slot.label, time: slot.time } : null,
       effect: { ...TUNING.inspect },
       spotted: res.spotted.map(id => ({ ...GARA_BY_ID[id], grade: garaTierOf(id) })),
       pulled: pulled.map(id => GARA_BY_ID[id]),
+      surfaced: surfaced.map(b => ({ ...b, names: [...b.names] })),
     };
   }
 
@@ -1012,6 +1129,14 @@ export class Engine {
       lines,
       closing: String(out?.closing || '').trim(),
       speakers: speakers.map(x => x.serial),
+      // **임기가 끝나야 장부가 열린다.** 100일 동안 화면이 말해 온 사건 수는 「올라온 것」의
+      // 수였고, 여기서 처음으로 그 옆에 「있었던 것」의 수가 선다. 침묵이 두꺼운 부대에서는
+      // 이 두 숫자가 세 배쯤 벌어지고, 그 차이가 그 부대에 대한 이 게임의 마지막 문장이다.
+      silence: {
+        ...s.silence,
+        reported: s.silence.happened - s.silence.buried,   // 그날 바로 올라온 것
+        unknown: s.silence.buried - s.silence.surfaced,    // 끝까지 아무도 모른 것
+      },
     };
     await this.h.farewell?.({ ...s.farewell });
     return s.farewell;
