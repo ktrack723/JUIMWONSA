@@ -92,11 +92,16 @@ ${unit.songs.map(s => `· ${s.title} — ${s.note}`).join('\n')}`;
 // system 조립 — [WORLD][UNIT][ROLE] 순서. 부임 내내 바이트 동일해야 캐시가 붙는다.
 const sys = (unit, role) => `${WORLD}\n\n${unitPrompt(unit)}\n\n${role}`;
 
-// 병사 한 명의 시트 표기 — 사건·면담·브리핑 프롬프트가 같은 표기를 쓴다.
-// standing은 「몇 기 무슨 계급인가」다. 코드가 전입일에서 계산해 넘긴다 (roster.js의 rankLine).
-// 이 한 줄이 이 게임에서 제일 중요한 사회 정보다 — 누가 누구에게 말을 놓는지가 여기서 갈린다.
+// 병사 한 명의 머리줄. standing은 「몇 기 무슨 계급인가」다 — 코드가 전입일에서 계산해
+// 넘긴다(roster.js의 rankLine). 이 한 줄이 이 게임에서 제일 중요한 사회 정보다:
+// 누가 누구에게 말을 놓는지가 여기서 갈린다.
+export const soldierRoll = s =>
+  `${s.name} (${s.serial})${s.standing ? ` · ${s.standing}` : ''} · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character}`;
+
+// 머리줄 + 인물 본문. **그 병사가 직접 무언가를 하는 호출에만** 쓴다 —
+// 사건에 연루됐거나(E-1), 불려 나와 말을 하거나(I-1), 오늘 전입한(D) 경우다.
 export function soldierSheet(s) {
-  return `${s.name} (${s.serial})${s.standing ? ` · ${s.standing}` : ''} · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character} · joined ${s.joined}
+  return `${soldierRoll(s)} · joined ${s.joined}
 ${s.sheet}`;
 }
 
@@ -173,6 +178,12 @@ ${KO}`;
 export const daySystem = unit => sys(unit, DAY_ROLE);
 
 // D. 아침 브리핑 — 매일 1회. 파라미터는 밴드로만, 그마저 증상으로 바꿔 말하게 한다.
+//
+// 명부 발췌는 **머리줄만** 싣는다. 브리핑이 쓰는 것은 부대의 증상 네댓 문장이지
+// 그 넷의 내면이 아니라서, 인물 본문 서너 문장씩은 거의 쓰이지 않고 매일 정가로 다시 나간다
+// (실측: 발췌가 D user 405토큰 중 270토큰 = 67%. 머리줄로 줄이면 93토큰).
+// 본문이 필요한 자리는 따로 있다 — 오늘 전입한 놈(아래 ARRIVALS)과, 실제로 움직이거나
+// 입을 여는 놈(E-1·I-1)이다. 거기서는 soldierSheet가 그대로 나간다.
 export const BRIEFING_SCHEMA = {
   type: 'object',
   properties: {
@@ -201,8 +212,9 @@ export function briefingUser({ date, weekday, season, slots, difficulty, bands, 
 [YESTERDAY] ${yesterday || '(first day in post — no yesterday here)'}
 [ARRIVALS] ${arrivals.length ? arrivals.map(soldierSheet).join('\n') : '(none)'}
 [DEPARTURES] ${departures.length ? departures.map(s => `${s.name} (${s.serial})`).join(', ') : '(none)'}
-[ROSTER EXCERPT — soldiers likely on view today]
-${excerpt.length ? excerpt.map(soldierSheet).join('\n\n') : '(none)'}
+[ROSTER EXCERPT — soldiers likely on view today. Roll lines only: you are writing the
+unit's symptoms, not these four men's inner lives. Names and standing are what you need]
+${excerpt.length ? excerpt.map(soldierRoll).join('\n') : '(none)'}
 
 Write the morning briefing and the ambient slot lines.`;
 }

@@ -20,7 +20,7 @@ import * as P from '../js/prompts.js';
 const M = {
   cult: 'CULT표식', regs: 'REGS표식', srules: 'SRULES표식',
   intelDesc: 'INTELDESC표식', machoDesc: 'MACHODESC표식',
-  sheet: 'SHEET표식', othersheet: 'OTHERSHEET표식',
+  sheet: 'SHEET표식', othersheet: 'NEWCOMER표식',   // ⚠ 표식끼리 서로를 품으면 안 된다
   bandGara: 'BANDGARA표식', bandHappy: 'BANDHAPPY표식', bandConf: 'BANDCONF표식', bandDiff: 'BANDDIFF표식',
   feltRoom: 'FELTROOM표식', feltWork: 'FELTWORK표식', feltMood: 'FELTMOOD표식',
   honesty: 'HONESTY표식', standing: 'STANDING표식',
@@ -68,6 +68,19 @@ const I2 = P.inspectSystem(unit) + '\n' + P.inspectUser({ place: M.place, readin
 const N = P.noticeSystem(unit) + '\n' + P.noticeUser(M.notice);
 
 const has = (hay, needle) => hay.includes(needle);
+
+// 표식은 서로를 품으면 안 된다. 「OTHERSHEET표식」이 「SHEET표식」을 품고 있어서,
+// 전입자 본문이 실린 것을 발췌 본문이 실린 것으로 잘못 읽은 적이 있다 —
+// 부정 단언이 통째로 공허해지는 종류의 사고라 여기서 막는다.
+test('표식끼리 서로를 품지 않는다 — 부정 단언이 공허해지지 않게', () => {
+  const marks = Object.entries(M);
+  for (const [ka, a] of marks) {
+    for (const [kb, b] of marks) {
+      if (ka === kb) continue;
+      assert.ok(!a.includes(b), `표식 ${ka}(${a})가 ${kb}(${b})를 품는다`);
+    }
+  }
+});
 
 // ── U. 부대 프롬프트 — 재료 ─────────────────────────────
 test('U는 다섯 절을 전부 싣는다 — ①문화 ②규정 ③병사간 룰 ④지능 서술 ⑤마초 서술', () => {
@@ -151,9 +164,11 @@ test('P는 현재 파라미터·명부를 못 본다 — 전입자는 부대 상
 
 // ── D. 아침 브리핑 ──────────────────────────────────────
 test('D는 밴드·어제 요약·명부 발췌·전입을 받는다', () => {
-  for (const k of ['bandGara', 'bandHappy', 'bandConf', 'bandDiff', 'yesterday', 'sheet', 'othersheet']) {
+  for (const k of ['bandGara', 'bandHappy', 'bandConf', 'bandDiff', 'yesterday', 'othersheet']) {
     assert.ok(has(D, M[k]), `D에 ${k}가 없다`);
   }
+  // 발췌는 머리줄이라 본문(sheet)이 아니라 이름·군번이 실린다
+  assert.ok(has(D, '병사표식') && has(D, 'PRXX-표식'), 'D에 명부 발췌가 없다');
 });
 
 test('D의 지시문에 「수치를 말하지 말라. 증상으로만 말하라」가 박혀 있다', () => {
@@ -320,4 +335,29 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
 test('그래도 출력 언어 고정은 생성 블록 전부에 붙어 있다', () => {
   const KO = /Output is Korean|output in Korean/;
   for (const t of [A, Pb, D, I1, I2, N]) assert.ok(KO.test(t), '출력 언어 고정이 빠진 블록이 있다');
+});
+
+// ── 콜 비용 — 매일 정가로 나가는 것을 지킨다 ────────────
+// D의 user 메시지는 캐시가 안 붙는다(날마다 내용이 달라진다). 그래서 여기 실리는 것은
+// 100일 동안 100번 정가로 나간다 — 무엇을 싣고 무엇을 안 싣는지가 곧 비용이다.
+test('D의 명부 발췌는 머리줄만 싣는다 — 인물 본문은 매일 정가로 나갈 자리가 아니다', () => {
+  const withSheet = P.soldierSheet(soldier);
+  const rollOnly = P.soldierRoll(soldier);
+  // 발췌에 들어간 병사의 **본문**은 브리핑에 없어야 한다
+  assert.ok(!has(D, M.sheet), 'D의 명부 발췌에 인물 본문이 실렸다 — 100일이면 100번 정가다');
+  // 머리줄(이름·군번·기수계급·직무·등급)은 그대로 있어야 한다
+  for (const k of ['병사표식', 'PRXX-표식', 'JOB표식', 'GRADE표식']) {
+    assert.ok(has(D, k), `D의 명부 발췌에 ${k}가 없다 — 머리줄까지 지웠다`);
+  }
+  assert.ok(withSheet.startsWith(rollOnly), 'soldierSheet가 머리줄로 시작하지 않는다');
+  assert.ok(withSheet.length > rollOnly.length, '본문이 붙지 않았다');
+});
+
+test('오늘 전입한 놈은 본문까지 실린다 — 소개가 필요한 자리다', () => {
+  assert.ok(has(D, M.othersheet), 'D의 전입 신고에 인물 본문이 빠졌다');
+});
+
+test('실제로 움직이거나 입을 여는 자리에는 본문이 그대로 간다', () => {
+  assert.ok(has(E1, M.sheet), 'E-1 연루 병사의 본문이 빠졌다 — 장면을 쓸 수가 없다');
+  assert.ok(has(I1, M.sheet), 'I-1 면담 상대의 본문이 빠졌다 — 그 사람이 말을 못 한다');
 });

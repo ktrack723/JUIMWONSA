@@ -356,3 +356,41 @@ test('미지원 파라미터 판별이 엉뚱한 오류를 삼키지 않는다',
     '상한을 넘긴 건 미지원이 아니다 — 삼키면 상한 확대 재시도가 죽는다');
   assert.equal(unsupportedParam(''), null);
 });
+
+// ── 가격표 — 콘솔의 비용 표시가 거짓말을 하지 않게 ──────
+// 이 표가 틀리면 게임이 죽지는 않는다. 다만 요원이 보는 「약 $0.03」이 조용히 틀린다.
+// 요율은 Anthropic 공식 요율표 기준이다 (docs/research.md §13).
+test('가격표가 현행 요율과 맞다', () => {
+  const RATES = {
+    'claude-fable-5': [10, 50],
+    'claude-opus-5': [5, 25],
+    'claude-opus-4-8': [5, 25],
+    'claude-sonnet-5': [2, 10],
+    'claude-sonnet-4-6': [3, 15],
+    'claude-haiku-4-5': [1, 5],
+  };
+  for (const [id, want] of Object.entries(RATES)) {
+    assert.deepEqual(priceOf(id), want, `${id}의 단가가 요율과 다르다`);
+  }
+});
+
+test('Sonnet 5는 Sonnet 4.6보다 싸다 — 접두사 순서에 물리면 조용히 뒤집힌다', () => {
+  assert.ok(priceOf('claude-sonnet-5')[0] < priceOf('claude-sonnet-4-6')[0]);
+});
+
+test('날짜가 붙은 실제 id도 같은 단가로 읽힌다', () => {
+  assert.deepEqual(priceOf('claude-haiku-4-5-20251001'), [1, 5]);
+  assert.deepEqual(priceOf('claude-opus-5-20260101'), [5, 25]);
+});
+
+test('OpenRouter의 점 표기도 같은 표로 읽힌다 — 안 그러면 비용이 $0으로 찍힌다', () => {
+  // Anthropic은 claude-haiku-4-5, OpenRouter는 anthropic/claude-haiku-4.5로 적는다
+  assert.deepEqual(priceOf('anthropic/claude-haiku-4.5'), [1, 5]);
+  assert.deepEqual(priceOf('anthropic/claude-opus-4.5'), [5, 25]);
+  assert.deepEqual(priceOf('openai/gpt-5-mini'), [0.25, 2]);
+});
+
+test('모르는 모델은 null이다 — 아는 척하지 않는다', () => {
+  assert.equal(priceOf('google/gemini-2.5-pro'), null);
+  assert.equal(priceOf(''), null);
+});
