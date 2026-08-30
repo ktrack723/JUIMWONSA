@@ -170,3 +170,60 @@ test('❗의 높이는 코드가 정한다 — css가 bottom을 박으면 판때
   assert.ok(!/bottom:/.test(bob), '까딱임이 bottom을 만진다 — 코드가 세운 높이를 덮는다');
   assert.match(bob, /translateY/, '까딱임이 transform으로 안 돈다');
 });
+
+// ── 왼쪽 칼럼 배치 ───────────────────────────────────────
+// 좁은 화면에서 .day-left는 display:contents로 풀려 자식들이 그리드 아이템이 된다.
+// 그때 order가 없는 패널은 0으로 떨어져 **상황판보다 위로** 올라간다 — 부조리 내역과
+// 검열 내역이 그렇게 페이지 맨 위에 얹혀 있었고, 그래서 같은 종류인 가라 내역과
+// 화면 반 페이지쯤 떨어져 있었다. 새 패널을 붙일 때 조용히 재발하는 자리라 못박는다.
+const leftColumn = html => html.slice(html.indexOf('class="day-left"'), html.indexOf('class="day-right"'));
+
+test('왼쪽 칼럼의 패널은 전부 좁은 화면 순서를 가진다 — 없으면 맨 위로 튄다', async () => {
+  const [html, css] = await Promise.all([
+    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
+  ]);
+  const mq = css.match(/@media \(max-width: 900px\) \{[\s\S]*?\n\}/)[0];
+  const panels = [...leftColumn(html).matchAll(/class="panel95 ([a-z0-9-]+)/g)].map(m => m[1]);
+  assert.ok(panels.length >= 4, `왼쪽 칼럼에서 패널을 못 찾았다: ${panels}`);
+  for (const p of new Set(panels)) {
+    assert.match(mq, new RegExp(`\\.${p}\\s*\\{[^}]*order:`),
+      `.${p}에 좁은 화면 order가 없다 — display:contents 아래에서 상황판보다 위로 올라간다`);
+  }
+});
+
+test('배치는 중요도 순이다 — 상황판·계기판이 먼저고 지침이 끝이다', async () => {
+  const [html, css] = await Promise.all([
+    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
+  ]);
+  const left = leftColumn(html);
+  const at = cls => left.indexOf(cls);
+  // 오늘 무엇을 할지 정하는 것부터 — 목표(상황판) → 바늘(계기판) → 아는 것(내역) → 사람(병력)
+  assert.ok(at('hud') < at('gauges'), '계기판이 상황판보다 앞이다');
+  assert.ok(at('gauges') < at('ledger-panel'), '내역이 계기판보다 앞이다');
+  assert.ok(at('ledger-panel') < at('roster-panel'), '병력 현황이 내역보다 앞이다');
+  // 지나간 일(검열 기록)과 잘 안 바뀌는 것(지침)이 끝이다
+  assert.ok(at('roster-panel') < at('censor-panel'), '검열 기록이 병력 현황보다 앞이다');
+  assert.ok(at('censor-panel') < at('notice-board'), '활성 지침이 검열 기록보다 앞이다');
+
+  // 좁은 화면 순서도 같은 순서여야 한다 — 데스크톱과 다르면 같은 게임이 두 배치가 된다
+  const mq = css.match(/@media \(max-width: 900px\) \{[\s\S]*?\n\}/)[0];
+  const ord = cls => Number(mq.match(new RegExp(`\\.${cls}\\s*\\{[^}]*order:\\s*(\\d+)`))[1]);
+  const seq = ['ledger-panel', 'roster-panel', 'censor-panel', 'notice-board'].map(ord);
+  for (let i = 1; i < seq.length; i++) {
+    assert.ok(seq[i] > seq[i - 1], '좁은 화면 순서가 데스크톱과 어긋난다');
+  }
+});
+
+test('가라와 부조리는 한 패널 안에 붙어 있다 — 같은 종류의 안개다', async () => {
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const panel = html.match(/<div class="panel95 ledger-panel"[\s\S]*?\n          <\/div>/)[0];
+  for (const id of ['gara-tally', 'gara-known', 'gara-seen', 'abuse-tally', 'abuse-known']) {
+    assert.ok(panel.includes(`id="${id}"`), `${id}가 내역 패널 밖으로 나갔다`);
+  }
+  // 설명은 접혀 있어야 한다 — 문단이 사이에 서면 둘이 다시 멀어진다
+  assert.match(panel, /<details class="ledger-help">/, '읽는 법이 안 접혀 있다');
+  const beforeHelp = panel.slice(0, panel.indexOf('ledger-help'));
+  assert.ok(!/class="meter-note"/.test(beforeHelp), '명부 사이에 설명 문단이 서 있다');
+});
