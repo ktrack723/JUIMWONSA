@@ -46,6 +46,7 @@ import {
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
   minMentalOf, applyInspection, PLACES, TUNING,
+  GARA_BY_ID, garaCap, garaAt, syncGaraList, inspectGara,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -68,17 +69,25 @@ export class Engine {
    *   rng        — 게임 난수. 사고 롤·등급 굴림·연루자 선정이 쓴다 (테스트가 결정적으로 돈다)
    *   cosmeticRng— 연출 난수. 스프라이트 대사 뽑기가 쓴다. **게임 난수와 반드시 갈라 둔다** —
    *                한 통을 같이 쓰면 말풍선 몇 개를 뽑았느냐가 사고 확률을 밀어낸다
+   *   garaRng    — 가라의 **정체**를 뽑는 통. 어느 관행이 돌고 있고 들이닥쳤을 때 뭐가 걸리는가.
+   *                사고 확률이 보는 것은 가라의 **개수**(params.gara)뿐이고 정체는 안 본다 —
+   *                그래서 이 통도 게임 난수와 갈라 둔다. 같은 통을 쓰면 「가라 목록이 몇 칸
+   *                움직였나」가 그날의 사고 롤을 통째로 밀어낸다(말풍선 때 겪은 그 사고다).
+   *                안 주면 연출 통을 같이 쓴다.
    *   cheapModel — 판정 계열(E-3·N·I-2)을 태울 저가 모델 id. 없으면 기본 모델
    */
-  constructor(llm, { unit, roster, state, handlers, ambient = null, rng = Math.random, cosmeticRng = Math.random, cheapModel = null }) {
+  constructor(llm, { unit, roster, state, handlers, ambient = null, rng = Math.random, cosmeticRng = Math.random, garaRng = null, cheapModel = null }) {
     this.llm = llm;
     this.unit = unit;
     this.roster = roster;
     this.h = handlers || {};
     this.rng = rng;
     this.cosmeticRng = cosmeticRng;
+    this.garaRng = garaRng || cosmeticRng;
     this.cheapModel = cheapModel;
     this.state = state || Engine.newCampaign(unit);
+    this.#migrate();
+    this.#syncGara();   // 「가라 4」가 실제로 무엇 넷인지를 부임 첫날 굴려 둔다
     // 병영 소음 풀. 부임 때 한 번 채우고 100일 내내 쓴다 — 저장돼 있으면 그걸 집는다.
     this.ambient = ambient || new AmbientPool(unit);
     this.ambient.load();
@@ -99,11 +108,43 @@ export class Engine {
       day: 0,             // 부임 후 며칠째인가 (표시용)
       streak: 0,          // 무사고 연속 일수 — 사고만이 이걸 0으로 돌린다
       params: initialParams(),
-      notices: [],        // 활성 지침 목록 — E-1에 주입된다
+      notices: [],        // [{text, bans}] — 활성 지침. text는 E-1에 주입되고 bans는 가라를 막는다
+      // 가라 내역 — 게이지 눈금의 내용물.
+      //   active — 지금 돌고 있는 관행 id들. **플레이어에게 통째로는 절대 안 보인다**
+      //   known  — 확인 명부 [{id, on}]. 들이닥쳐서 잡은 것만 오른다. 확인한 그날의 사실이다
+      //   seen   — 장소별 마지막 확인 날짜. 명부가 얼마나 낡았는지의 근거
+      gara: { active: [], known: [], seen: {} },
       yesterday: '',      // 어제의 코드 요약 (⬛ → D의 입력)
       accidents: [],      // [{date, desc}] — 기록
       promoted: false,
     };
+  }
+
+  /** 옛 저장분 흡수 — 지침이 문자열 배열이던 시절, 가라 내역이 없던 시절. */
+  #migrate() {
+    const s = this.state;
+    s.notices = (s.notices || []).map(n => (typeof n === 'string'
+      ? { text: n, bans: [] }
+      : { text: String(n?.text || ''), bans: (n?.bans || []).filter(id => GARA_BY_ID[id]) }));
+    const g = s.gara || (s.gara = {});
+    g.active = (g.active || []).filter(id => GARA_BY_ID[id]);
+    g.known = (g.known || []).filter(k => GARA_BY_ID[k?.id]);
+    g.seen ||= {};
+  }
+
+  /** 지침이 막아 놓은 관행 전부. 지침을 철회하면 그 문이 다시 열린다. */
+  bannedGara() { return this.state.notices.flatMap(n => n.bans || []); }
+
+  /**
+   * 목록을 수치에 맞춘다. **수치가 원본이고 목록이 따라간다** — 가라가 오르면 새 관행이
+   * 하나 조용히 시작되고, 내리면 하나가 멎는다. 플레이어에게는 아무 통보도 없다:
+   * 계기판은 개수를 말하지만 정체는 말하지 않는다.
+   * 금지가 늘면 천장이 내려가므로 수치 자체가 눌린다 — 지침이 가라를 「제한」한다는 것이 이것이다.
+   */
+  #syncGara() {
+    const s = this.state, banned = this.bannedGara();
+    s.params.gara = Math.min(s.params.gara, garaCap(banned));
+    s.gara.active = syncGaraList(s.gara.active, s.params.gara, { banned, rng: this.garaRng });
   }
 
   /**
@@ -130,8 +171,16 @@ export class Engine {
       accidents: s.accidents.length,
       promoted: s.promoted,
       roster: this.roster.soldiers.length,
-      notices: s.notices.slice(),
-      // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
+      notices: s.notices.map(n => ({ text: n.text, bans: (n.bans || []).slice() })),
+      // 가라 내역 중 **화면이 봐도 되는 것만** 싣는다. active 목록은 여기 없다 —
+      // 계기판이 개수(params.gara)를 말하고, 명부가 확인된 것만 말한다. 그 틈이 이 게임이다.
+      gara: {
+        running: s.params.gara,                     // 몇 개가 돌고 있는가 (= 가라 게이지)
+        known: s.gara.known.map(k => ({ ...k })),   // 그중 확인한 것
+        banned: this.bannedGara(),                  // 지침으로 막아 놓은 것
+        seen: { ...s.gara.seen },                   // 장소별 마지막 확인 날짜
+        cap: garaCap(this.bannedGara()),            // 금지가 내려 놓은 천장
+      },
       params: { ...s.params },
     };
   }
@@ -382,7 +431,10 @@ export class Engine {
       role: 'user',
       content: P.incidentUser({
         slotLabel: slot.label, place, tier, event: event.desc,
-        involved: this.dressedAll(involved), notices: s.notices,
+        involved: this.dressedAll(involved), notices: s.notices.map(n => n.text),
+        // 그 자리에서 잘라먹고 있던 모서리. 사건이 거기서 자라 나오게 하는 재료다 —
+        // 실린다고 플레이어가 아는 것은 아니다. 확인 명부는 점검으로만 채워진다.
+        garaHere: garaAt(s.gara.active, event.place).map(id => GARA_BY_ID[id].en),
       }),
     });
     let scene;
@@ -421,6 +473,7 @@ export class Engine {
     const verdict = await judging;
 
     s.params = applyDirections(s.params, verdict);
+    this.#syncGara();   // 가라가 움직였으면 관행 하나가 새로 돌기 시작했거나 멎었다
     const escalated = verdict?.outcome === 'escalated';
     // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
     for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated);
@@ -492,40 +545,81 @@ export class Engine {
   }
 
   /**
-   * I-2. 불시점검 — 군기 점검이다. 계기판이 상시로 열린 게임에서 「밴드를 본다」는
-   * 원래 의의는 죽었다. 대신 이것은 파라미터를 직접 미는 유일한 결정적 레버다:
-   * 들이닥치면 일은 각이 잡히고(가라 −1) 분위기는 가라앉는다(행복 −1). 순수 코드다.
-   * LLM은 그 자리에서 눈에 띈 것(점검 소견)만 쓴다 — 장소-대응표는 그 장면의 재료로 남는다.
+   * I-2. 불시점검 — 군기 점검이다. 이제 이것이 **가라 내역을 사는 유일한 창구**다.
+   * 계기판은 「가라 4」라고만 말한다. 그 넷이 무엇인지는 들이닥쳐야 안다.
+   *
+   * 한 번 들이닥치면 세 가지가 같이 일어난다:
+   *   · 그 자리의 관행 중 일부가 적발돼 확인 명부에 오른다 — **일부다.** 나머지는 제때 치웠다.
+   *     적발 확률은 부대 지능이 정한다: 머리 좋은 부대일수록 절반쯤만 걸린다.
+   *   · 없어진 것은 명부에서 지워진다. 들어가 봤으면 아니까.
+   *   · 파라미터가 확정으로 밀린다(가라 −1 · 행복 −1). 그 −1은 「각이 잡혔다」는 **일반 효과**라
+   *     아무 관행이나 하나를 멎게 한다 — 방금 적발한 그것을 골라 끊지는 않는다.
+   *
+   * 마지막 줄이 중요하다. **점검은 정체를 사고, 관행을 끊는 것은 지침의 일이다.** 적발한 것을
+   * 점검이 스스로 끊게 해 봤더니, 한 자리에 도는 관행이 평균 한 건이라 산 정보가 같은 개입의
+   * 부수효과에 그대로 지워졌다(실측: 털고 나면 명부가 언제나 비었다). 자세한 것은 params.js의
+   * syncGaraList 주석에 남겼다.
+   * LLM은 코드가 정해 준 적발 목록을 장면으로 옮겨 쓸 뿐이다. 무엇이 걸리는지는 안 정한다.
    */
   async inspect(placeKey) {
     const place = PLACES[placeKey];
     if (!place) throw new Error(`대응표에 없는 장소: ${placeKey}`);
-    this.state.params = applyIntervention(this.state.params);
+    const s = this.state;
+    s.params = applyIntervention(s.params);
     this.interventionsToday += 1;
 
+    // 무엇이 걸리고 무엇이 숨는가 — 전부 코드다. 호출보다 먼저 끝난다.
+    const res = inspectGara({
+      active: s.gara.active, known: s.gara.known, placeKey,
+      intel: this.unit.intel.score, on: s.date, rng: this.garaRng,
+    });
+    s.gara.known = res.known;
+    s.gara.seen[placeKey] = s.date;
+
     const NAMES = { gara: 'corner-cutting', happy: 'morale', conflict: 'friction-and-abuse' };
-    const readings = Object.fromEntries(place.reveals.map(k => [NAMES[k], band(this.state.params[k])]));
+    const readings = Object.fromEntries(place.reveals.map(k => [NAMES[k], band(s.params[k])]));
     const findings = await this.#judge({
       label: `불시점검 · ${place.label}`,
       system: P.inspectSystem(this.unit),
-      user: P.inspectUser({ place: place.label, readings }),
+      user: P.inspectUser({
+        place: place.label, readings,
+        found: res.spotted.map(id => GARA_BY_ID[id].en),
+      }),
       schema: null,
     });
+
     // 효과는 장면과 무관하게 확정이다 — LLM이 폭을 정하는 자리는 이 게임에 없다.
-    this.state.params = applyInspection(this.state.params);
-    return { place: place.label, findings, effect: { ...TUNING.inspect } };
+    // 명부는 여기서 안 건드린다. 무엇이 멎었는지는 주임원사가 알 길이 없고, 방금 확인한 것이
+    // 조용히 멎었다면 그 줄은 그날부터 낡기 시작한다 — 그게 이 게임에 남겨 둔 안개다.
+    s.params = applyInspection(s.params);
+    this.#syncGara();
+
+    // 놓친 것의 **개수조차** 안 돌려준다. 「3건 중 1건 적발」이라고 말해 버리면
+    // 그 자리의 진짜 개수가 통째로 새고, 숨긴다는 것 자체가 의미를 잃는다.
+    return {
+      place: place.label, findings, effect: { ...TUNING.inspect },
+      spotted: res.spotted.map(id => GARA_BY_ID[id]),
+    };
   }
 
   /**
    * N. 공지 — 게시는 저장이고, 판정은 방향뿐이다. 반응 한 줄은 화면에서 끝난다.
    * 텍스트는 활성 지침 목록에 들어가 이후 모든 사건 생성(E-1)에 주입된다.
+   *
+   * 여기에 두 번째 일이 붙었다: 판정자가 **이 공지가 어느 관행의 문을 닫는가**를 같이 돌려준다.
+   * 판정자가 보는 것은 이 군대에 존재하는 관행의 static 대장뿐이고 — 무엇이 지금 돌고 있는지는
+   * 여전히 하나도 못 본다 — 그중 어느 것이 실제로 돌고 있었는지는 코드가 혼자 맞대 본다.
+   * 막힌 관행은 그 자리에서 멎고(가라가 그만큼 내려간다) 지침이 서 있는 한 다시 안 생긴다.
+   *
+   * 실제로 돌던 것을 끊었으면 **판정자의 가라 방향은 버린다.** 끊은 개수가 이미 그 공지의
+   * 가라 효과이기 때문이다 — 여기에 「분위기상 가라가 내려갈 듯」을 더하면 같은 것을 두 번 센다.
    */
   async postNotice(text) {
     const t = String(text || '').trim();
     if (!t) throw new Error('빈 공지는 게시할 수 없다');
-    this.state.params = applyIntervention(this.state.params);
+    const s = this.state;
+    s.params = applyIntervention(s.params);
     this.interventionsToday += 1;
-    this.state.notices.push(t);
 
     let out;
     try {
@@ -534,14 +628,34 @@ export class Engine {
         user: P.noticeUser(t), schema: P.NOTICE_SCHEMA,
       });
     } catch {
-      out = { gara: 'same', happy: 'same', conflict: 'same', reaction: '(반응이 들리지 않았다)' };
+      out = { gara: 'same', happy: 'same', conflict: 'same', bans: [], reaction: '(반응이 들리지 않았다)' };
     }
-    this.state.params = applyDirections(this.state.params, out);
-    return { reaction: String(out.reaction || '') };
+
+    const bans = [...new Set((out.bans || []).filter(id => GARA_BY_ID[id]))];
+    s.notices.push({ text: t, bans });
+    // 막은 것 중 **실제로 돌고 있던** 것들. 이 개수가 곧 이 공지가 끊어낸 가라다.
+    const cut = s.gara.active.filter(id => bans.includes(id));
+
+    s.params = applyDirections(s.params, cut.length ? { ...out, gara: 'same' } : out);
+    s.params.gara = Math.max(0, s.params.gara - cut.length);
+    this.#syncGara();
+    // 끊긴 것은 확인 명부에서도 내린다 — 내가 끊었으니 안 돌아간다는 것은 안다.
+    s.gara.known = s.gara.known.filter(k => !cut.includes(k.id));
+
+    return {
+      reaction: String(out.reaction || ''),
+      banned: bans.map(id => GARA_BY_ID[id]),
+      cut: cut.map(id => GARA_BY_ID[id]),
+    };
   }
 
-  /** 활성 지침 철회 — 게시의 반대. 판정도 호출도 없다. 평판도 안 깎인다. */
+  /**
+   * 활성 지침 철회 — 게시의 반대. 판정도 호출도 없다. 평판도 안 깎인다.
+   * 막아 뒀던 관행의 문이 다시 열린다. 다만 **끊긴 것이 되살아나지는 않는다** —
+   * 가라 수치는 내려간 자리에 그대로 있고, 문이 열렸을 뿐이다. 다시 차오르는 것은 시간의 몫이다.
+   */
   removeNotice(index) {
     this.state.notices.splice(index, 1);
+    this.#syncGara();
   }
 }

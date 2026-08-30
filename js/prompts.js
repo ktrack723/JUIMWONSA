@@ -7,12 +7,13 @@
 //   A.   병영 소음 — 부임 때 **한 번** 부르고 100일 내내 재사용하는 앰비언트 대사 풀 (🟫 cached)
 //   P.   전입 병사 생성 — 굴려진 등급(코드) + 직무·군번 → 프로필 sheet (🟫 cached)
 //   D.   아침 브리핑 — 밴드·어제 요약·명부 발췌 → 브리핑 + 슬롯별 일상 조각 (🟧 once)
-//   E-1. 사건 장면 — 슬롯·장소·심각도(코드) + 연루 병사 + 활성 지침 → 장면 (🟧)
+//   E-1. 사건 장면 — 슬롯·장소·심각도(코드) + 연루 병사 + 활성 지침 + **그 자리 가라**만 → 장면 (🟧)
 //   E-2. 대응 결과 — 장면 + 그 자리 지침(유저) + 평판 밴드 → 결과 장면 (🟧)
 //   E-3. 확전 판정 — 결과 장면 + 심각도만 본다. **지침을 못 본다** → 방향만 (⬛로 감)
 //   I-1. 면담 — 그 병사 프로필 + 자기 체감 밴드 + 솔직도 등급. **부대 파라미터를 못 본다**
-//   I-2. 불시점검 — 장소 + 그 장소가 드러내는 파라미터의 밴드만
-//   N.   공지 판정 — 공지 원문 → 방향 셋 + 익명 반응 한 줄 (반응은 화면에서 끝난다)
+//   I-2. 불시점검 — 장소 + 그 장소가 드러내는 파라미터의 밴드 + **적발된 가라만** (놓친 것은 안 준다)
+//   N.   공지 판정 — 공지 원문 + 관행 static 대장 → 방향 셋 + 금지 목록 + 익명 반응 한 줄
+//        (반응은 화면에서 끝난다. 대장은 「존재하는 종류」이지 「지금 도는 것」이 아니다)
 //
 // system 접두사는 부임 내내 바이트 동일하다 — [WORLD][UNIT][ROLE] 순서로 조립하고,
 // 가변 데이터(밴드·명부·지침 목록)는 절대 system에 넣지 않는다. 전부 user 메시지로.
@@ -29,7 +30,7 @@
 // (3) 한국어 출력 예시 — 셋뿐이다. ASCII 가상 부대로 전 블록을 지어
 // 한글이 한 글자라도 남으면 테스트가 깨진다 (tests/hierarchy.test.mjs).
 
-import { SLOT_KEYS } from './params.js';
+import { SLOT_KEYS, GARA_POOL, GARA_IDS } from './params.js';
 
 // 출력 언어 고정. 블록마다 반복한다. 한 번만 넣으면 뒤쪽 출력에서 새어나간다.
 const KO = 'Write your output in Korean. Every word of it. No English in the output.';
@@ -226,7 +227,13 @@ Write the morning briefing and the ambient slot lines.`;
 
 // E-1. 사건 장면 — 사고 롤이 성공했을 때. 후보와 심각도는 코드의 풀에서 왔다.
 // 활성 지침(공지) 목록이 여기 실린다 — 게시된 지침은 이후 모든 사건 생성에 주입된다.
-export function incidentUser({ slotLabel, place, tier, event, involved, notices = [] }) {
+// garaHere는 **그 자리에서 지금 돌아가고 있는 편법**이다. 사건이 허공에서 나지 않고
+// 부대가 평소에 잘라먹던 모서리에서 자라 나오게 하는 재료다 — 점호 인원이 안 맞는 사건은
+// 대리 점호가 돌던 생활관에서 나야 말이 된다.
+// 여기 실린다고 플레이어가 그걸 아는 것은 아니다: 장면이 그것을 입 밖에 낼 수도 있고
+// 안 낼 수도 있으며, **확인 명부는 이 호출로는 절대 안 채워진다.** 읽어서 눈치채는 것은
+// 플레이어의 몫이고, 도장을 찍어 주는 것은 여전히 불시점검뿐이다.
+export function incidentUser({ slotLabel, place, tier, event, involved, notices = [], garaHere = [] }) {
   return `[INCIDENT — the machine rolled one. Write the scene as it is found]
 · when: ${slotLabel}
 · where: ${place}
@@ -234,6 +241,9 @@ export function incidentUser({ slotLabel, place, tier, event, involved, notices 
 · what (candidate from the pool — make it concrete): ${event}
 [INVOLVED]
 ${involved.map(soldierSheet).join('\n\n')}
+[WHAT IS ALREADY BEING CUT HERE — standing practice in this place. Let the incident grow
+out of one of these where it fits naturally; never announce it as a finding]
+${garaHere.length ? garaHere.map(g => `· ${g}`).join('\n') : '(nothing worth noting — this place is run straight)'}
 [STANDING NOTICES — directives the sergeant major has posted. They shape how soldiers behave]
 ${notices.length ? notices.map((n, i) => `${i + 1}. ${n}`).join('\n') : '(none posted)'}
 
@@ -354,14 +364,24 @@ what is pinned to the wall, who looked at whom. The condition readings arrive as
 (very-low … very-high) for the aspects this place can reveal, and only those. NEVER
 repeat the words or any number — convert them into things a career soldier would notice
 and read instantly. No dialogue, no conclusions, no advice: findings only.
+
+[WHAT HE CAUGHT]
+The machine has already decided which corner-cutting he actually catches in the act and
+which stays hidden. Whatever is listed as caught, **show it as physically found** — the
+evidence of it, in the room, in front of him. Do not soften it, do not leave it out, and
+do not add a practice that is not on the list: what is not listed was hidden well enough
+today, and a man who sees nothing wrote nothing wrong. Caught nothing at all is a real
+finding too — write the room that has been squared away just in time.
 ${KO}`;
 
 export const inspectSystem = unit => sys(unit, I2_ROLE);
 
-export function inspectUser({ place, readings }) {
+export function inspectUser({ place, readings, found = [] }) {
   return `[PLACE] ${place}
 [WHAT THIS PLACE CAN REVEAL — words for you only, never repeat them]
 ${Object.entries(readings).map(([k, v]) => `· ${k}: ${label(v)}`).join('\n')}
+[CAUGHT IN THE ACT — show every one of these as evidence he finds]
+${found.length ? found.map(f => `· ${f}`).join('\n') : '(nothing caught — whatever was running here got put away in time)'}
 
 Write the inspection findings.`;
 }
@@ -375,11 +395,22 @@ export const NOTICE_SCHEMA = {
     gara: { type: 'string', enum: ['up', 'down', 'same'], description: 'Does this notice push soldiers toward cutting corners (up) or toward by-the-book work (down)?' },
     happy: { type: 'string', enum: ['up', 'down', 'same'], description: 'Does living under this notice make soldiers\' days better or worse?' },
     conflict: { type: 'string', enum: ['up', 'down', 'same'], description: 'Does this notice grow or ease pressure and abuse between soldiers?' },
+    bans: {
+      type: 'array',
+      items: { type: 'string', enum: GARA_IDS },
+      description: 'Ids of the listed practices this notice specifically and unmistakably forbids. Usually empty — only a notice that names the practice, its object or its exact situation counts',
+    },
     reaction: { type: 'string', description: 'Korean. One line an anonymous soldier mutters about this notice, out of the sergeant major\'s earshot' },
   },
-  required: ['gara', 'happy', 'conflict', 'reaction'],
+  required: ['gara', 'happy', 'conflict', 'bans', 'reaction'],
   additionalProperties: false,
 };
+
+// N의 system에 실리는 관행 목록은 **static 대장**이다 — 지금 무엇이 돌고 있는지가 아니라
+// 이 군대에 존재하는 편법의 종류 전부다. 그래서 캐시가 붙고, 그래서 새는 것이 없다:
+// 판정자는 부대의 현재 상태를 여전히 하나도 못 본다. 어느 것이 실제로 돌고 있었는지는
+// 코드가 돌려받은 id를 제 목록과 맞대 보고 혼자 안다.
+const GARA_CATALOGUE = GARA_POOL.map(g => `· ${g.id} — ${g.en}`).join('\n');
 
 const N_ROLE = `[ROLE — THE NOTICE READER]
 The sergeant major posted a barracks-life directive. You judge only the notice itself:
@@ -387,6 +418,18 @@ which way daily life bends for the soldiers of this unit if it is actually follo
 You do not know the unit's current condition — judge the text, not the situation. same
 is the honest default for a notice that changes little. Also return the one anonymous
 line — soldiers always have one.
+
+[THE PRACTICES — the standing list of corner-cutting this army knows]
+These are shortcuts units fall into. You are NOT told which of them this unit is running;
+you are only asked which ones this notice shuts the door on. Return their ids in "bans".
+Be strict, and default to none:
+· A notice must name the practice, the thing it is done to, or the exact situation it
+  happens in. "Phones go in the box and I will be counting them" closes the phone one.
+· General exhortation closes nothing. "Tighten up", "no more sloppiness", "act like
+  soldiers" — these are words, and words ban nothing. An empty list is the common answer.
+· Forbidding the thing the practice hides is not forbidding the practice. A notice about
+  keeping the store room tidy does not ban a falsified ledger.
+${GARA_CATALOGUE}
 ${KO}`;
 
 export const noticeSystem = unit => sys(unit, N_ROLE);

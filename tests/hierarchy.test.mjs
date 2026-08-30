@@ -15,6 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as P from '../js/prompts.js';
+import { GARA_IDS, GARA_POOL } from '../js/params.js';
 
 // ── 표식 부대·병사·입력 ─────────────────────────────────
 const M = {
@@ -272,8 +273,24 @@ test('N은 공지 원문과 부대 프롬프트만 받는다', () => {
   }
 });
 
-test('N의 출력은 방향 셋 + 반응 한 줄뿐이다 — 평판이 낄 자리가 없다', () => {
-  assert.deepEqual(Object.keys(P.NOTICE_SCHEMA.properties).sort(), ['conflict', 'gara', 'happy', 'reaction']);
+test('N의 출력은 방향 셋 + 금지 목록 + 반응 한 줄뿐이다 — 평판이 낄 자리가 없다', () => {
+  assert.deepEqual(Object.keys(P.NOTICE_SCHEMA.properties).sort(), ['bans', 'conflict', 'gara', 'happy', 'reaction']);
+});
+
+// bans는 「폭」이 아니라 「무엇을」이다 — 판정자는 어느 관행의 문이 닫혔는지만 고르고,
+// 그중 실제로 돌고 있던 게 몇 개였는지(=가라가 몇 칸 내려가는지)는 코드가 혼자 센다.
+test('N이 고르는 것은 대장에 있는 id뿐이다 — 자유 창작이 아니다', () => {
+  assert.deepEqual([...P.NOTICE_SCHEMA.properties.bans.items.enum].sort(), [...GARA_IDS].sort());
+});
+
+test('N은 관행 대장을 static으로만 본다 — 지금 무엇이 돌고 있는지는 못 본다', () => {
+  // 대장은 부대·상태와 무관하다. 그래서 system에 실려 캐시되고, 그래서 새는 것이 없다.
+  const a = P.noticeSystem(unit), b = P.noticeSystem({ ...unit, intel: { score: 1, desc: M.intelDesc } });
+  assert.equal(a, b, '부대 수치가 N의 system을 바꿨다');
+  for (const id of GARA_IDS) assert.ok(has(a, id), `N 대장에 ${id}가 없다`);
+  // 대장은 「존재하는 관행의 종류」이지 「지금 돌고 있는 것」이 아니다 —
+  // 어느 것이 활성인지는 프롬프트 어디에도 안 실린다.
+  assert.ok(!/active|currently running|right now/i.test(a), 'N에 현재 활성 여부가 실렸다');
 });
 
 test('어느 판정 스키마에도 평판이 없다 — 개입 횟수가 곧 평판이다', () => {
@@ -376,4 +393,36 @@ test('오늘 전입한 놈은 본문까지 실린다 — 소개가 필요한 자
 test('실제로 움직이거나 입을 여는 자리에는 본문이 그대로 간다', () => {
   assert.ok(has(E1, M.sheet), 'E-1 연루 병사의 본문이 빠졌다 — 장면을 쓸 수가 없다');
   assert.ok(has(I1, M.sheet), 'I-1 면담 상대의 본문이 빠졌다 — 그 사람이 말을 못 한다');
+});
+
+// ── 가라 내역의 차단 표 ─────────────────────────────────
+// 관행 대장은 static이라 캐시돼도 거짓말이 안 되지만, **무엇이 지금 돌고 있는가**는 상태다.
+// 그 상태가 어느 블록에 얼마나 실리는지가 이 절이 지키는 선이다.
+test('I-2에는 적발된 것만 실린다 — 놓친 것은 모형도 모른다', () => {
+  const caught = GARA_POOL[0], hidden = GARA_POOL[1];
+  const t = P.inspectUser({ place: M.place, readings: { 'corner-cutting': M.bandGara }, found: [caught.en] });
+  assert.ok(has(t, caught.en), '적발한 것이 안 실렸다');
+  assert.ok(!has(t, hidden.en), '못 잡은 것이 실렸다 — 소견이 못 본 것까지 쓰게 된다');
+});
+
+test('아무것도 못 잡은 점검도 프롬프트가 만들어진다 — 「없다」도 소견이다', () => {
+  const t = P.inspectUser({ place: M.place, readings: { 'corner-cutting': M.bandGara }, found: [] });
+  for (const g of GARA_POOL) assert.ok(!has(t, g.en), `못 잡았는데 ${g.id}가 실렸다`);
+});
+
+test('E-1에는 그 자리 것만 실린다 — 부대 전체 목록이 새면 점검이 할 일이 없어진다', () => {
+  const here = GARA_POOL[0], elsewhere = GARA_POOL.find(g => g.place !== here.place);
+  const t = P.incidentUser({
+    slotLabel: 'work', place: M.place, tier: 'minor', event: M.event,
+    involved: [soldier], garaHere: [here.en],
+  });
+  assert.ok(has(t, here.en), '그 자리 관행이 안 실렸다');
+  assert.ok(!has(t, elsewhere.en), '딴 자리 관행이 실렸다');
+});
+
+test('확인 명부는 어떤 프롬프트에도 안 실린다 — 플레이어가 뭘 안다고 믿는지는 모형의 일이 아니다', () => {
+  // 명부는 {id, on} 목록이고, 이걸 받는 빌더가 아예 없다. 블록 전부를 지어 놓고
+  // 「확인한 날짜」에 해당하는 것이 하나도 안 보이는지로 확인한다.
+  const built = [U, A, Pb, D, E1, E2, E3, I1, I2, N].join('\n');
+  assert.ok(!/confirmed|last seen|days since|명부/i.test(built), '확인 명부의 흔적이 프롬프트에 있다');
 });

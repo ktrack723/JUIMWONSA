@@ -62,21 +62,21 @@ const unit = {
 
 const memStore = memStorage;
 
-function fixture({ rng, judges = [], ambientReady = true } = {}) {
+function fixture({ rng, garaRng, judges = [], ambientReady = true, unit: u = unit } = {}) {
   const llm = new FakeLLM();
   llm.judgeQueue = judges;
   // 병영 소음은 부임 때 한 번 채워지고 끝이다. 하루 루프를 재는 테스트는 채워진 채로 시작한다.
-  const ambient = new AmbientPool(unit, { storage: memStore() });
+  const ambient = new AmbientPool(u, { storage: memStore() });
   if (ambientReady) ambient.fill([{ slot: 'reveille', text: '또 아침이네' }, { slot: 'amwork', text: '장갑 한 짝' }]);
-  const roster = new Roster(unit, { storage: memStorage() });
+  const roster = new Roster(u, { storage: memStorage() });
   for (let i = 0; i < 16; i++) {
-    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: u.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
   }
   // 부임일이 2026-05-18(월)이 되도록 오늘을 고정 — 평일이라 일과 슬롯이 산다.
-  const state = Engine.newCampaign(unit, '2026-08-26');
+  const state = Engine.newCampaign(u, '2026-08-26');
   const events = [];
   const engine = new Engine(llm, {
-    unit, roster, state, ambient, rng: rng || seqRng(),
+    unit: u, roster, state, ambient, rng: rng || seqRng(), garaRng: garaRng || seqRng(),
     handlers: {
       briefing: e => events.push(['briefing', e]),
       slot: e => {
@@ -340,7 +340,7 @@ test('공지: 게시는 저장, 판정은 방향뿐 — 평판은 판정이 못 
   const rep0 = state.params.rep, gara0 = state.params.gara;
   const out = await engine.postNotice('족구 금지');
   assert.equal(out.reaction, '또 뭘 금지한대');
-  assert.deepEqual(state.notices, ['족구 금지']);
+  assert.deepEqual(state.notices, [{ text: '족구 금지', bans: [] }]);
   assert.equal(state.params.gara, gara0 - 1, 'N 판정 방향(down)이 안 먹혔다');
   assert.equal(state.params.rep, rep0 - 1, '공지의 평판 비용은 개입 1회분이다');
   // 판정 user에 부대 상태가 없다
@@ -555,4 +555,197 @@ test('전입 병사도 멘탈을 굴려 받는다 — 저장까지', async () =>
   const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
   const arrivals = await engine.fillRoster();
   assert.ok(arrivals.every(a => typeof a.mental === 'number' && a.mental >= 0 && a.mental <= 10));
+});
+
+// ══════════════════════════════════════════════════════════
+// 가라 내역 — 개수는 계기판이, 정체는 점검이
+//
+// 이 절이 지키는 것은 「무엇을 보여주고 무엇을 숨기는가」다.
+// 화면은 진짜 목록을 절대 못 받고, 명부는 확인한 그날의 사실로만 채워진다.
+// ══════════════════════════════════════════════════════════
+
+const GARA = await import('../js/params.js');
+const placeOf = id => GARA.GARA_BY_ID[id].place;
+
+test('부임하면 「가라 4」가 실제 관행 넷이 된다 — 수치가 원본이고 목록이 따라간다', () => {
+  const { engine, state } = fixture();
+  assert.equal(state.gara.active.length, state.params.gara);
+  assert.equal(new Set(state.gara.active).size, state.gara.active.length);
+  // 부임 첫날에는 아무것도 확인돼 있지 않다 — 들이닥친 적이 없으니까
+  assert.deepEqual(state.gara.known, []);
+  assert.deepEqual(state.gara.seen, {});
+  assert.ok(engine.bannedGara().length === 0);
+});
+
+test('화면은 진짜 목록을 못 받는다 — 계기판은 개수만 말한다', () => {
+  const { engine, state } = fixture();
+  const snap = engine.snapshot();
+  assert.equal(snap.gara.running, state.params.gara, '개수는 줘야 한다 — 그건 게이지다');
+  assert.deepEqual(snap.gara.known, [], '확인한 것만 화면에 간다');
+  // 진짜 목록이 스냅샷 어딘가에 통째로 실려 있으면 안 된다
+  const dump = JSON.stringify(snap);
+  for (const id of state.gara.active) {
+    assert.ok(!dump.includes(id), `스냅샷에 확인도 안 한 ${id}가 실렸다 — 안개가 사라진다`);
+  }
+});
+
+test('들이닥치면 그 자리 것이 명부에 오른다 — 산 정보가 그 자리에서 지워지지 않는다', async () => {
+  // 적발 확률 1로 고정(rng 0) — 그 자리에서 도는 것은 전부 걸린다
+  const { engine, state } = fixture({ garaRng: () => 0 });
+  state.gara.active = GARA.GARA_IDS.slice();
+  state.params.gara = 10;   // 눈금 상한. 목록이 더 길어도 점검 끝의 sync가 눈금까지 깎는다
+  const here = state.gara.active.filter(id => placeOf(id) === 'barracks');
+  const gara0 = state.params.gara;
+
+  const out = await engine.inspect('barracks');
+  assert.deepEqual(out.spotted.map(g => g.id).sort(), here.slice().sort(), '그 자리 것이 다 안 걸렸다');
+  assert.equal(state.gara.seen.barracks, state.date, '확인 날짜가 안 찍혔다');
+  assert.equal(state.params.gara, gara0 - 1, '점검의 가라 −1이 안 먹혔다');
+  // 명부는 적발한 만큼 그대로 남는다 — 점검의 −1이 방금 산 정보를 도로 먹으면 안 된다.
+  // (그렇게 만들었다가 「털고 나면 명부가 언제나 빈다」로 물린 자리다.)
+  const known = state.gara.known.map(k => k.id).sort();
+  assert.deepEqual(known, here.slice().sort(), '적발한 것이 명부에 안 남았다');
+  for (const k of state.gara.known) assert.equal(k.on, state.date);
+});
+
+test('머리 좋은 부대는 들이닥쳐도 숨긴다 — 명부가 빈 채로 남는다', async () => {
+  // 적발 굴림을 전부 실패시킨다(rng 0.999) — 「지능 높은 부대」의 극단
+  const { engine, state } = fixture({ garaRng: () => 0.999 });
+  const key = placeOf(state.gara.active[0]);
+  const out = await engine.inspect(key);
+  assert.deepEqual(out.spotted, [], '전부 숨겼는데 걸렸다');
+  assert.deepEqual(state.gara.known, [], '못 봤는데 명부가 채워졌다');
+  // 그래도 자리는 확인한 것으로 찍힌다 — 「가 봤는데 아무것도 못 봤다」도 정보다
+  assert.equal(state.gara.seen[key], state.date);
+  // 못 잡았어도 각은 잡힌다. 다만 멎는 것은 적발과 무관한 아무거나다
+  assert.equal(state.params.gara, TUNING.start.gara - 1);
+});
+
+test('점검 소견 프롬프트에는 적발한 것만 실린다 — 숨긴 것은 모형도 모른다', async () => {
+  const { llm, engine, state } = fixture({ garaRng: () => 0 });
+  // 두 자리에서 돌게 만들어 두고 한 자리만 턴다 — 굴림에 맡기면 한 자리로 몰릴 수 있다
+  state.gara.active = GARA.GARA_IDS.slice();
+  state.params.gara = GARA.GARA_IDS.length;
+  const key = 'barracks';
+  const here = state.gara.active.filter(id => placeOf(id) === key);
+  const elsewhere = state.gara.active.filter(id => placeOf(id) !== key);
+  assert.ok(here.length && elsewhere.length, '이 단언에는 두 자리 이상의 관행이 필요하다');
+
+  await engine.inspect(key);
+  const user = llm.byLabel('불시점검')[0].messages[0].content;
+  for (const id of here) assert.ok(user.includes(GARA.GARA_BY_ID[id].en), `적발한 ${id}가 소견 재료에 없다`);
+  for (const id of elsewhere) assert.ok(!user.includes(GARA.GARA_BY_ID[id].en), `딴 자리 ${id}가 실렸다`);
+});
+
+test('사건 장면에는 그 자리에서 돌던 가라가 재료로 실린다 — 사건이 허공에서 안 난다', async () => {
+  const { llm, engine, state } = fixture({ rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.001, 0]) });
+  // 대장 전체를 돌게 만들어 어느 자리에서 사건이 나든 재료가 있게 한다
+  state.gara.active = GARA.GARA_IDS.slice();
+  state.params.gara = 10;
+  engine._directive = null;
+  await engine.runDay();
+
+  const e1 = llm.byLabel('사건 장면')[0];
+  assert.ok(e1, '사건이 안 났다');
+  const user = e1.messages.at(-1).content;
+  const mentioned = GARA.GARA_POOL.filter(g => user.includes(g.en));
+  assert.ok(mentioned.length, '그 자리 가라가 하나도 안 실렸다');
+  const places = new Set(mentioned.map(g => g.place));
+  assert.equal(places.size, 1, '한 자리 것만 실려야 한다 — 부대 전체 목록이 새면 안개가 사라진다');
+});
+
+// ── 공지 — 텍스트가 관행을 끊는 자리 ────────────────────
+test('공지가 돌던 관행을 끊으면 가라가 그만큼 내려간다', async () => {
+  const { llm, engine, state } = fixture();
+  const running = state.gara.active.slice(0, 2);
+  llm.noticeVerdict = { gara: 'up', happy: 'same', conflict: 'same', bans: running, reaction: '또 뭘 금지한대' };
+  const gara0 = state.params.gara;
+
+  const out = await engine.postNotice('폰통에 폰 안 넣는 놈들 오늘부터 내가 직접 센다');
+  assert.deepEqual(out.cut.map(g => g.id).sort(), running.slice().sort());
+  // 끊은 개수가 곧 가라 효과다 — 판정자의 gara 방향(up)은 버려진다
+  assert.equal(state.params.gara, gara0 - running.length, '끊은 만큼 안 내려갔거나, 판정 방향까지 겹쳐 셌다');
+  for (const id of running) assert.ok(!state.gara.active.includes(id), `끊은 ${id}가 아직 돈다`);
+  assert.equal(state.gara.active.length, state.params.gara, '목록과 수치가 어긋났다');
+});
+
+test('안 돌던 것을 막으면 문만 닫힌다 — 가라는 안 내려간다', async () => {
+  const { llm, engine, state } = fixture();
+  const idle = GARA.GARA_IDS.filter(id => !state.gara.active.includes(id)).slice(0, 2);
+  llm.noticeVerdict = { gara: 'same', happy: 'same', conflict: 'same', bans: idle, reaction: '뭐래' };
+  const gara0 = state.params.gara;
+
+  const out = await engine.postNotice('창고 재고는 실물과 맞춘다');
+  assert.deepEqual(out.cut, [], '안 돌던 것을 끊었다고 한다');
+  assert.deepEqual(out.banned.map(g => g.id).sort(), idle.slice().sort());
+  assert.equal(state.params.gara, gara0, '안 돌던 것을 막았는데 가라가 내려갔다');
+  assert.ok(engine.snapshot().gara.cap < GARA.GARA_POOL.length, '천장이 안 내려갔다');
+});
+
+test('막아 놓은 관행은 다시 안 생긴다 — 가라가 올라도 다른 것이 대신 선다', async () => {
+  const { llm, engine, state } = fixture();
+  const banned = GARA.GARA_IDS.slice(0, 6);
+  llm.noticeVerdict = { gara: 'same', happy: 'same', conflict: 'same', bans: banned, reaction: '하' };
+  await engine.postNotice('여섯 가지를 콕 집어 금지한다');
+
+  // 가라를 천장까지 밀어 본다
+  state.params.gara = 10;
+  await engine.postNotice('아무 말');
+  assert.ok(state.params.gara <= GARA.GARA_POOL.length - banned.length, '금지가 천장을 못 내렸다');
+  for (const id of banned) assert.ok(!state.gara.active.includes(id), `막힌 ${id}가 다시 생겼다`);
+});
+
+test('지침을 철회하면 문만 다시 열린다 — 끊긴 가라가 되살아나지는 않는다', async () => {
+  const { llm, engine, state } = fixture();
+  const running = state.gara.active.slice(0, 1);
+  llm.noticeVerdict = { gara: 'same', happy: 'same', conflict: 'same', bans: running, reaction: '흠' };
+  await engine.postNotice('그거 하지 마라');
+  const cutGara = state.params.gara;
+
+  engine.removeNotice(0);
+  assert.equal(engine.bannedGara().length, 0, '철회했는데 금지가 남았다');
+  assert.equal(engine.snapshot().gara.cap, GARA.GARA_POOL.length, '천장이 안 돌아왔다');
+  assert.equal(state.params.gara, cutGara, '철회했다고 가라가 도로 올라갔다 — 시간이 할 일이다');
+});
+
+// ── 저장·회귀 ───────────────────────────────────────────
+test('옛 저장분을 읽어도 안 죽는다 — 지침이 문자열이던 시절, 가라 내역이 없던 시절', () => {
+  const old = Engine.newCampaign(unit, '2026-08-26');
+  old.notices = ['족구 금지', '흡연장 청소'];
+  delete old.gara;
+  const { engine } = (() => {
+    const llm = new FakeLLM();
+    const roster = new Roster(unit, { storage: memStorage() });
+    return { engine: new Engine(llm, { unit, roster, state: old, handlers: {}, garaRng: seqRng() }) };
+  })();
+  assert.deepEqual(old.notices, [{ text: '족구 금지', bans: [] }, { text: '흡연장 청소', bans: [] }]);
+  assert.equal(old.gara.active.length, old.params.gara, '옛 저장분에 가라 내역이 안 깔렸다');
+  assert.deepEqual(engine.bannedGara(), []);
+});
+
+test('가라 난수는 사고 롤을 못 민다 — 말풍선 때 겪은 그 사고를 다시 안 겪는다', async () => {
+  // 게임 난수는 똑같이 주고, 가라 통만 다르게 준다. 그날의 결과가 같아야 한다.
+  const run = async (garaSeed) => {
+    const { engine, state } = fixture({
+      rng: seqRng([0.5, 0.5, 0.5, 0.5, 0.02, 0.4]),
+      garaRng: seqRng(garaSeed),
+      judges: [{ outcome: 'escalated', gara: 'up', happy: 'down', conflict: 'up' }],
+    });
+    engine._directive = '떼어놔라';
+    const snap = await engine.runDay();
+    return { streak: snap.streak, params: { ...state.params, gara: undefined }, accidents: snap.accidents };
+  };
+  assert.deepEqual(await run([0.1, 0.2, 0.3, 0.4]), await run([0.9, 0.8, 0.7, 0.6]),
+    '가라를 어느 것으로 굴렸느냐가 그날의 사고 결과를 바꿨다');
+});
+
+test('점검은 놓친 것의 개수조차 안 알려준다 — 새면 숨긴다는 것 자체가 의미를 잃는다', async () => {
+  const { engine, state } = fixture({ garaRng: () => 0.999 });   // 전부 숨긴다
+  state.gara.active = GARA.GARA_IDS.slice();
+  state.params.gara = 10;
+  const out = await engine.inspect('barracks');
+  const dump = JSON.stringify(out);
+  assert.deepEqual(out.spotted, []);
+  for (const id of GARA.GARA_IDS) assert.ok(!dump.includes(id), `놓친 ${id}가 결과에 실렸다`);
+  assert.ok(!('missed' in out), '놓친 개수가 화면으로 나간다 — 그 자리의 진짜 개수가 통째로 샌다');
 });
