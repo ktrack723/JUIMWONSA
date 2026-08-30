@@ -151,7 +151,48 @@ export const TUNING = {
   // 가라 내역 — 「가라 4」가 실제로 무엇 넷인가. 적발 확률은 부대 지능이 정한다:
   // 머리 좋은 부대일수록 잘 숨긴다. 공군의 병사간 룰이 이미 그렇게 적혀 있다
   // (「단체 채팅방에서 한 명만 빼고 방을 새로 파는 식이라 표가 안 난다」).
-  gara: { spotBase: 1.1, spotIntelPer: 0.07, spotFloor: 0.3, spotCeil: 0.95 },
+  //
+  // 거기에 축 둘이 붙었다 — **등급**과 **난이도**다.
+  //   tierHide  — 등급이 높을수록 아는 사람이 적고 조심하니 덜 걸린다. 재판급은 소수의
+  //               비밀이다. 그래서 「제일 위험한 것이 제일 안 보인다」가 이 게임의 긴장이다.
+  //   overreach — 그 균형을 깨는 자리. 관행마다 **감당에 필요한 지능(need)** 이 있고,
+  //               부대 지능이 거기 못 미치면 어설프게 굴러가서 **표가 난다.** 지능 낮은
+  //               부대에서 재판급이 돌면 주임원사에게도 검열관에게도 잘 걸린다 —
+  //               대신 걸리기 전에 사고부터 난다(overreachRisk).
+  gara: {
+    spotBase: 1.1, spotIntelPer: 0.07, spotFloor: 0.3, spotCeil: 0.95,
+    tierHide: { petty: 0, serious: -0.08, court: -0.20 },
+    overreach: 0.35,        // 감당 못 하는 난이도의 관행은 적발 확률이 이만큼 오른다
+    overreachRisk: 0.012,   // 그리고 하루 사고 롤의 잔사고 위험이 개당 이만큼 오른다
+    tierRisk: 0.008,        // 등급 rank 1당 잔사고 위험 가산 (재판급은 그 자체로 폭탄이다)
+  },
+
+  // 검열 — 정기적으로 부대를 헤집는 외부의 눈. 선글라스에 검은 옷이다.
+  //
+  // 불시점검이 주임원사가 사는 정보라면, 검열은 **사는 게 아니라 당하는 것**이다.
+  // 날짜가 미리 뜨고(warn일 전 예고), 그날 검열관들이 일과 슬롯을 따라 부대를 통과하면서
+  // 그 자리·그 시간에 돌고 있는 관행을 굴린다. 걸리면 그게 사고다 — 「가라를 많이 치면
+  // 여기서 터진다」가 이 게임의 시한폭탄이고, 주임원사가 100일을 어떻게 배분하느냐의 축이다.
+  //
+  // 검열관은 주임원사보다 세다(base가 높다). 대신 주임원사에게는 그들에게 없는 것이 둘 있다:
+  // **미리 안다**는 것과, **어느 자리를 언제 털지 고를 수 있다**는 것.
+  censor: {
+    days: [17, 38, 61, 85],   // 부임 며칠째(dayNo)에 오는가. 100일에 넷, 갈수록 빡세진다
+    labels: ['대대 검열', '연대 검열', '사단 검열', '군단 검열'],
+    warn: 3,                  // 며칠 전부터 달력에 뜨는가 — 치울 시간을 준다
+    base: 0.78,               // 검열관의 기본 적발력. 주임원사(1.1 − 지능×0.07)보다 세다
+    intelPer: 0.045,          // 부대 지능 1당 내려간다 — 머리 좋은 부대는 검열도 넘긴다
+    levelPer: 0.05,           // 회차마다 빡세진다 (대대 → 연대 → 사단 → 군단)
+    floor: 0.25, ceil: 0.98,
+    clean: { rep: +1, happy: +1 },     // 지적 0으로 넘기면 — 이 게임에서 드문 상방이다
+    flagged: { happy: -1 },            // 지적이 하나라도 나오면 부대 분위기가 언다
+    seriousConflict: 1,                // 징계감 이상이 걸리면 갈등 +1 (누구 때문이냐가 시작된다)
+    // 재판급이 걸리면 사람이 실려 나간다 — 헌병대가 그 자리에서 데려간다.
+    // 재판급이 여럿 걸려도 사고 기재는 **하루 한 건**이다(검열 하나가 사고 하나다).
+    // 데려가는 인원만 건수를 따르고, 그것도 상한이 있다 — 부대가 하루에 통째로 비면 게임이 아니다.
+    custody: { kind: 'custody', days: [10, 30] },
+    maxTaken: 2,
+  },
 
   // 사고가 사람을 데려간다 — 확전한 사건은 연루자 하나를 부대에서 실제로 빼낸다.
   // 카운터만 0으로 돌리는 사고는 종이 위의 일이었다. 탈영은 그 자리를 비우고,
@@ -337,96 +378,251 @@ export function categoryFor(event, escalated = false) {
 //
 // 필드가 한국어(화면)와 영어(프롬프트)로 갈려 있는 이유는 §9.4 때문이다 — 지시문은 영어로
 // 간다. label·desc는 화면 몫이고, en은 공지 판정(N)과 점검 소견(I-2)·사건 장면(E-1)에 실린다.
-//   place  — 어느 자리에 들이닥쳐야 보이는가 (PLACES의 열쇠)
-//   weight — 새 가라가 생길 때의 추첨 가중. 흔한 것일수록 크다
+// ── 가라의 네 요소 ────────────────────────────────────────
+// 눈금에 내용물을 붙인 뒤로 관행 하나가 들고 있는 것은 넷이다. 넷 다 게임의 축이다:
+//
+//   ① 등급(tier)  — 가벼운 가라냐, 징계감이냐, 재판급이냐. 검열에서 **터지는 것은 재판급뿐**이고
+//                   나머지는 지적사항으로 끝난다. 주임원사가 무엇을 먼저 끊어야 하는가의 축
+//   ② 자리와 시간(place·when) — **둘 다 맞아야 급습에서 잡힌다.** 대리 점호는 생활관에서
+//                   점호 시간에만 돈다 — 오후에 생활관을 털면 아무것도 없다
+//   ③ 난이도(need) — 이 관행을 제대로 굴리는 데 필요한 부대 지능. 모자라면 어설퍼서
+//                   **표가 나고**(적발↑) **사고부터 난다**(위험↑). 머리 나쁜 부대가 큰 가라를
+//                   치면 그게 그 부대의 사망 원인이 된다
+//   ④ 내용(desc·en·tell·counter) — 무엇을 어떻게 잘라먹는가. 어떤 지침을 내려야 끊기는지가
+//                   여기 있고, 검열관 앞에서 무엇이 증거로 남는지도 여기 있다
+//
+//   place   — 어느 자리에 들이닥쳐야 보이는가 (PLACES의 열쇠)
+//   when    — 어느 슬롯에 실제로 돌아가는가 (SLOT_KEYS). 그 시간이 아니면 그 자리에 가도 없다
+//   tier    — 등급 (GARA_TIERS의 열쇠)
+//   need    — 감당에 필요한 부대 지능 0~10. 부대 지능이 이보다 낮으면 어설프다
+//   cat     — 이것이 터지면 어느 사고 유형으로 기재되는가 (INCIDENT_CATEGORIES의 열쇠)
+//   weight  — 새 가라가 생길 때의 추첨 가중. 흔한 것일수록 크다
+//   tell    — 화면 몫. 적발한 뒤 「무엇을 보면 아는가」 한 줄
+//   counter — 화면 몫. 이걸 끊으려면 공지가 무엇을 콕 집어야 하는가
+
+// 등급 셋. rank가 곧 무게고, 이 표가 검열의 결과를 가른다.
+//
+// hide가 등급이 오를수록 **내려가는** 것이 이 표의 핵심이다 — 재판급은 아는 사람이 셋뿐이고
+// 그 셋은 조심한다. 「제일 위험한 것이 제일 안 보인다」가 이 게임의 긴장이고, 그걸 깨는 것이
+// 난이도(need)다: 감당 못 하는 부대가 손대면 그 순간부터 표가 난다.
+export const GARA_TIERS = {
+  petty: {
+    rank: 0, label: '가벼운 가라', short: '경',
+    en: 'petty — the everyday shortcut nobody writes up',
+    blows: false, finding: '지적사항',
+    note: '검열에서 걸려도 지적으로 끝난다. 대신 이게 부대를 굴러가게 하는 기름이다',
+  },
+  serious: {
+    rank: 1, label: '징계감', short: '중',
+    en: 'serious — a disciplinary matter the moment it surfaces',
+    blows: false, finding: '중지적',
+    note: '걸리면 강평에 남고 부대가 갈린다 — 누구 때문이냐가 시작된다',
+  },
+  court: {
+    rank: 2, label: '재판급', short: '재',
+    en: 'court-martial grade — the kind that ends in a trial',
+    blows: true, finding: '수사 의뢰',
+    note: '검열에서 걸리면 그 자리에서 사고다. 헌병대가 사람을 데려간다',
+  },
+};
+export const GARA_TIER_KEYS = Object.keys(GARA_TIERS);
+
 export const GARA_POOL = [
   {
-    id: 'proxy-rollcall', place: 'barracks', weight: 3,
+    id: 'proxy-rollcall', place: 'barracks', when: ['reveille', 'taps'], tier: 'petty', need: 2,
+    cat: 'guard', weight: 3,
     label: '대리 점호', desc: '없는 놈 몫까지 번호를 대신 외친다 — 인원은 언제나 맞는다',
+    tell: '번호가 한 박자 빠르고, 목소리 하나가 둘을 낸다',
+    counter: '점호에서 인원을 눈으로 세겠다고 못박는 공지',
     en: 'shouting the count for a man who is not there, so the roll call always comes out right',
   },
   {
-    id: 'phone-box-dodge', place: 'barracks', weight: 3,
+    id: 'phone-box-dodge', place: 'barracks', when: ['taps', 'sleep'], tier: 'petty', need: 3,
+    cat: 'violation', weight: 3,
     label: '폰통 미투입', desc: '수거함에는 넣은 척만 하고 진짜 폰은 관물대 뒤에 둔다',
+    tell: '수거함 개수는 맞는데 그중 몇 대가 공기계다',
+    counter: '휴대폰을 수거함에 넣게 하고 개수를 직접 세겠다는 공지',
     en: 'keeping a phone back instead of putting it in the collection box at lights-out',
   },
   {
-    id: 'night-duty-swap', place: 'barracks', weight: 2,
+    id: 'night-duty-swap', place: 'barracks', when: ['taps', 'sleep'], tier: 'serious', need: 3,
+    cat: 'abuse', weight: 2,
     label: '불침번 몰아주기', desc: '새벽 시간대를 짬 안 되는 놈들에게만 몰아서 짠다',
+    tell: '근무표의 02시~04시 칸에 같은 기수만 적혀 있다',
+    counter: '불침번 편성을 기수 무관하게 짜라고 콕 집는 공지',
     en: 'stacking the worst night-watch shifts onto the most junior men',
   },
   {
-    id: 'sick-call-block', place: 'barracks', weight: 1,
+    id: 'sick-call-block', place: 'barracks', when: ['reveille', 'amwork'], tier: 'serious', need: 2,
+    cat: 'health', weight: 1,
     label: '환자 열외 막기', desc: '의무대 보내면 인원이 빈다고 아픈 놈을 그냥 세운다',
+    tell: '열외자 명단은 비었는데 아침점호에 서 있는 놈 하나가 회색이다',
+    counter: '의무대 열외를 간부가 막지 못하게 하는 공지',
     en: 'keeping a sick man on duty because sending him to the aid station would leave a slot empty',
   },
   {
-    id: 'borrowed-bodies', place: 'office', weight: 2,
+    id: 'bank-book-hold', place: 'barracks', when: ['rest', 'taps'], tier: 'serious', need: 4,
+    cat: 'abuse', weight: 1,
+    label: '후임 카드 관리', desc: '선임이 후임 체크카드를 「관리해 준다」며 들고 있다',
+    tell: '관물대 하나에 제 것이 아닌 카드가 두 장 더 있다',
+    counter: '금전·카드 위탁을 이름 붙여 금지하는 공지',
+    en: 'a senior soldier holding a junior\'s bank card "for safekeeping"',
+  },
+  {
+    id: 'borrowed-bodies', place: 'office', when: ['amwork', 'pmwork'], tier: 'serious', need: 5,
+    cat: 'guard', weight: 2,
     label: '인원 대여', desc: '검열 날에 옆 부대에서 사람을 빌려와 머릿수를 맞춘다',
+    tell: '처음 보는 얼굴이 우리 부대 명찰을 달고 서 있다',
+    counter: '타 부대 인원의 일시 편입을 금지하는 공지',
     en: 'borrowing men from a neighbouring unit on inspection day to make the headcount',
   },
   {
-    id: 'ghost-logbook', place: 'office', weight: 3,
+    id: 'ghost-logbook', place: 'office', when: ['pmwork', 'rest'], tier: 'petty', need: 3,
+    cat: 'guard', weight: 3,
     label: '근무일지 선작성', desc: '근무를 서기도 전에 일지를 한 주치 미리 다 써 둔다',
+    tell: '아직 오지 않은 날짜 칸에 이미 서명이 있다',
+    counter: '일지를 근무 종료 직후에만 쓰라고 못박는 공지',
     en: 'filling in the duty logbook in advance, before the shifts have been stood',
   },
   {
-    id: 'gate-log-blank', place: 'office', weight: 2,
+    id: 'gate-log-blank', place: 'office', when: ['amwork', 'pmwork'], tier: 'petty', need: 2,
+    cat: 'guard', weight: 2,
     label: '출입 기록 공란', desc: '출입 기록을 그때그때 안 쓰고 나중에 몰아서 채운다',
+    tell: '한 주치 필적이 똑같은 펜, 똑같은 기울기다',
+    counter: '출입 기록을 그 자리에서 쓰게 하는 공지',
     en: 'leaving the gate log blank and filling a week of entries in one sitting afterwards',
   },
   {
-    id: 'safety-gear-off', place: 'worksite', weight: 3,
-    label: '안전장구 미착용', desc: '덥다고 안전모·귀마개를 벗고 작업한다',
-    en: 'working without the hard hat and ear protection because it is too hot to wear them',
+    id: 'duty-swap-cash', place: 'office', when: ['pmwork', 'rest'], tier: 'serious', need: 5,
+    cat: 'guard', weight: 1,
+    label: '근무 대타 매매', desc: '주말 근무를 돈이나 물건 받고 대신 서 준다',
+    tell: '근무표의 교체 흔적이 유독 한 사람 쪽으로만 흐른다',
+    counter: '근무 교대를 대가와 함께 주고받는 것을 금지하는 공지',
+    en: 'selling and buying weekend duty shifts for cash or goods',
   },
   {
-    id: 'training-skip', place: 'worksite', weight: 2,
-    label: '훈련 서류상 이수', desc: '체력단련과 정신교육을 서류로만 돌린다',
-    en: 'signing off physical training and safety education that nobody actually held',
+    id: 'leave-pass-forge', place: 'office', when: ['amwork', 'pmwork'], tier: 'court', need: 7,
+    cat: 'absent', weight: 1,
+    label: '휴가 위조', desc: '휴가증과 외출증을 손봐서 안 나온 날짜를 나온 것으로 만든다',
+    tell: '휴가 명령 대장과 실제 나간 날짜가 하루씩 어긋난다',
+    counter: '휴가·외출 증서의 발급과 대장 대조를 콕 집는 공지',
+    en: 'forging leave passes so days off the books look like days on them',
   },
   {
-    id: 'fake-inventory', place: 'storage', weight: 3,
+    id: 'fake-inventory', place: 'storage', when: ['pmwork', 'rest'], tier: 'serious', need: 4,
+    cat: 'supply', weight: 3,
     label: '재고 맞추기', desc: '없어진 보급품을 장부에서만 맞춰 놓는다',
+    tell: '장부의 숫자는 맞는데 선반 위 상자가 비어 있다',
+    counter: '보급 장부와 실물 대조를 명시한 공지',
     en: 'balancing the supply ledger on paper for stock that is not on the shelf',
   },
   {
-    id: 'stash-corner', place: 'storage', weight: 2,
+    id: 'stash-corner', place: 'storage', when: ['rest', 'taps', 'sleep'], tier: 'petty', need: 2,
+    cat: 'violation', weight: 2,
     label: '창고 사제 반입', desc: '창고 구석에 사제 물품과 먹을 것을 쟁여 둔다',
+    tell: '적재함 뒤쪽에 라면 박스와 담요가 한 채 서 있다',
+    counter: '창고 내 사제 물품 보관을 금지하는 공지',
     en: 'keeping contraband snacks and unauthorised gear stashed in a corner of the store room',
   },
   {
-    id: 'meal-count-pad', place: 'messhall', weight: 2,
+    id: 'fuel-siphon', place: 'storage', when: ['pmwork', 'taps'], tier: 'court', need: 6,
+    cat: 'supply', weight: 1,
+    label: '유류 빼돌리기', desc: '차량 유류를 조금씩 덜어 따로 통에 받아 둔다',
+    tell: '주유 대장의 소모량이 주행거리와 안 맞는다',
+    counter: '유류 수불을 계기판 주행거리와 대조하라고 못박는 공지',
+    en: 'siphoning vehicle fuel a little at a time into cans of their own',
+  },
+  {
+    id: 'meal-count-pad', place: 'messhall', when: ['breakfast', 'lunch', 'dinner'], tier: 'petty', need: 2,
+    cat: 'supply', weight: 2,
     label: '식수 인원 부풀리기', desc: '식수 인원을 넉넉히 올려 남는 것을 따로 챙긴다',
+    tell: '식수 인원이 병력보다 꾸준히 몇 명 많다',
+    counter: '식수 인원을 그날 병력과 맞추라고 콕 집는 공지',
     en: 'padding the headcount for meals so there is extra food to put aside',
   },
   {
-    id: 'smoke-on-duty', place: 'smoking', weight: 3,
+    id: 'safety-gear-off', place: 'worksite', when: ['amwork', 'pmwork'], tier: 'serious', need: 1,
+    cat: 'injury', weight: 3,
+    label: '안전장구 미착용', desc: '덥다고 안전모·귀마개를 벗고 작업한다',
+    tell: '안전모가 전부 한자리에 얌전히 쌓여 있다',
+    counter: '작업 중 안전장구 착용을 콕 집어 강제하는 공지',
+    en: 'working without the hard hat and ear protection because it is too hot to wear them',
+  },
+  {
+    id: 'training-skip', place: 'worksite', when: ['amwork', 'pmwork'], tier: 'petty', need: 3,
+    cat: 'guard', weight: 2,
+    label: '훈련 서류상 이수', desc: '체력단련과 정신교육을 서류로만 돌린다',
+    tell: '이수 서명이 열여섯 장인데 필적이 두 종류다',
+    counter: '교육·훈련의 실시와 서명을 같은 날에 묶는 공지',
+    en: 'signing off physical training and safety education that nobody actually held',
+  },
+  {
+    id: 'smoke-on-duty', place: 'smoking', when: ['rest', 'taps', 'sleep'], tier: 'petty', need: 2,
+    cat: 'guard', weight: 3,
     label: '근무 중 이탈', desc: '근무자가 자리를 비우고 흡연장에 잠깐 다녀온다',
+    tell: '재떨이에 근무 시간대에만 생기는 꽁초가 쌓인다',
+    counter: '근무 중 자리 이탈을 시간과 함께 금지하는 공지',
     en: 'a man on watch slipping off his post for a smoke and coming back',
   },
   {
-    id: 'ammo-count-later', place: 'armory', weight: 2,
+    id: 'ammo-count-later', place: 'armory', when: ['amwork', 'pmwork'], tier: 'serious', need: 4,
+    cat: 'firearm', weight: 2,
     label: '탄약 수불 나중에', desc: '실탄 수불을 그 자리에서 안 적고 나중에 장부를 맞춘다',
+    tell: '수불 대장의 시각이 전부 일과 종료 직후로 몰려 있다',
+    counter: '탄약 수불을 불출대에서 즉시 기재하게 하는 공지',
     en: 'signing live ammunition out and back in on paper afterwards instead of at the counter',
   },
   {
-    id: 'gate-pass-wave', place: 'guardpost', weight: 2,
+    id: 'ammo-carry-out', place: 'armory', when: ['pmwork', 'rest'], tier: 'court', need: 8,
+    cat: 'firearm', weight: 1,
+    label: '실탄 반출', desc: '사격 잔탄을 반납 안 하고 몇 발 들고 나온다',
+    tell: '탄약고 대장의 잔탄이 매번 딱 떨어진다 — 너무 딱 떨어진다',
+    counter: '사격 후 잔탄 회수와 실물 재검수를 콕 집는 공지',
+    en: 'walking live rounds out of the range instead of turning them back in',
+  },
+  {
+    id: 'gate-pass-wave', place: 'guardpost', when: ['breakfast', 'amwork', 'pmwork', 'dinner'], tier: 'petty', need: 1,
+    cat: 'guard', weight: 2,
     label: '얼굴 보고 통과', desc: '아는 얼굴은 신분 확인 없이 그냥 들여보낸다',
+    tell: '출입 대장에 기재 없이 지나간 시간대가 뭉텅이로 비어 있다',
+    counter: '예외 없는 신분 확인을 못박는 공지',
     en: 'waving a familiar face through the gate without checking his pass',
+  },
+  {
+    id: 'off-post-run', place: 'guardpost', when: ['taps', 'sleep'], tier: 'court', need: 5,
+    cat: 'absent', weight: 1,
+    label: '야간 무단 외출', desc: '점호 끝나고 위병소 옆 철조망으로 나갔다 새벽에 들어온다',
+    tell: '뒤편 철조망 아래 풀이 한 줄로 누워 있다',
+    counter: '야간 부대 이탈과 그 통로를 콕 집어 막는 공지',
+    en: 'slipping out through the fence after lights-out and back before dawn',
   },
 ];
 
 export const GARA_IDS = GARA_POOL.map(g => g.id);
 export const GARA_BY_ID = Object.fromEntries(GARA_POOL.map(g => [g.id, g]));
 
-// 표 검증 — 새 항목을 아무렇게나 못 붙이게. 장소가 대응표 밖이면 점검으로 영원히 못 본다.
+// 표 검증 — 새 항목을 아무렇게나 못 붙이게. 자리가 대응표 밖이면 점검으로 영원히 못 보고,
+// 시간이 슬롯 밖이면 **어느 시각에 들이닥쳐도 안 걸린다**. 둘 다 조용히 죽는 버그라 여기서 죽인다.
 for (const g of GARA_POOL) {
   if (!PLACES[g.place]) throw new Error(`params.js: 가라 「${g.id}」의 장소가 대응표에 없다 — ${g.place}`);
+  if (!Array.isArray(g.when) || !g.when.length) throw new Error(`params.js: 가라 「${g.id}」에 시간대가 없다 — 영원히 안 걸린다`);
+  for (const w of g.when) if (!SLOT_KEYS.includes(w)) throw new Error(`params.js: 가라 「${g.id}」의 시간대가 일과표 밖이다 — ${w}`);
+  if (!GARA_TIERS[g.tier]) throw new Error(`params.js: 가라 「${g.id}」의 등급이 표에 없다 — ${g.tier}`);
+  if (!INCIDENT_CATEGORIES[g.cat]) throw new Error(`params.js: 가라 「${g.id}」가 터졌을 때의 유형이 없다 — ${g.cat}`);
+  if (!(g.need >= 0 && g.need <= 10)) throw new Error(`params.js: 가라 「${g.id}」의 난이도가 눈금 밖이다`);
   if (!(g.weight > 0)) throw new Error(`params.js: 가라 「${g.id}」의 가중이 없다`);
-  if (!g.label || !g.desc || !g.en) throw new Error(`params.js: 가라 「${g.id}」의 표기가 부실하다`);
+  if (!g.label || !g.desc || !g.en || !g.tell || !g.counter) throw new Error(`params.js: 가라 「${g.id}」의 표기가 부실하다`);
 }
 if (new Set(GARA_IDS).size !== GARA_IDS.length) throw new Error('params.js: 가라 id 중복');
+// 자리 여덟과 슬롯 아홉 어디에도 죽은 칸이 없어야 한다 — 급습의 두 축이 자리와 시간이라
+// 어느 한 칸이 비면 플레이어가 그 칸을 고르는 것이 언제나 헛수고가 된다.
+for (const k of Object.keys(PLACES)) {
+  if (!GARA_POOL.some(g => g.place === k)) throw new Error(`params.js: 「${k}」에 깔린 가라가 하나도 없다`);
+}
+for (const k of SLOT_KEYS) {
+  if (!GARA_POOL.some(g => g.when.includes(k))) throw new Error(`params.js: 「${k}」 시간대에 도는 가라가 하나도 없다`);
+}
+if (!GARA_POOL.some(g => g.tier === 'court')) throw new Error('params.js: 재판급 가라가 하나도 없다 — 검열이 터질 자리가 없다');
 
 /** 지침이 막아 놓은 것을 뺀 가라 정원. 금지가 늘수록 가라가 오를 수 있는 천장이 내려간다. */
 export const garaCap = (banned = []) => GARA_IDS.filter(id => !banned.includes(id)).length;
@@ -466,14 +662,53 @@ export function syncGaraList(active, target, { banned = [], rng = Math.random } 
  * 들이닥쳤을 때 하나를 실제로 잡아낼 확률. **부대 지능이 정한다** — 머리가 좋을수록 잘 숨긴다.
  * 그래서 확인된 내역은 부대마다 다른 방식으로 틀린다: 둔한 부대는 다 보이고,
  * 영리한 부대는 절반쯤만 보인다.
+ *
+ * 여기에 관행 자신의 두 축이 얹힌다 (id를 주면):
+ *   · 등급이 높을수록 **덜** 걸린다 — 재판급은 아는 사람이 셋이고 그 셋은 조심한다.
+ *   · 그 관행의 난이도(need)가 부대 지능을 넘으면 **크게** 걸린다 — 감당 못 하는 짓은
+ *     어설프게 굴러가서 표가 난다. 이 항이 「제일 위험한 것이 제일 안 보인다」를 깨는 자리고,
+ *     지능 낮은 부대가 재판급에 손대면 그게 그 부대의 사망 원인이 되는 이유다.
+ * id를 안 주면 옛 계산 그대로다 — 등급도 난이도도 모르는 일반 굴림.
  */
-export function spotChance(intel) {
+export function spotChance(intel, id = null) {
   const G = TUNING.gara;
-  return Math.max(G.spotFloor, Math.min(G.spotCeil, G.spotBase - intel * G.spotIntelPer));
+  const g = id ? GARA_BY_ID[id] : null;
+  const hide = g ? (G.tierHide[g.tier] ?? 0) : 0;
+  const clumsy = g && g.need > intel ? G.overreach : 0;
+  return Math.max(G.spotFloor, Math.min(G.spotCeil, G.spotBase - intel * G.spotIntelPer + hide + clumsy));
 }
 
-/** 그 장소에서 지금 돌고 있는 가라들. */
-export const garaAt = (active, placeKey) => active.filter(id => GARA_BY_ID[id]?.place === placeKey);
+/**
+ * 그 자리에서 **그 시간에** 돌고 있는 가라들. 슬롯을 안 주면 시간을 안 따진다(그 자리 전부).
+ *
+ * 급습이 잡으려면 자리와 시간이 **둘 다** 맞아야 한다. 대리 점호는 생활관에서 점호 때만
+ * 돌기 때문에, 오후에 생활관을 털면 거기 있는 것은 아무것도 없다 — 없어서가 아니라
+ * 지금이 아니라서다. 그 차이를 코드가 알고 화면은 모른다.
+ */
+export const garaAt = (active, placeKey, slotKey = null) => active.filter(id => {
+  const g = GARA_BY_ID[id];
+  return g?.place === placeKey && (!slotKey || g.when.includes(slotKey));
+});
+
+/** 등급표를 하나 꺼낸다. 모르는 id면 제일 가벼운 것으로 떨어진다. */
+export const garaTierOf = id => GARA_TIERS[GARA_BY_ID[id]?.tier] || GARA_TIERS.petty;
+
+/** 돌고 있는 것 중 재판급만. 검열이 터지는 자리이고, 주임원사가 제일 먼저 끊어야 할 것들이다. */
+export const garaCourt = active => active.filter(id => GARA_BY_ID[id]?.tier === 'court');
+
+/**
+ * 지금 돌고 있는 것들의 **무게 합** — 개수가 아니라 등급으로 잰 위험이다.
+ * 계기판의 「가라 N」은 개수만 말한다. 같은 4라도 전부 가벼운 4와 재판급이 낀 4는
+ * 다른 부대이고, 그 차이를 드는 것이 이 값이다.
+ */
+export const garaWeight = active => active.reduce((n, id) => n + (garaTierOf(id).rank || 0), 0);
+
+/**
+ * 이 부대가 **감당 못 하는** 관행의 개수. 난이도(need)가 부대 지능보다 높은 것들이다.
+ * 사고 롤이 쓰던 `max(0, 가라 − 지능)`의 정확한 실물이다 — 그 근사치는 「개수가 머리보다
+ * 많으면 어설프다」였고, 이제는 어느 관행이 어떻게 어설픈지를 표가 안다.
+ */
+export const garaOverreach = (active, intel) => active.filter(id => (GARA_BY_ID[id]?.need ?? 0) > intel).length;
 
 /**
  * 들이닥친 결과가 **확인 명부**를 어떻게 고치는가. 순수 함수다.
@@ -486,14 +721,109 @@ export const garaAt = (active, placeKey) => active.filter(id => GARA_BY_ID[id]?.
  * 그래서 명부는 두 방향으로 틀릴 수 있다. 낡아서 틀리고(안 가 본 자리는 그날의 사실이 남는다),
  * 못 봐서 빈다(지능 높은 부대는 절반쯤 숨긴다). 그게 이 게임에 남은 마지막 안개다.
  */
-export function inspectGara({ active, known = [], placeKey, intel, on, rng = Math.random }) {
-  const here = garaAt(active, placeKey);
-  const p = spotChance(intel);
-  const spotted = here.filter(() => rng() < p);
-  const kept = known.filter(k => GARA_BY_ID[k.id]?.place !== placeKey || here.includes(k.id));
+export function inspectGara({ active, known = [], placeKey, slotKey = null, intel, on, rng = Math.random }) {
+  // 자리와 시간이 **둘 다** 맞는 것만 눈에 들어온다. 같은 생활관이라도 점호 때가 아니면
+  // 대리 점호는 거기 없다 — 멎어서가 아니라 지금이 그 시간이 아니라서다.
+  const here = garaAt(active, placeKey, slotKey);
+  const spotted = here.filter(id => rng() < spotChance(intel, id));
+  // 명부 정리 — 「들어가 봤으니 안다」는 **볼 수 있었던 것에만** 성립한다.
+  // 이 자리 것이라도 지금 시간대에 안 도는 것은 있는지 없는지 알 수가 없으므로 그대로 둔다.
+  // 이 한 줄이 없으면 아무 때나 들이닥치는 것만으로 명부가 저절로 정리돼서, 시간을 맞추는
+  // 일이 게임에서 사라진다.
+  const kept = known.filter(k => {
+    const g = GARA_BY_ID[k.id];
+    if (!g || g.place !== placeKey) return true;
+    if (slotKey && !g.when.includes(slotKey)) return true;
+    return here.includes(k.id);
+  });
   const next = kept.filter(k => !spotted.includes(k.id));
   for (const id of spotted) next.push({ id, on });
   return { spotted, missed: here.filter(id => !spotted.includes(id)), known: next };
+}
+
+// ── 검열 — 정기적으로 부대를 헤집는 외부의 눈 ─────────────
+//
+// 불시점검이 주임원사가 **사는** 정보라면, 검열은 **당하는** 것이다. 선글라스에 검은 옷을 입은
+// 검열관들이 일과 슬롯을 따라 부대를 통과하면서, 그 자리·그 시간에 돌고 있는 관행을 굴린다.
+// 걸리면 그게 사고다 — 재판급이 걸린 날 무사고 기록이 깨지고 헌병대가 사람을 데려간다.
+//
+// 주임원사에게 있는 것은 검열관에게 없는 둘이다: **미리 안다**는 것(warn일 전 예고)과,
+// **어느 자리를 언제 털지 고른다**는 것. 검열관은 그냥 일과표를 따라 걸어 들어온다.
+
+/** 이 부임일차가 검열일인가. 맞으면 회차(0부터)와 이름을 준다. */
+export function censorOn(dayNo) {
+  const C = TUNING.censor;
+  const level = C.days.indexOf(dayNo);
+  if (level < 0) return null;
+  return { level, label: C.labels[level] || C.labels.at(-1), day: dayNo };
+}
+
+/** 다음 검열이 며칠 남았는가. 예고 기간(warn) 안에 들어와야 알려준다 — 그전에는 안 보인다. */
+export function censorAhead(dayNo) {
+  const C = TUNING.censor;
+  for (let i = 0; i < C.days.length; i++) {
+    const gap = C.days[i] - dayNo;
+    if (gap > 0 && gap <= C.warn) return { level: i, label: C.labels[i] || C.labels.at(-1), in: gap, day: C.days[i] };
+  }
+  return null;
+}
+
+/**
+ * 검열관 하나가 관행 하나를 잡아낼 확률. 주임원사의 굴림(spotChance)과 같은 모양이되
+ * 기본치가 세고 회차마다 더 세진다. 등급과 난이도는 여기서도 똑같이 작용한다 —
+ * 재판급은 검열관 앞에서도 잘 숨고, 감당 못 하는 짓은 검열관 앞에서 특히 표가 난다.
+ */
+export function censorChance(intel, level = 0, id = null) {
+  const C = TUNING.censor, G = TUNING.gara;
+  const g = id ? GARA_BY_ID[id] : null;
+  const hide = g ? (G.tierHide[g.tier] ?? 0) : 0;
+  const clumsy = g && g.need > intel ? G.overreach : 0;
+  return Math.max(C.floor, Math.min(C.ceil,
+    C.base - intel * C.intelPer + level * C.levelPer + hide + clumsy));
+}
+
+/**
+ * 검열관이 슬롯 하나 동안 부대를 훑는다. **자리를 안 고른다** — 그게 주임원사와 다른 점이다.
+ * 주임원사는 하루에 한 자리를 골라 들이닥치고, 검열관들은 흩어져서 전부 뒤진다.
+ *
+ * 그래서 여기서 자리는 걸러내는 축이 아니라 「어디서 나왔는가」일 뿐이고, 거르는 축은
+ * **시간 하나**다: 지금 이 시간에 실제로 돌고 있는 것만 현장이 있다.
+ *
+ * `done`은 오늘 이미 굴린 것들이다. 관행 하나는 **검열일 하루에 정확히 한 번** 굴려진다 —
+ * 시간대가 셋인 관행이 세 번 굴려지면 넓게 도는 것일수록 자동으로 걸리고, 그러면 등급도
+ * 난이도도 안 보고 「자주 도는 것부터」 걸리는 판이 된다. 굴림은 관행마다 한 번이다.
+ *   checked — 이번 슬롯에 굴려진 것들 (걸렸든 안 걸렸든 — 오늘은 다시 안 굴린다)
+ *   caught  — 그중 실제로 걸린 것들
+ */
+export function censorSweep({ active, slotKey, intel, level = 0, rng = Math.random, done = [] }) {
+  const checked = active.filter(id => !done.includes(id) && GARA_BY_ID[id]?.when.includes(slotKey));
+  return { checked, caught: checked.filter(id => rng() < censorChance(intel, level, id)) };
+}
+
+/**
+ * 검열 하루치를 마감한다 — 걸린 것 전부를 놓고 강평이 무엇이 되는가. 순수 함수다.
+ *   findings — 등급 순으로 정렬한 적발 목록 (무거운 것이 위)
+ *   blows    — 재판급. 하나라도 있으면 **사고**다
+ *   effect   — 파라미터 확정 이동 (LLM이 폭을 정하는 자리는 여기에도 없다)
+ * 지적이 하나도 없으면 이 게임에 몇 안 되는 상방이 열린다 — 평판 +1 · 행복 +1.
+ * 그래서 검열은 벌칙이기만 한 것이 아니라 **잘 치운 100일에 값을 쳐 주는 자리**이기도 하다.
+ */
+export function censorReport(caught = []) {
+  const C = TUNING.censor;
+  const findings = [...new Set(caught)].filter(id => GARA_BY_ID[id])
+    .sort((a, b) => garaTierOf(b).rank - garaTierOf(a).rank);
+  const blows = findings.filter(id => garaTierOf(id).blows);
+  const serious = findings.filter(id => garaTierOf(id).rank >= 1);
+  const effect = findings.length
+    ? { ...C.flagged, ...(serious.length ? { conflict: C.seriousConflict } : {}) }
+    : { ...C.clean };
+  return { findings, blows, serious, clean: !findings.length, effect };
+}
+
+/** 검열이 데려가는 사람의 부재 — 유형이 아니라 검열 자신이 정한다. 헌병대가 그 자리에서 데려간다. */
+export function custodyFor(rng = Math.random) {
+  const [lo, hi] = TUNING.censor.custody.days;
+  return { kind: TUNING.censor.custody.kind, days: lo + Math.floor(rng() * (hi - lo + 1)) };
 }
 
 // ── 부재 — 사고가 데려간 사람이 어디에 있는가 ──────────────
@@ -512,6 +842,14 @@ export const ABSENCE_KINDS = {
     en: 'absent without leave — gone from the unit',
     line: (name, until) => `${name}은(는) 부대에 없다. 군무이탈 보고가 올라갔다 — 복귀 예정 ${until}.`,
     back: name => `${name} 복귀. 조사는 조사대로 남지만, 우선 인원은 채워졌다.`,
+  },
+  // 검열이 재판급을 잡아낸 날 생기는 부재. 사고가 데려가는 것이 아니라 **헌병대가 데려간다** —
+  // 조사받고 돌아오거나, 재판 결과에 따라 그대로 안 돌아오기도 하는 자리다.
+  custody: {
+    label: '구속', icon: '⛓', where: '군사경찰대',
+    en: 'in military police custody pending investigation',
+    line: (name, until) => `${name}은(는) 군사경찰대가 그 자리에서 데려갔다. 조사 종료 예정 ${until}.`,
+    back: name => `${name} 조사 종료 복귀. 처분은 처분대로 남는다.`,
   },
 };
 
@@ -615,14 +953,25 @@ export function comradeEffect(comrade) {
   };
 }
 
-export function incidentRisk({ gara, conflict, minMental = 10 }, { intel, macho, difficulty, comrade }) {
-  const R = TUNING.roll, M = TUNING.mental;
+/**
+ * overreach·heat는 **가라 목록이 있을 때만** 들어온다.
+ *   overreach — 이 부대가 감당 못 하는 관행의 개수(garaOverreach). 주면 `max(0, 가라 − 지능)`
+ *               자리를 대신한다 — 그 항은 목록이 없던 시절의 근사치였고, 이제 실물이 있다.
+ *               두 개를 같이 세면 같은 것을 두 번 세는 것이라 대체다.
+ *   heat      — 돌고 있는 것들의 등급 무게 합(garaWeight). 재판급은 개수 하나라도
+ *               그 자체로 폭탄이라, 개수만 보는 눈금이 못 잡는 위험을 이 항이 든다.
+ * 둘 다 안 주면(테스트·옛 호출) 예전 수식이 한 글자도 안 바뀐 채 그대로 나온다.
+ */
+export function incidentRisk({ gara, conflict, minMental = 10, overreach = null, heat = 0 }, { intel, macho, difficulty, comrade }) {
+  const R = TUNING.roll, M = TUNING.mental, G = TUNING.gara;
   const C = comradeEffect(comrade);
+  const clumsy = overreach == null ? Math.max(0, gara - intel) * R.dumbSloppyPer : overreach * G.overreachRisk;
   const small = Math.max(0,
     R.base
     + macho * R.machoPer
     + Math.max(0, gara + difficulty - 10) * R.hardSloppyPer
-    + Math.max(0, gara - intel) * R.dumbSloppyPer
+    + clumsy
+    + heat * G.tierRisk                             // 등급이 무거우면 개수와 무관하게 위험하다
     + C.small                                       // 전우애가 얕으면 잔갈등이 사건이 된다
     - (conflict >= R.suppressAt ? R.suppress : 0));
   // 전우애가 문턱을 밀고, 넘어선 뒤의 번짐 폭도 정한다 —
@@ -796,6 +1145,18 @@ export const minMentalOf = roster =>
   roster.length ? Math.min(...roster.map(s => s.mental ?? TUNING.mental.default)) : 10;
 
 // ── 불시점검(군기 점검) — 순수 코드 효과 ─────────────────
+/**
+ * 검열 결과를 파라미터에 꽂는다 — censorReport의 effect를 그대로 받는다.
+ * 개입과 같은 부류의 **확정 이동**이라 하루 한 칸 제한(capDay)을 안 받는다.
+ * 검열은 주임원사가 부른 것이 아니므로 평판을 개입으로 깎지 않는다 —
+ * 대신 무결점으로 넘기면 평판이 오른다(TUNING.censor.clean).
+ */
+export function applyCensor(params, effect = {}) {
+  const out = { ...params };
+  for (const k of PARAM_KEYS) if (effect[k]) out[k] = clamp(out[k] + effect[k]);
+  return out;
+}
+
 export function applyInspection(params) {
   return {
     ...params,

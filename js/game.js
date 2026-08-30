@@ -16,7 +16,7 @@ import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } f
 import {
   PLACES, PARAM_LABELS, BAND_LABELS, band,
   slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING,
-  GARA_BY_ID, ABSENCE_KINDS,
+  GARA_BY_ID, GARA_TIERS, SLOTS, ABSENCE_KINDS,
 } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
@@ -195,6 +195,42 @@ function renderHud() {
     + (s.away.length ? ` (부재 ${s.away.length})` : '');
   renderGauges();
   renderGara(s);
+  renderCensor(s);
+}
+
+// ── 검열 — 날짜는 알고 내용은 모른다 ────────────────────
+// 예고가 이 게임에서 유일하게 「미래」를 말하는 자리다. 무엇이 걸릴지는 안 알려준다 —
+// 그건 여전히 가라 명부의 일이고, 그 명부가 얼마나 낡았는지가 곧 이 예고의 무게다.
+function renderCensor(snap) {
+  const c = snap.censor;
+  const box = $('#hud-censor');
+  if (c.today) {
+    box.className = 'hud-censor today';
+    box.innerHTML = `🕶 <b>${escapeHtml(c.today.label)}</b> — 오늘이다. 검열관들이 부대 안에 있다.`;
+  } else if (c.next) {
+    box.className = `hud-censor soon d${c.next.in}`;
+    box.innerHTML = `🕶 <b>${escapeHtml(c.next.label)}</b> — ${c.next.in}일 뒤 (부임 ${c.next.day}일차). 치울 시간은 지금뿐이다.`;
+  } else {
+    box.className = 'hud-censor hidden';
+    box.innerHTML = '';
+  }
+
+  const list = c.history;
+  $('#censor-panel').classList.toggle('hidden', !list.length);
+  $('#censor-list').innerHTML = [...list].reverse().map(h => {
+    const rows = h.findings.map(id => {
+      const g = GARA_BY_ID[id]; if (!g) return '';
+      const t = GARA_TIERS[g.tier];
+      return `<span class="cf tier-${g.tier}">${escapeHtml(t.short)} ${escapeHtml(g.label)}</span>`;
+    }).join('');
+    return `<li class="${h.clean ? 'clean' : h.blows.length ? 'blown' : 'flagged'}">
+      <div class="cl-head"><b>${escapeHtml(h.label)}</b> <span class="dim">${escapeHtml(h.date)} · 부임 ${h.day}일차</span></div>
+      ${h.clean
+    ? '<div class="cl-body clean">지적사항 없음 — 강평지가 백지로 올라갔다. 평판 +1 · 행복 +1</div>'
+    : `<div class="cl-body">${rows}</div>`}
+      ${h.blows.length ? `<div class="cl-blow">■ 재판급 적발 — 사고 기재${h.taken.length ? ` · ${h.taken.map(t => escapeHtml(t.name)).join('·')} 구속` : ''}</div>` : ''}
+    </li>`;
+  }).join('');
 }
 
 const daysBetween = (a, b) =>
@@ -221,6 +257,10 @@ function garaEmptyLine(g, unknown) {
   return g.running ? '확인된 것 없음 — 방금 턴 자리에는 없었다.' : '아는 한 지금 도는 것은 없다.';
 }
 
+/** 시간대 id들을 사람이 읽는 한 줄로. 슬롯 이름은 일과표가 들고 있다. */
+const SLOT_LABEL = Object.fromEntries(SLOTS.map(x => [x.key, x.label]));
+const whenLine = when => (when || []).map(k => SLOT_LABEL[k] || k).join(' · ');
+
 function renderGara(snap) {
   const g = snap.gara, today = snap.date;
   const knownIds = g.known.map(k => k.id);
@@ -230,6 +270,7 @@ function renderGara(snap) {
   //   낡음   — 명부가 계기판보다 많다. 최소 그만큼은 이미 멎었다는 뜻이다
   const unknown = Math.max(0, g.running - knownIds.length);
   const stale = Math.max(0, knownIds.length - g.running);
+  const courtKnown = knownIds.filter(id => GARA_BY_ID[id]?.tier === 'court').length;
 
   $('#gara-tally').innerHTML =
     `<span class="gt-run" title="계기판의 가라 수치 그대로다">돌고 있음 <b>${g.running}</b></span>` +
@@ -237,7 +278,10 @@ function renderGara(snap) {
     (stale
       ? `<span class="gt-stale" title="명부가 계기판보다 많다 — 확인한 뒤 조용히 멎은 것이 있다">낡음 <b>≥${stale}</b></span>`
       : `<span class="gt-unknown${unknown ? ' on' : ''}" title="돌고 있는데 아직 못 본 것">미확인 <b>${unknown}</b></span>`) +
-    (g.banned.length ? `<span class="gt-ban" title="지침이 서 있는 한 다시 안 생긴다">금지 <b>${g.banned.length}</b> · 천장 ${g.cap}</span>` : '');
+    (g.banned.length ? `<span class="gt-ban" title="지침이 서 있는 한 다시 안 생긴다">금지 <b>${g.banned.length}</b> · 천장 ${g.cap}</span>` : '')
+    // 확인된 것 중 재판급이 몇인가. 미확인 쪽에 몇이 숨어 있는지는 여전히 아무도 모른다 —
+    // 그래서 이 숫자는 「안심해도 된다」가 아니라 「최소한 이만큼은 있다」로 읽혀야 한다.
+    + (courtKnown ? `<span class="gt-court on" title="확인된 것 중 재판급. 검열에서 터지는 것은 이것뿐이다">재판급 <b>${courtKnown}</b></span>` : '');
 
   // 확인된 것 — 오래된 것부터가 아니라 **낡은 것부터** 위로. 다시 가 봐야 할 자리가 먼저 보인다.
   const rows = g.known
@@ -246,11 +290,16 @@ function renderGara(snap) {
   $('#gara-known').innerHTML = rows.length
     ? rows.map(r => {
       const cls = r.age >= 14 ? 'stale' : r.age >= 4 ? 'aging' : 'fresh';
-      return `<li class="${cls}">
+      const t = GARA_TIERS[r.tier];
+      return `<li class="${cls} tier-${r.tier}">
+        <span class="gk-grade tier-${r.tier}" title="${escapeHtml(t.note)}">${escapeHtml(t.label)}</span>
         <span class="gk-place">${escapeHtml(PLACES[r.place]?.label || '')}</span>
         <span class="gk-label">${escapeHtml(r.label)}</span>
         <span class="gk-age">${r.age === 0 ? '오늘 확인' : `${r.age}일 전`}</span>
+        <span class="gk-when" title="이 시간에만 돈다 — 다른 시간에 그 자리를 털면 없다">${escapeHtml(whenLine(r.when))}</span>
         <span class="gk-desc">${escapeHtml(r.desc)}</span>
+        <span class="gk-tell">눈으로 보면 — ${escapeHtml(r.tell)}</span>
+        <span class="gk-counter">끊으려면 — ${escapeHtml(r.counter)}</span>
       </li>`;
     }).join('')
     : `<li class="dim empty">${garaEmptyLine(g, unknown)}</li>`;
@@ -266,7 +315,11 @@ function renderGara(snap) {
     const on = g.seen[k];
     const age = on ? daysBetween(on, today) : null;
     const cls = on == null ? 'never' : age >= 14 ? 'stale' : age >= 4 ? 'aging' : 'fresh';
-    return `<span class="gs ${cls}">${escapeHtml(p.label)} <b>${on == null ? '미확인' : age === 0 ? '오늘' : `${age}일`}</b></span>`;
+    // 언제 봤는지까지 적는다 — 낮에 본 생활관과 점호 때 본 생활관은 같은 자리가 아니다.
+    const at = g.seenAt?.[k] ? ` ${SLOT_LABEL[g.seenAt[k]] || ''}` : '';
+    return `<span class="gs ${cls}" title="${on == null ? '한 번도 안 털었다' : `마지막으로 본 것은 ${escapeHtml(on)}${escapeHtml(at)}`}">`
+      + `${escapeHtml(p.label)} <b>${on == null ? '미확인' : age === 0 ? '오늘' : `${age}일`}</b>`
+      + `${at ? `<i class="gs-at">${escapeHtml(at.trim())}</i>` : ''}</span>`;
   }).join('');
 }
 
@@ -547,6 +600,49 @@ function makeHandlers() {
       for (const d of departures || []) await addEntry('sys', `${who(d)} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
       for (const a of arrivals || []) await addEntry('sys', `${who(a)} 전입 신고 — ${a.job}, 군번 ${a.serial}.`, { typed: false });
     },
+    // 검열관 입장. 콜은 안 나간다 — 정해진 사람들이 정해진 모습으로 들어온다.
+    censorOpen: async ({ label, date }) => {
+      sfx.bad();
+      $('#screen-day').classList.add('censor-day');
+      await addEntry('censor', `🕶 ${label} · ${date}\n연병장에 승합차 두 대가 섰다. 선글라스에 검은 야상, 명찰 없음. `
+        + '인사도 없이 클립보드를 펴 들고 부대 안으로 흩어진다 — 오늘 하루, 이 부대의 모든 문은 그들 것이다.',
+      { typed: false });
+      renderHud();
+    },
+    // 슬롯마다 어디를 뒤졌고 무엇이 걸렸는가. 안 걸린 자리도 「거기까지 갔다」는 말은 해 준다 —
+    // 아무 말이 없으면 유저는 그 자리가 안전한 건지 안 뒤진 건지 알 수가 없다.
+    censorSlot: async ({ slot, places, found }) => {
+      const where = places.length ? places.join(' · ') : '부대 곳곳';
+      if (!found.length) {
+        return await addEntry('censor', `🕶 [${slot.label}] ${where} — 서랍을 열고, 닫고, 다음 자리로 갔다.`, { typed: false });
+      }
+      sfx.bad();
+      const rows = found.map(f => `· [${f.grade.label}] ${f.label} — ${f.tell}`).join('\n');
+      await addEntry('censor', `🕶 [${slot.label}] ${where}\n${rows}`, { typed: false });
+    },
+    censorReport: async (out) => {
+      $('#screen-day').classList.remove('censor-day');
+      await addEntry('censor', `🕶 ${out.label} 강평\n${out.review}`);
+      if (out.clean) {
+        sfx.love();
+        await addEntry('stamp', '□ 지적사항 없음 — 강평지가 백지로 올라갔다. 평판 +1 · 행복 +1', { typed: false });
+      } else {
+        const line = out.sheet.map(g => `[${g.grade.label}] ${g.label}`).join(' · ');
+        await addEntry('stamp', `▣ 적발 ${out.findings.length}건 — ${line}\n걸린 것은 그 자리에서 멎는다 (가라 −${out.findings.length}).`, { typed: false });
+      }
+      if (out.blows.length) {
+        sfx.trombone();
+        await addEntry('stamp', `■ 재판급 적발 — ${out.blows.map(id => GARA_BY_ID[id]?.label).filter(Boolean).join(' · ')}. `
+          + '사고 대장에 기재된다. 무사고 기록 0일로 회귀.', { typed: false });
+        for (const a of out.absences || []) {
+          const kind = ABSENCE_KINDS[a.kind];
+          if (kind) await addEntry('stamp', `${kind.icon} ${kind.line(a.soldier.name, a.until)}`, { typed: false });
+        }
+        renderRoster();
+      }
+      renderHud();
+      saveCampaign();
+    },
     slot: async ({ index, slot, line, chatter }) => {
       renderTimeline(index);
       stageTo(slot, chatter);
@@ -724,6 +820,7 @@ function holdGate() {
   state.holdWanted = false;
   $('#btn-hold').classList.remove('armed');
   panel('#intervene-panel', true);
+  renderInspectClock();
   showIvTab('interview');
   return new Promise(resolve => { state.holdRelease = resolve; });
 }
@@ -736,6 +833,25 @@ function releaseHold() {
 function showIvTab(tab) {
   for (const t of ['interview', 'inspect', 'notice']) panel(`#iv-${t}`, t === tab);
   $$('.iv-tab').forEach(b => b.classList.toggle('danger', b.dataset.tab === tab));
+  if (tab === 'inspect') renderInspectClock();
+}
+
+/**
+ * 지금 몇 시인가 — 점검 탭의 제일 중요한 한 줄이다.
+ * 자리는 유저가 고르지만 시간은 못 고른다: 일과를 세운 그 시각이 곧 급습 시각이다.
+ * 그래서 「생활관을 언제 털 것인가」가 하루를 어느 슬롯에서 세우느냐의 문제가 된다.
+ *
+ * **무엇이 도는지는 여기서도 안 알려준다.** 알려주는 것은 시각 하나뿐이고, 그 시각에 무엇이
+ * 도는가는 명부를 읽어서 아는 것이다 — 명부의 「이 시간에만 돈다」 줄이 그래서 거기 있다.
+ */
+function renderInspectClock() {
+  const slot = state.engine?.slotNow;
+  const el = $('#inspect-when');
+  if (!el) return;
+  el.innerHTML = slot
+    ? `지금은 <b>${escapeHtml(slot.label)} ${escapeHtml(slot.time)}</b>다. `
+      + '이 시각에 그 자리에서 도는 것만 잡힌다 — 시간이 어긋나면 방은 깨끗하다.'
+    : '일과 밖이다 — 시간을 안 따진다.';
 }
 
 // ── 개입 셋 ─────────────────────────────────────────────
@@ -778,13 +894,19 @@ async function doInspect() {
   if (!out) return;
   // 적발 목록은 소견 아래에 **따로** 박아 준다. 산문에 묻히면 명부에 뭐가 올랐는지 모른다.
   const caught = out.spotted.length
-    ? `\n적발 — ${out.spotted.map(g => g.label).join(' · ')} (명부에 올렸다. 끊으려면 지침이다)`
-    : '\n적발 없음 — 제때 치웠거나, 여기서는 아무것도 안 돌고 있었다.';
-  await addEntry('inspect', `🔦 군기 점검 · ${out.place}\n${out.findings}${caught}`, { typed: false });
+    ? `\n적발 — ${out.spotted.map(g => `[${g.grade.label}] ${g.label}`).join(' · ')} (명부에 올렸다)`
+    : '\n적발 없음 — 제때 치웠거나, 지금 이 시간 여기서는 아무것도 안 돌고 있었다.';
+  // 재판급은 정체만 사고 나오는 것이 아니다. 그 자리에서 끊긴다.
+  const pulled = out.pulled.length
+    ? `\n■ 재판급이라 그 자리에서 끊었다 — ${out.pulled.map(g => g.label).join(' · ')} (가라 추가 −${out.pulled.length})`
+    : '';
+  const when = out.slot ? ` · ${out.slot.label} ${out.slot.time}` : '';
+  await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}`, { typed: false });
   renderHud();
   saveCampaign();
+  if (out.pulled.length) sfx.trombone();
   toast(out.spotted.length
-    ? `${out.spotted.length}건 적발 — 가라 −1 · 행복 −1 · 평판 −1`
+    ? `${out.spotted.length}건 적발 — 가라 −${1 + out.pulled.length} · 행복 −1 · 평판 −1`
     : '각은 잡혔지만 잡은 건 없다 — 가라 −1 · 행복 −1 · 평판 −1');
 }
 

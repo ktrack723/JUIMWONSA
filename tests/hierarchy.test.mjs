@@ -69,6 +69,9 @@ const I1 = P.interviewSystem(unit) + '\n'
   + P.interviewOpen({ soldier: { ...soldier, spirit: M.spirit }, felt: { room: M.feltRoom, work: M.feltWork }, honesty: M.honesty, question: M.question })
   + '\n' + P.interviewFollowup('FOLLOWUP표식');
 const I2 = P.inspectSystem(unit) + '\n' + P.inspectUser({ place: M.place, readings: { 'corner-cutting': M.bandGara } });
+const C = P.censorSystem(unit) + '\n' + P.censorUser({
+  level: 'LEVEL표식', found: [{ en: 'GARAEN표식', grade: 'GRADE표식', place: M.place }], clean: false, blown: true,
+});
 const N = P.noticeSystem(unit) + '\n' + P.noticeUser(M.notice);
 const F = P.farewellSystem(unit) + '\n' + P.farewellUser({
   tone: 'grand', morale: M.bandHappy, clean: false, speakers: [soldier],
@@ -413,7 +416,9 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
     'E-2(개입없음)': P.outcomeUser({ directive: null, standing: 'partial', bond: 'very-low' }),
     'E-3': P.JUDGE_SYSTEM + P.judgeUser({ scene: 'it ended', tier: 'minor' }),
     'I-1': P.interviewSystem(ascii) + P.interviewOpen({ soldier: aSoldier, felt: { room: 'mid', work: 'mid', mood: 'low' }, honesty: 'guarded', question: 'how is it' }) + P.interviewFollowup('and then'),
-    'I-2': P.inspectSystem(ascii) + P.inspectUser({ place: 'yard', readings: { morale: 'low' } }),
+    'I-2': P.inspectSystem(ascii) + P.inspectUser({ place: 'yard', readings: { morale: 'low' }, when: 'midday (12:00)' }),
+    C: P.censorSystem(ascii) + P.censorUser({ level: 'battalion inspection', found: [{ en: 'a shortcut', grade: 'petty', place: 'yard' }], clean: false, blown: true }),
+    'C(무결점)': P.censorUser({ level: 'battalion inspection', found: [], clean: true, blown: false }),
     N: P.noticeSystem(ascii) + P.noticeUser('no soccer'),
     F: P.farewellSystem(ascii) + P.farewellUser({ tone: 'grand', morale: 'very-high', clean: true, speakers: [aSoldier] }),
     'F(아무도없음)': P.farewellUser({ tone: 'none', morale: 'very-low', clean: false, speakers: [] }),
@@ -436,7 +441,7 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
 
 test('그래도 출력 언어 고정은 생성 블록 전부에 붙어 있다', () => {
   const KO = /Output is Korean|output in Korean/;
-  for (const t of [A, Pb, D, I1, I2, N, F]) assert.ok(KO.test(t), '출력 언어 고정이 빠진 블록이 있다');
+  for (const t of [A, Pb, D, I1, I2, C, N, F]) assert.ok(KO.test(t), '출력 언어 고정이 빠진 블록이 있다');
 });
 
 // ── 콜 비용 — 매일 정가로 나가는 것을 지킨다 ────────────

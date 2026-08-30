@@ -77,6 +77,9 @@
             <div class="hud-row"><span class="hud-k">진급 심사일</span><span id="hud-review" class="hud-v"></span></div>
             <div class="hud-row"><span class="hud-k">사고 누계</span><span id="hud-accidents" class="hud-v"></span></div>
             <div class="hud-row"><span class="hud-k">부대</span><span id="hud-unit" class="hud-v"></span></div>
+            <!-- 검열 예고 — 주임원사가 검열관에게 가진 유일한 우위다. 날짜는 알고 내용은 모른다.
+                 예고 기간 밖에서는 이 줄 자체가 없다. -->
+            <div id="hud-censor" class="hud-censor hidden"></div>
           </div>
           <!-- 부대 계기판 — 다섯 파라미터 상시 노출. 수치는 화면 몫이고,
                프롬프트에는 여전히 밴드만 나간다 (숫자가 새면 테스트가 깨진다). -->
@@ -99,7 +102,16 @@
             <div class="gara-sub">자리별 마지막 확인</div>
             <div id="gara-seen" class="gara-seen"></div>
             <p class="meter-note">이 명부는 <b>확인한 그날의 사실</b>이지 지금의 사실이 아니다.
-              안 가 본 자리는 낡고, 머리 좋은 부대는 들이닥쳐도 절반쯤 숨긴다.</p>
+              안 가 본 자리는 낡고, 머리 좋은 부대는 들이닥쳐도 절반쯤 숨긴다.<br>
+              들이닥칠 때는 <b>자리와 시간이 둘 다 맞아야</b> 잡힌다 — 점호 때 도는 것은 오후에 생활관을 털어도 없다.
+              <b class="tier-court">재판급</b>은 눈앞에서 나오면 그 자리에서 끊긴다. 나머지는 정체만 사고, 끊는 것은 지침의 일이다.</p>
+          </div>
+          <!-- 검열 내역 — 당한 것의 기록. 가라 명부와 달리 안 낡는다: 지나간 일이다. -->
+          <div id="censor-panel" class="panel95 censor-panel hidden" data-title="🕶 검열 내역">
+            <ul id="censor-list" class="censor-list"></ul>
+            <p class="meter-note">검열관은 <b>자리를 안 고른다</b> — 흩어져서 전부 뒤진다. 대신 그 시간에
+              실제로 돌고 있는 것만 현장이 잡힌다. <b class="tier-court">재판급</b>이 하나라도 걸리면 그날이 사고다.
+              <b>지적 0으로 넘기면</b> 평판 +1 · 행복 +1 — 이 게임에 몇 안 되는 상방이다.</p>
           </div>
           <div class="panel95 roster-panel" data-title="병력 현황">
             <div id="roster-list" class="roster-list"></div>
@@ -161,10 +173,15 @@
             </div>
             <div id="iv-inspect" class="iv-body hidden">
               <label>들이닥칠 장소 <select id="inspect-where"></select></label>
+              <p id="inspect-when" class="inspect-when"></p>
               <p class="dim small"><b>가라 내역을 사는 유일한 창구</b>다. 그 자리에서 돌던 관행이
-                적발되면 명부에 오르고, 적발된 것부터 그 자리에서 멎는다(<b>가라 −1</b>) —
+                적발되면 명부에 오르고, 각이 잡히면서 아무거나 하나가 멎는다(<b>가라 −1</b>) —
                 대신 분위기는 가라앉는다(<b>행복 −1</b>). 전부 걸리지는 않는다: <b>머리 좋은 부대일수록 잘 숨긴다.</b><br>
-                장소 이름 옆에 적힌 것은 그 자리에 무엇이 돌고 있고 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
+                <b>지금 이 시간에 그 자리에서 도는 것만 잡힌다.</b> 대리 점호는 점호 때만 돌고, 실탄 반출은
+                일과 뒤에만 돈다 — 자리를 맞춰도 시간이 어긋나면 방은 깨끗하다.<br>
+                <b class="tier-court">재판급</b>을 눈앞에서 잡으면 그 자리에서 끊긴다(<b>가라 추가 −1</b>).
+                검열 전에 폭탄을 뽑는 유일한 방법이다.<br>
+                장소 이름 옆에 적힌 것은 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
               <div class="radio-btns">
                 <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1 · 평판 −1)</button>
               </div>

@@ -686,3 +686,195 @@ test('달력은 제자리를 넘어서 밀지 않는다 — 계절이 한 축을
   for (let d = 0; d < 40; d++) p = PM.applyDrift(p, 9, { interventions: 1, baseline: 8 });
   assert.equal(p.conflict, S.conflict, `계절이 갈등을 ${p.conflict}까지 밀었다 — 축이 죽으면 큰 사고의 문이 안 열린다`);
 });
+
+// ══════════════════════════════════════════════════════════
+// 가라의 네 요소 — 등급 · 자리와 시간 · 난이도 · 내용
+//
+// 눈금에 내용물을 붙인 다음의 계약이다: 관행 하나는 **무슨 일이 나는가**(등급),
+// **언제 어디서 도는가**(자리·시간), **감당이 되는가**(난이도), **뭘 잘라먹는가**(내용)를
+// 전부 들고 있어야 한다. 넷 중 하나라도 비면 그 관행은 게임에서 죽은 칸이 된다.
+// ══════════════════════════════════════════════════════════
+
+test('관행 하나는 등급·시간·난이도·내용을 전부 들고 있다', () => {
+  for (const g of PM.GARA_POOL) {
+    assert.ok(PM.GARA_TIERS[g.tier], `${g.id}의 등급이 표에 없다`);
+    assert.ok(g.when.length && g.when.every(k => PM.SLOT_KEYS.includes(k)), `${g.id}의 시간대가 일과표 밖이다`);
+    assert.ok(g.need >= 0 && g.need <= 10, `${g.id}의 난이도가 눈금 밖이다`);
+    assert.ok(PM.INCIDENT_CATEGORIES[g.cat], `${g.id}가 터졌을 때의 유형이 없다`);
+    assert.ok(g.tell && g.counter, `${g.id}에 단서나 대응책이 없다`);
+  }
+  // 등급 셋이 다 쓰여야 한다 — 재판급이 없으면 검열이 터질 자리가 없고,
+  // 가벼운 것이 없으면 「너무 잡지 마라」가 성립하지 않는다.
+  for (const t of PM.GARA_TIER_KEYS) {
+    assert.ok(PM.GARA_POOL.some(g => g.tier === t), `${t} 등급의 관행이 대장에 하나도 없다`);
+  }
+  // 터지는 것은 재판급뿐이다. 이 한 줄이 「무엇을 먼저 끊을 것인가」의 전부다.
+  assert.deepEqual(PM.GARA_TIER_KEYS.filter(t => PM.GARA_TIERS[t].blows), ['court']);
+});
+
+test('자리 여덟과 시간 아홉에 죽은 칸이 없다 — 어느 칸을 골라도 헛수고가 아니어야 한다', () => {
+  for (const k of Object.keys(PM.PLACES)) {
+    assert.ok(PM.GARA_POOL.some(g => g.place === k), `${k}에 깔린 관행이 없다`);
+  }
+  for (const k of PM.SLOT_KEYS) {
+    assert.ok(PM.GARA_POOL.some(g => g.when.includes(k)), `${k} 시간대에 도는 관행이 없다`);
+  }
+});
+
+test('급습은 자리와 시간이 둘 다 맞아야 한다 — 하나만 맞으면 방은 비어 있다', () => {
+  const roll = 'proxy-rollcall';   // 생활관 · 점호 때
+  const g = PM.GARA_BY_ID[roll];
+  assert.deepEqual(PM.garaAt([roll], g.place, g.when[0]), [roll]);
+  const wrongTime = PM.SLOT_KEYS.find(k => !g.when.includes(k));
+  assert.deepEqual(PM.garaAt([roll], g.place, wrongTime), [], '시간이 어긋났는데 잡혔다');
+  const wrongPlace = Object.keys(PM.PLACES).find(k => k !== g.place);
+  assert.deepEqual(PM.garaAt([roll], wrongPlace, g.when[0]), [], '자리가 어긋났는데 잡혔다');
+  // 시간을 안 주면 옛 동작 그대로 — 그 자리 전부다
+  assert.deepEqual(PM.garaAt([roll], g.place), [roll]);
+});
+
+test('등급이 높을수록 덜 걸리고, 감당 못 하는 난이도는 표가 난다', () => {
+  const intel = 5;
+  const petty = PM.GARA_POOL.find(g => g.tier === 'petty' && g.need <= intel);
+  const court = PM.GARA_POOL.find(g => g.tier === 'court' && g.need <= intel);
+  assert.ok(petty && court, '비교할 관행이 대장에 없다');
+  assert.ok(PM.spotChance(intel, court.id) < PM.spotChance(intel, petty.id),
+    '재판급이 가벼운 것보다 잘 걸린다 — 그러면 안개가 안 생긴다');
+
+  // 같은 재판급이라도 부대가 감당을 못 하면 크게 걸린다
+  const hard = PM.GARA_POOL.find(g => g.tier === 'court' && g.need >= 7);
+  assert.ok(PM.spotChance(hard.need - 3, hard.id) > PM.spotChance(hard.need, hard.id),
+    '감당 못 하는 부대에서 더 잘 걸려야 한다 — 어설프면 표가 난다');
+  // 지능이 오르면 전반적으로 덜 걸린다(등급을 고정한 채)
+  assert.ok(PM.spotChance(8, petty.id) < PM.spotChance(2, petty.id));
+  // id를 안 주면 옛 계산 그대로다
+  assert.equal(PM.spotChance(4), Math.max(PM.TUNING.gara.spotFloor,
+    Math.min(PM.TUNING.gara.spotCeil, PM.TUNING.gara.spotBase - 4 * PM.TUNING.gara.spotIntelPer)));
+});
+
+test('명부 정리는 볼 수 있었던 것에만 성립한다 — 시간이 안 맞으면 판단을 유보한다', () => {
+  const id = 'proxy-rollcall';
+  const g = PM.GARA_BY_ID[id];
+  const known = [{ id, on: '2026-05-01' }];
+  const offHours = PM.SLOT_KEYS.find(k => !g.when.includes(k));
+
+  // 안 도는 시간에 들어갔다 — 없어졌는지 아닌지 알 수가 없다. 명부는 그대로 남는다.
+  const a = PM.inspectGara({ active: [], known, placeKey: g.place, slotKey: offHours, intel: 5, on: '2026-05-10', rng: () => 0 });
+  assert.deepEqual(a.known, known);
+  // 도는 시간에 들어갔는데 없었다 — 이제는 안다. 지운다.
+  const b = PM.inspectGara({ active: [], known, placeKey: g.place, slotKey: g.when[0], intel: 5, on: '2026-05-10', rng: () => 0 });
+  assert.deepEqual(b.known, []);
+  // 도는 시간에 들어갔고 있었다 — 날짜가 오늘로 새로 찍힌다
+  const c = PM.inspectGara({ active: [id], known, placeKey: g.place, slotKey: g.when[0], intel: 5, on: '2026-05-10', rng: () => 0 });
+  assert.deepEqual(c.spotted, [id]);
+  assert.deepEqual(c.known, [{ id, on: '2026-05-10' }]);
+});
+
+test('무게 합과 감당 못 하는 개수는 개수가 못 보는 것을 본다', () => {
+  const court = PM.GARA_POOL.filter(g => g.tier === 'court').slice(0, 1).map(g => g.id);
+  const petty = PM.GARA_POOL.filter(g => g.tier === 'petty').slice(0, 3).map(g => g.id);
+  // 가벼운 셋보다 재판급 하나가 무겁다 — 계기판의 「3 대 1」이 뒤집히는 자리다
+  assert.ok(PM.garaWeight(court) > PM.garaWeight(petty), '재판급 하나가 가벼운 셋보다 가볍다');
+  assert.equal(PM.garaWeight([]), 0);
+  assert.deepEqual(PM.garaCourt([...court, ...petty]), court);
+
+  const hard = PM.GARA_POOL.find(g => g.need >= 7);
+  assert.equal(PM.garaOverreach([hard.id], hard.need - 1), 1, '감당 못 하는데 안 세어졌다');
+  assert.equal(PM.garaOverreach([hard.id], hard.need), 0, '감당되는데 세어졌다');
+});
+
+test('감당 못 하는 관행과 무거운 등급은 사고 위험을 올린다 — 목록이 있을 때만', () => {
+  const unit = { intel: 5, macho: 5, difficulty: 5, comrade: 5 };
+  const base = PM.incidentRisk({ gara: 4, conflict: 3 }, unit);
+  const over = PM.incidentRisk({ gara: 4, conflict: 3, overreach: 2 }, unit);
+  const hot = PM.incidentRisk({ gara: 4, conflict: 3, overreach: 0, heat: 4 }, unit);
+  assert.ok(over.small > PM.incidentRisk({ gara: 4, conflict: 3, overreach: 0 }, unit).small,
+    '감당 못 하는 관행이 위험을 안 올린다');
+  assert.ok(hot.small > PM.incidentRisk({ gara: 4, conflict: 3, overreach: 0 }, unit).small,
+    '무거운 등급이 위험을 안 올린다');
+  // 목록을 안 주면 옛 수식 그대로 — 회귀 테스트 전부가 이 한 줄에 기대고 있다
+  assert.equal(base.small, PM.incidentRisk({ gara: 4, conflict: 3 }, unit).small);
+});
+
+// ══════════════════════════════════════════════════════════
+// 검열 — 선글라스에 검은 옷. 밖에서 들어온 눈
+// ══════════════════════════════════════════════════════════
+
+test('검열은 정해진 날에 오고, 사흘 전부터 보인다 — 치울 시간이 곧 게임이다', () => {
+  const C = PM.TUNING.censor;
+  for (const d of C.days) {
+    assert.ok(PM.censorOn(d), `부임 ${d}일차가 검열일이 아니다`);
+    assert.equal(PM.censorOn(d).day, d);
+    // 예고는 warn일 안에서만 보인다 — 100일 전체가 보이면 예고가 아니라 달력이다
+    assert.equal(PM.censorAhead(d - C.warn)?.day, d, '예고 첫날이 안 보인다');
+    assert.equal(PM.censorAhead(d - 1)?.in, 1, '하루 전인데 남은 날이 안 맞는다');
+    // 검열 당일에는 오늘 것이 예고로 안 뜬다 — 오늘은 예고가 아니라 오늘이다
+    assert.notEqual(PM.censorAhead(d)?.day, d);
+  }
+  // 예고 기간 밖은 안 보인다. 첫 검열 기준으로 못박는다.
+  assert.equal(PM.censorAhead(C.days[0] - C.warn - 1), null, '예고 기간 밖인데 보인다');
+  assert.equal(PM.censorOn(1), null);
+  assert.equal(PM.censorAhead(1), null, '부임 첫날에 아직 안 보여야 한다');
+  assert.equal(PM.censorAhead(C.days.at(-1) + 1), null, '마지막 검열 뒤에도 예고가 뜬다');
+  // 갈수록 빡세진다
+  for (let i = 1; i < C.days.length; i++) {
+    assert.ok(PM.censorChance(5, i) > PM.censorChance(5, i - 1), '회차가 올라가는데 안 빡세진다');
+  }
+  // 검열관은 주임원사보다 세다 — 등급을 안 보는 일반 굴림끼리 비교한다
+  assert.ok(PM.censorChance(5, 0) > 0 && PM.censorChance(9, 0) < PM.censorChance(3, 0),
+    '지능이 검열 적발을 안 누른다');
+});
+
+test('검열관은 자리를 안 고른다. 대신 관행 하나는 하루에 딱 한 번 굴려진다', () => {
+  const g = PM.GARA_BY_ID['proxy-rollcall'];
+  const active = [g.id];
+  // 그 시간이 아니면 굴려지지도 않는다
+  const off = PM.censorSweep({ active, slotKey: PM.SLOT_KEYS.find(k => !g.when.includes(k)), intel: 5, rng: () => 0 });
+  assert.deepEqual(off.checked, []);
+  assert.deepEqual(off.caught, []);
+  // 그 시간이면 굴려지고, 굴림이 낮으면 걸린다
+  const on = PM.censorSweep({ active, slotKey: g.when[0], intel: 5, rng: () => 0 });
+  assert.deepEqual(on.checked, [g.id]);
+  assert.deepEqual(on.caught, [g.id]);
+  // 이미 굴린 것은 다음 시간대에 다시 안 굴린다 — 넓게 도는 것일수록 저절로 걸리면
+  // 등급도 난이도도 안 보고 「자주 도는 것부터」 걸리는 판이 된다
+  const again = PM.censorSweep({ active, slotKey: g.when[1], intel: 5, rng: () => 0, done: [g.id] });
+  assert.deepEqual(again.checked, []);
+});
+
+test('강평은 무거운 것부터 적히고, 재판급 하나면 그날이 사고다', () => {
+  const court = PM.GARA_POOL.find(g => g.tier === 'court').id;
+  const petty = PM.GARA_POOL.find(g => g.tier === 'petty').id;
+  const r = PM.censorReport([petty, court]);
+  assert.deepEqual(r.findings, [court, petty], '무거운 것이 위로 안 왔다');
+  assert.deepEqual(r.blows, [court]);
+  assert.equal(r.clean, false);
+  assert.equal(r.effect.happy, PM.TUNING.censor.flagged.happy);
+  assert.equal(r.effect.conflict, PM.TUNING.censor.seriousConflict, '징계감 이상인데 갈등이 안 올랐다');
+
+  // 가벼운 것만 걸리면 사고가 아니다 — 지적으로 끝난다
+  const light = PM.censorReport([petty]);
+  assert.deepEqual(light.blows, []);
+  assert.equal(light.effect.conflict, undefined, '가벼운 것에 갈등이 붙었다');
+
+  // 백지로 넘기면 이 게임에 몇 안 되는 상방이 열린다
+  const clean = PM.censorReport([]);
+  assert.equal(clean.clean, true);
+  assert.deepEqual(clean.effect, PM.TUNING.censor.clean);
+  assert.ok(clean.effect.rep > 0 && clean.effect.happy > 0);
+
+  // 같은 것이 두 번 걸려도 한 건이다
+  assert.equal(PM.censorReport([petty, petty]).findings.length, 1);
+});
+
+test('검열 효과는 확정이고, 평판은 검열이 못 깎는다 — 주임원사가 부른 것이 아니다', () => {
+  const p = { gara: 5, happy: 5, conflict: 3, rep: 5 };
+  const flagged = PM.applyCensor(p, PM.censorReport(['stash-corner']).effect);
+  assert.equal(flagged.happy, 4);
+  assert.equal(flagged.rep, 5, '검열이 평판을 깎았다 — 개입이 아닌데');
+  const clean = PM.applyCensor(p, PM.censorReport([]).effect);
+  assert.equal(clean.rep, 6);
+  assert.equal(clean.happy, 6);
+  // 눈금 밖으로는 안 나간다
+  assert.equal(PM.applyCensor({ ...p, rep: 10, happy: 10 }, PM.censorReport([]).effect).rep, 10);
+});
