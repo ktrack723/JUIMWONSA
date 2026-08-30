@@ -73,6 +73,12 @@ const unit = {
 
 const memStore = memStorage;
 
+/** 같은 패턴을 100일 내내 되풀이하는 난수 — 장기 회귀 테스트가 결정적으로 돈다. */
+function cycleRng(pattern) {
+  let i = 0;
+  return () => pattern[i++ % pattern.length];
+}
+
 function fixture({ rng, garaRng, judges = [], ambientReady = true, unit: u = unit } = {}) {
   const llm = new FakeLLM();
   llm.judgeQueue = judges;
@@ -166,9 +172,24 @@ test('사건은 E-1·E-2·E-3 세 콜이고, 확전이면 카운터만 0이 된�
   // 병사 데이터와 파라미터는 유지된다 — 리셋되는 것은 카운터뿐이다
   assert.deepEqual(roster.soldiers.map(s => s.sheet), before.sheets, '사고가 병사를 지웠다');
   assert.equal(roster.soldiers.length, 16);
-  // 판정이 가라를 밀었지만 하루가 끝나면 제자리로 한 칸 돌아온다 — 가라도 드리프트를 탄다.
-  // 그래서 관행은 「한 번 잡는 것」이 아니라 「계속 잡는 것」이 된다.
-  assert.equal(state.params.gara, before.params.gara, '판정이 민 가라가 제자리로 안 돌아왔다');
+  // 판정이 민 가라는 **그날 저녁에 안 돌아온다.** 가라의 제자리 회복은 조용한 날이
+  // 이틀 쌓여야 붙는다(drift.restDays) — 매일 당기면 판정이 민 한 칸을 그날 저녁에 정확히
+  // 도로 가져가서 바늘이 언다. 관행은 「한 번 잡는 것」이 아니라 「계속 잡는 것」인데,
+  // 그러려면 잡기 전에 **올라가 있을 수 있어야** 한다.
+  assert.equal(state.params.gara, before.params.gara + 1, '판정이 민 가라가 그날 저녁에 지워졌다');
+  assert.equal(snap.calm.gara, 0, '움직인 축의 조용한 날 카운터가 리셋 안 됐다');
+});
+
+test('밀린 축은 조용한 날이 쌓여야 제자리로 돌아온다 — 그 며칠이 바늘이 노는 폭이다', async () => {
+  const { engine, state } = fixture({ rng: seqRng([0.999]) });   // 사건 없는 날들
+  state.params.gara = TUNING.start.gara + 1;
+  const need = TUNING.drift.restDays.gara;
+  for (let d = 1; d < need; d++) {
+    await engine.runDay();
+    assert.equal(state.params.gara, TUNING.start.gara + 1, `조용한 날 ${d}일째에 벌써 돌아왔다`);
+  }
+  await engine.runDay();
+  assert.equal(state.params.gara, TUNING.start.gara, `조용한 날 ${need}일째에도 안 돌아왔다`);
 });
 
 test('판정이 민 가라는 그날 안에서는 살아 있다 — 되돌리는 것은 하루 마감이다', async () => {
@@ -182,7 +203,7 @@ test('판정이 민 가라는 그날 안에서는 살아 있다 — 되돌리는
   engine.h.verdict = async () => { seen.push(state.params.gara); };
   await engine.runDay();
   assert.equal(seen[0], dawn + 1, '판정 직후에 가라가 안 올랐다 — 그날의 사고 롤이 이걸 본다');
-  assert.equal(state.params.gara, dawn, '하루가 끝났는데 제자리로 안 돌아왔다');
+  assert.equal(state.params.gara, dawn + 1, '움직인 축이 그날 저녁에 제자리로 끌려갔다');
 });
 
 test('E-3은 지침을 못 보고, 부대 프롬프트도 없다 — 결과 장면만 읽는다', async () => {
@@ -336,14 +357,31 @@ test('브리핑이 죽어 하루를 다시 열어도, 떠 있는 소음 콜을 �
   assert.ok(ambient.ready(), '재시도 후에도 소음 풀이 안 채워졌다');
 });
 
-// ── 개입 셋 — 전부 평판 −1, 그날 회복 없음 ──────────────
-test('면담: 평판 −1, 왕복 가능, 프롬프트에는 그 병사와 체감 밴드만', async () => {
+// ── 개입 셋 — 하루 첫 번은 공짜, 그 뒤로 평판 −1, 그날 회복 없음 ──────
+test('하루 첫 개입은 평판을 안 깎는다 — 값이 붙는 것은 「또 오는 것」이다', async () => {
+  const { engine, state } = fixture();
+  const rep0 = state.params.rep;
+  const free = TUNING.rep.freePerDay;
+  for (let i = 1; i <= free; i++) {
+    await engine.inspect('barracks');
+    assert.equal(state.params.rep, rep0, `${i}번째 개입이 공짜가 아니다`);
+  }
+  await engine.inspect('barracks');
+  assert.equal(state.params.rep, rep0 - 1, '무료분을 넘긴 개입이 안 깎였다');
+  await engine.inspect('barracks');
+  assert.equal(state.params.rep, rep0 - 2, '남발이 누적으로 안 붙는다');
+  // 개입 횟수 자체는 전부 센다 — 조용한 날 회복은 「한 번도 안 왔다」에만 붙는다
+  assert.equal(engine.interventionsToday, free + 2);
+});
+
+test('면담: 평판 비용, 왕복 가능, 프롬프트에는 그 병사와 체감 밴드만', async () => {
   const { llm, engine, state } = fixture();
   const rep0 = state.params.rep;
+  engine.interventionsToday = TUNING.rep.freePerDay;   // 무료분은 이미 썼다
   const h = await engine.interview(engine.roster.soldiers[0].serial, '요즘 어때');
   assert.equal(h.reply, '병사의 대답');
   assert.equal(state.params.rep, rep0 - 1);
-  assert.equal(engine.interventionsToday, 1);
+  assert.equal(engine.interventionsToday, TUNING.rep.freePerDay + 1);
 
   const req = llm.byLabel('면담')[0];
   const user = req.messages[0].content;
@@ -360,6 +398,7 @@ test('면담: 평판 −1, 왕복 가능, 프롬프트에는 그 병사와 체�
 test('불시점검: 그 장소가 드러내는 밴드만 실린다', async () => {
   const { llm, engine, state } = fixture();
   const rep0 = state.params.rep;
+  engine.interventionsToday = TUNING.rep.freePerDay;
   const out = await engine.inspect('barracks');
   assert.equal(out.findings, '점검소견텍스트');
   assert.equal(state.params.rep, rep0 - 1);
@@ -372,6 +411,7 @@ test('불시점검: 그 장소가 드러내는 밴드만 실린다', async () =>
 test('공지: 게시는 저장, 판정은 방향뿐 — 평판은 판정이 못 건드린다', async () => {
   const { llm, engine, state } = fixture();
   const rep0 = state.params.rep, gara0 = state.params.gara;
+  engine.interventionsToday = TUNING.rep.freePerDay;
   const out = await engine.postNotice('족구 금지');
   assert.equal(out.reaction, '또 뭘 금지한대');
   assert.deepEqual(state.notices, [{ text: '족구 금지', bans: [] }]);
@@ -382,14 +422,21 @@ test('공지: 게시는 저장, 판정은 방향뿐 — 평판은 판정이 못 
   assert.ok(!/(very-low|very-high|corner-cutting|morale|friction)/.test(user), 'N 판정이 부대 상태를 봤다');
 });
 
-test('개입한 날은 평판 회복이 없다 — 개입은 일과 중에 일어난다', async () => {
+test('개입한 날은 평판 회복이 없다 — 무료 한 번을 썼어도 조용한 날은 아니다', async () => {
   const { engine, state } = fixture();
   // 첫 슬롯에서 공지 하나 — 실제 게임과 같은 자리(일과 중 handlers)에서 개입한다
   engine.h.slot = async ({ index }) => { if (index === 0) await engine.postNotice('아무 공지'); };
   await engine.runDay();
   assert.equal(engine.interventionsToday, 1, '공지 한 번은 개입 1회다');
-  // 시작 5 → 공지 −1 = 4. 조용한 날 회복(+1)이 붙었다면 5다.
-  assert.equal(state.params.rep, TUNING.start.rep - 1, '개입한 날인데 조용한 날 회복이 붙었다');
+  // 하루 첫 개입은 평판을 안 깎지만(freePerDay), 그날이 「조용한 날」이 되지도 않는다.
+  // 그래서 하루 한 번 손대는 플레이는 평판이 **정지**한다 — 오르지도 내리지도 않는 자리가
+  // 있어야 평판이 0 아니면 10인 깃발이 아니라 화폐가 된다.
+  assert.equal(state.params.rep, TUNING.start.rep, '무료 개입인데 평판이 움직였다');
+
+  // 개입이 아예 없는 날은 회복이 붙는다
+  const quiet = fixture();
+  await quiet.engine.runDay();
+  assert.equal(quiet.state.params.rep, TUNING.start.rep + TUNING.rep.quietDay);
 });
 
 // ── 하루의 장부 — 화면이 「오늘 무슨 일이 있었나」를 쓸 재료 ──
@@ -414,11 +461,12 @@ test('장부의 「움직인 바늘」이 개입·판정·드리프트를 전부
   const { engine, state } = fixture();
   const dawn = { ...state.params };
   // 개입은 **일과 중에** 일어난다 — 하루가 열리기 전에 부르면 그 하루의 장부가 아니다.
-  engine.h.slot = async ({ index }) => { if (index === 0) await engine.inspect('barracks'); };  // 가라 −1 · 행복 −1 · 평판 −1
+  // 두 번 들이닥친다 — 하루 첫 개입은 공짜라(freePerDay) 평판이 움직이는 것을 보려면 둘째가 필요하다
+  engine.h.slot = async ({ index }) => { if (index <= 1) await engine.inspect('barracks'); };
   const snap = await engine.runDay();
   const t = snap.today;
-  assert.equal(t.interventions, 1);
-  assert.ok(t.moved.rep < 0, '개입한 날인데 평판이 안 깎였다');
+  assert.equal(t.interventions, 2);
+  assert.ok(t.moved.rep < 0, '무료분을 넘겼는데 평판이 안 깎였다');
   // 장부는 **새벽과 마감의 차이**다 — 축마다 실제 이동량과 정확히 같아야 한다
   for (const k of ['gara', 'happy', 'conflict', 'rep']) {
     assert.equal(t.moved[k] ?? 0, state.params[k] - dawn[k], `${k} 장부가 실제 이동과 다르다`);
@@ -456,6 +504,26 @@ test('하루 마감은 이 부대의 평소 난이도를 같이 넘긴다 — �
   for (let d = 0; d < 30; d++) await engine.runDay();
   assert.ok(engine.state.params.happy >= 4, `무개입 30일에 행복이 ${engine.state.params.happy}까지 내려갔다`);
   assert.ok(roster.soldiers.every(m => m.mental >= 4), '방치만 했는데 전원 멘탈이 무너졌다');
+});
+
+// ── 멘탈 경제가 한 방향으로 흐르지 않는다 (실측으로 고친 자리) ──────
+// 예전에는 어느 플레이를 해도 100일이면 열여섯 명 전원이 0에 눌러앉았다. 원인 셋을 고쳤다:
+// 하락에 인원을 주고(전원 → 몇 명), 회복에 하한을 주고(전우애 0.5명 → 최소 1명),
+// 잔사건 연루가 사람을 안 깎게 했다(사고가 된 것만 남는다).
+// 그게 안 지켜지면 「멘탈 2 이하는 큰 사고의 문」이라던 예외가 상시 켜진 기본값이 되고,
+// 무사고 완주가 산술적으로 불가능해진다. 이 테스트가 그 회귀를 막는다.
+test('사건이 매일 나는 부대에서도 사람이 전멸하지 않는다 — 100일 뒤에도 명부가 살아 있다', async () => {
+  const { engine, roster } = fixture({
+    // 사건을 매일 하나씩 만들되 전부 수습된다 — 잔사건만으로 부대가 죽는지 본다
+    rng: cycleRng([0.999, 0.999, 0.999, 0.999, 0.0001, 0]),
+  });
+  engine._directive = null;
+  for (let d = 0; d < 100; d++) await engine.runDay();
+  const men = roster.present.map(m => m.mental ?? 6);
+  const avg = men.reduce((a, b) => a + b, 0) / men.length;
+  assert.ok(avg >= 3, `잔사건만 100일 겪었는데 멘탈 평균이 ${avg.toFixed(1)}이다`);
+  assert.ok(men.some(m => m > TUNING.mental.dangerAt),
+    '전원이 큰 사고 문턱 아래로 내려갔다 — 예외적 위험이 기본값이 됐다');
 });
 
 // ── 진급 ────────────────────────────────────────────────
@@ -653,12 +721,30 @@ test('면담은 상담이다 — 그 병사의 멘탈이 +1 오르고, 왕복해
   const man = roster.soldiers[0];
   man.mental = 3;
   const rep0 = state.params.rep;
+  engine.interventionsToday = TUNING.rep.freePerDay;
+  engine.rng = () => 0;            // 평판이 높으니 면담은 먹힌다 (counselTakes)
   const h = await engine.interview(man.serial, '요즘 잠은 자냐');
   assert.equal(man.mental, 4, '상담이 멘탈을 안 올렸다');
+  assert.equal(h.took, true);
   assert.deepEqual(h.mental, { before: 3, after: 4 }, '화면에 보여줄 회복량이 안 실렸다');
   await h.ask('더 얘기해봐');
   assert.equal(man.mental, 4, '왕복마다 올랐다 — 스팸으로 무한 회복이 된다');
   assert.equal(state.params.rep, rep0 - 1, '상담이어도 평판 비용은 개입 1회분이다');
+});
+
+test('씹히는 주임원사의 면담은 안 통한다 — 그래도 부른 값은 치른다', async () => {
+  const { engine, roster, state } = fixture();
+  const man = roster.soldiers[0];
+  man.mental = 3;
+  state.params.rep = 0;                  // 대놓고 안 듣는 자리
+  engine.interventionsToday = TUNING.rep.freePerDay;
+  engine.rng = () => 0.99;               // 수용 굴림 실패
+  const h = await engine.interview(man.serial, '요즘 잠은 자냐');
+  assert.equal(h.took, false, '평판 0인데 면담이 그대로 먹혔다');
+  assert.equal(man.mental, 3, '안 통했는데 멘탈이 올랐다');
+  // 불려간 것 자체가 소문이다 — 값은 이미 치렀다
+  assert.equal(state.params.rep, 0, '평판이 눈금 아래로 갔다');
+  assert.equal(engine.interventionsToday, TUNING.rep.freePerDay + 1);
 });
 
 test('면담 프롬프트에 그 병사의 멘탈이 밴드로 실린다 — 숫자는 안 나간다', async () => {
@@ -673,6 +759,7 @@ test('면담 프롬프트에 그 병사의 멘탈이 밴드로 실린다 — 숫
 test('점검은 군기 레버다 — 가라 −1 · 행복 −1이 코드로 확정 적용된다', async () => {
   const { engine, state } = fixture();
   const { gara, happy, rep } = state.params;
+  engine.interventionsToday = TUNING.rep.freePerDay;
   const out = await engine.inspect('worksite');
   assert.equal(state.params.gara, gara - 1);
   assert.equal(state.params.happy, happy - 1);
@@ -680,30 +767,45 @@ test('점검은 군기 레버다 — 가라 −1 · 행복 −1이 코드로 확
   assert.deepEqual(out.effect, { gara: -1, happy: -1 }, '화면에 보여줄 효과가 안 실렸다');
 });
 
-test('사건 연루는 멘탈을 깎고, 사고가 되면 더 깎는다', async () => {
-  const { engine, roster } = fixture({
+test('잔사건에 이름이 오르는 것은 상처가 아니다 — 남는 것은 사고가 된 것뿐이다', async () => {
+  // 잔사건마다 −1이던 시절, 해병은 100일에 연루 연인원 142명이었다 — 부대 멘탈 총량이
+  // 96점인데 타격만 142점이라 어느 플레이를 해도 전원이 0에 눌러앉았다.
+  const contained = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'contained', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  for (const man of contained.roster.soldiers) man.mental = 6;
+  contained.engine._directive = null;
+  await contained.engine.runDay();
+  assert.ok(contained.roster.soldiers.every(s => s.mental === 6),
+    '수습된 잔사건이 사람을 깎았다 — 하루에 한 번씩 뭔가 있는 것이 군대다');
+
+  // 사고가 되면 남는다
+  const blown = fixture({
     rng: incidentRng(),
     judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
   });
-  for (const man of roster.soldiers) man.mental = 6;
-  engine._directive = null;
-  await engine.runDay();
-  const hit = roster.soldiers.filter(s => s.mental < 6);
-  assert.equal(hit.length, 1, '연루자 수만큼 깎여야 한다');
-  // 확전 −2 + 그날 드리프트(행복 5·갈등 3 → 0) = 4
-  assert.equal(hit[0].mental, 4, '확전인데 −2가 아니다');
+  for (const man of blown.roster.soldiers) man.mental = 6;
+  blown.engine._directive = null;
+  await blown.engine.runDay();
+  const hit = blown.roster.soldiers.filter(s => s.mental < 6);
+  assert.equal(hit.length, 1, '확전했는데 아무도 안 깎였다');
+  assert.equal(hit[0].mental, 5, '잔사건이 사고가 된 몫은 한 칸이다');
 });
 
-test('부대가 어두우면 하루 마감에 전원의 멘탈이 내려간다 — 그리고 저장된다', async () => {
+test('부대가 어두우면 몇 명이 무너진다 — 전원이 아니라 그날 하필 그 사람들이다', async () => {
   const { engine, roster, state } = fixture();
-  state.params.happy = 2;
+  state.params.happy = 0;   // 해병은 전우애 방패가 두꺼워 문턱이 낮다
   for (const man of roster.soldiers) man.mental = 6;
   await engine.runDay();
-  assert.ok(roster.soldiers.every(s => s.mental === 5), '분위기 드리프트가 안 쓸었다');
+  const down = roster.soldiers.filter(s => s.mental < 6);
+  assert.ok(down.length > 0, '어두운 부대인데 아무도 안 무너졌다');
+  assert.ok(down.length < roster.soldiers.length,
+    '전원이 같은 밤에 무너졌다 — 하루의 하락이 열흘치 회복이 되면 경제가 성립하지 않는다');
   // 저장까지 — 다시 읽어도 남아 있어야 「어제 무너진 놈이 오늘도 무너져 있는」 게임이 된다
   const again = new Roster(unit, { storage: roster.storage });
   again.load();
-  assert.ok(again.soldiers.every(s => s.mental === 5), '멘탈이 저장 안 됐다');
+  assert.deepEqual(again.soldiers.map(s => s.mental), roster.soldiers.map(s => s.mental), '멘탈이 저장 안 됐다');
 });
 
 test('멘탈이 바닥난 병사가 있으면 그 놈의 큰 사건이 열린다', async () => {
@@ -1230,8 +1332,8 @@ test('들이닥치는 시각은 일과를 세운 그 시각이다 — 시간이 
   const b = await miss.engine.inspect(g.place);
   assert.deepEqual(b.spotted, [], '안 도는 시간인데 잡혔다');
   assert.deepEqual(miss.state.gara.known, [], '못 봤는데 명부가 채워졌다');
-  // 그래도 개입 값은 치렀다 — 헛걸음도 개입이다
-  assert.equal(miss.state.params.rep, TUNING.start.rep - 1);
+  // 그래도 개입으로는 셌다 — 헛걸음도 개입이다(하루 첫 번이라 평판은 안 깎였을 뿐)
+  assert.equal(miss.engine.interventionsToday, 1);
 });
 
 test('재판급은 눈앞에서 나오면 그 자리에서 끊긴다 — 나머지는 정체만 산다', async () => {

@@ -15,8 +15,8 @@ import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
 import {
   PLACES, PARAM_LABELS, BAND_LABELS, band,
-  slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING,
-  GARA_BY_ID, GARA_TIERS, SLOTS, ABSENCE_KINDS,
+  slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, SCALE, TUNING,
+  GARA_BY_ID, GARA_TIERS, SLOTS, ABSENCE_KINDS, repBite,
 } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
@@ -352,7 +352,15 @@ function renderGauges() {
     </div>`;
   }).join('');
   const note = $('#gauge-open-note');
-  if (note) note.textContent = `${open.toFixed(1)} (전우애 ${state.unit.comrade.score})`;
+  // 문턱이 눈금 끝에 붙어 있으면 그건 「높은 문턱」이 아니라 **닫힌 문**이다. 계기판이
+  // 「이 눈금을 넘으면 열린다」라고 말하면서 10을 가리키면, 100일 내내 안 일어날 일을
+  // 예고하는 셈이다(실측: 전우애 10인 부대에서 갈등이 8을 넘은 날이 100일에 1일).
+  // 그 부대의 진실은 「갈등으로는 안 무너진다」이고, 화면은 그걸 그대로 말해야 한다.
+  if (note) {
+    note.textContent = open >= SCALE.max
+      ? `사실상 닫혀 있다 (전우애 ${state.unit.comrade.score} — 이 부대는 갈등으로 무너지지 않는다)`
+      : `${open.toFixed(1)} (전우애 ${state.unit.comrade.score})`;
+  }
 }
 
 // 병사 멘탈 미니 게이지 — 명부·면담 선택에 같이 쓴다. 2 이하는 큰 사고의 문이다.
@@ -821,6 +829,7 @@ function holdGate() {
   $('#btn-hold').classList.remove('armed');
   panel('#intervene-panel', true);
   renderInspectClock();
+  renderCost();
   showIvTab('interview');
   return new Promise(resolve => { state.holdRelease = resolve; });
 }
@@ -834,6 +843,7 @@ function showIvTab(tab) {
   for (const t of ['interview', 'inspect', 'notice']) panel(`#iv-${t}`, t === tab);
   $$('.iv-tab').forEach(b => b.classList.toggle('danger', b.dataset.tab === tab));
   if (tab === 'inspect') renderInspectClock();
+  renderCost();
 }
 
 /**
@@ -844,6 +854,22 @@ function showIvTab(tab) {
  * **무엇이 도는지는 여기서도 안 알려준다.** 알려주는 것은 시각 하나뿐이고, 그 시각에 무엇이
  * 도는가는 명부를 읽어서 아는 것이다 — 명부의 「이 시간에만 돈다」 줄이 그래서 거기 있다.
  */
+/**
+ * 지금 개입하면 평판이 얼마인가. 하루 첫 번이 공짜라 「−1」을 버튼에 박아 둘 수가 없다 —
+ * 값이 상황에 따라 달라지면 그 값은 화면이 그때그때 말해 줘야 한다.
+ */
+function renderCost() {
+  const el = $('#iv-cost');
+  if (!el || !state.engine) return;
+  const used = state.engine.interventionsToday;
+  const free = TUNING.rep.freePerDay - used;
+  const rep = state.engine.state.params.rep;
+  el.innerHTML = (free > 0
+    ? `오늘 개입 <b>${used}회</b> — 다음 한 번은 <b class="free">평판을 안 깎는다</b>.`
+    : `오늘 개입 <b>${used}회</b> — 다음부터 <b class="cost">평판 −1</b>씩.`)
+    + ` 지금 평판 <b>${rep}/10</b>이라 개입이 <b>${Math.round(repBite(rep) * 100)}%</b>쯤 먹힌다.`;
+}
+
 function renderInspectClock() {
   const slot = state.engine?.slotNow;
   const el = $('#inspect-when');
@@ -871,10 +897,15 @@ async function doInterview() {
     { onError: () => { $('#btn-interview-send').disabled = false; } });
   if (!h) return;
   state.interviewHandle = h;
-  $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who(h.soldier))}: ${escapeHtml(h.reply)}</p>`
-    + `<p class="iv-heal">멘탈 ${h.mental.before} → <b>${h.mental.after}</b> — 들어준 만큼은 남는다</p>`;
+  // 들어준 것이 먹혔는지는 평판이 정한다. 안 먹힌 자리를 조용히 넘기면 유저는 왜 멘탈이
+  // 안 올랐는지 100일 내내 못 배운다 — 그리고 그게 평판을 태운 값이다.
+  const heal = h.took
+    ? `<p class="iv-heal">멘탈 ${h.mental.before} → <b>${h.mental.after}</b> — 들어준 만큼은 남는다</p>`
+    : `<p class="iv-heal miss">멘탈 ${h.mental.before} — <b>안 통했다.</b> 듣는 시늉만 하고 나갔다.
+       평판이 낮으면 면담도 안 먹힌다 (평판 ${state.engine.state.params.rep}/10).</p>`;
+  $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who(h.soldier))}: ${escapeHtml(h.reply)}</p>` + heal;
   panel('#interview-more', true);
-  renderHud(); renderRoster();
+  renderHud(); renderRoster(); renderCost();
   saveCampaign();
 }
 
@@ -902,7 +933,7 @@ async function doInspect() {
     : '';
   const when = out.slot ? ` · ${out.slot.label} ${out.slot.time}` : '';
   await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}`, { typed: false });
-  renderHud();
+  renderHud(); renderCost();
   saveCampaign();
   if (out.pulled.length) sfx.trombone();
   toast(out.spotted.length
@@ -917,7 +948,7 @@ async function doNotice() {
   if (!out) return;
   $('#notice-input').value = '';
   renderNotices();
-  renderHud();
+  renderHud(); renderCost();
   saveCampaign();
   // 막은 것과 실제로 끊긴 것은 다르다 — 안 돌던 것을 막으면 문만 닫히고 가라는 안 내려간다.
   const shut = out.banned.length ? `\n지침이 닫은 문 — ${out.banned.map(g => g.label).join(' · ')}` : '';

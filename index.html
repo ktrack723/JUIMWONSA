@@ -147,10 +147,13 @@
           <div id="day-window" class="panel95 chat-window day-window" data-title="부대 동향 기록"></div>
           <div id="day-advance" class="chat-advance" aria-live="off">▼ 눌러서 다음</div>
 
-          <!-- 개입 콘솔 — 일과가 서 있을 때만 열린다. 전부 평판 −1 -->
-          <div id="intervene-panel" class="panel95 radio-panel hidden" data-title="개입 콘솔 · 전부 평판을 깎는다">
-            <p class="radio-note"><b>일과를 세웠다.</b> 여기서 하는 일은 셋 다 병사들 눈에 「주임원사가 또 온다」로 보인다 — <b>평판 −1.</b>
-              개입 없이 지나간 조용한 날은 평판이 +1 회복된다.</p>
+          <!-- 개입 콘솔 — 일과가 서 있을 때만 열린다. 하루 첫 번은 공짜, 그 뒤로 평판 −1 -->
+          <div id="intervene-panel" class="panel95 radio-panel hidden" data-title="개입 콘솔 · 하루 한 번은 일과, 그 다음부터가 소문">
+            <p class="radio-note"><b>일과를 세웠다.</b> <b>하루 첫 개입은 평판을 안 깎는다</b> — 주임원사가 하루에 한 번 뭘 하는 것은
+              일과지 소문이 아니다. <b>두 번째부터 −1씩</b>이고, 그게 병사들 눈에 「주임원사가 또 온다」로 보이는 자리다.<br>
+              <b>평판이 낮으면 레버가 무뎌진다</b> — 면담은 듣는 시늉만 하고, 점검은 가기 전에 소문이 돌아 방이 치워져 있다.
+              개입이 <b>한 번도</b> 없이 지나간 날은 평판이 +1 회복된다.</p>
+            <p id="iv-cost" class="iv-cost"></p>
             <div class="intervene-tabs">
               <button class="btn95 iv-tab" data-tab="interview" type="button">🗣 면담(상담)</button>
               <button class="btn95 iv-tab" data-tab="inspect" type="button">🔦 군기 점검</button>
@@ -158,11 +161,12 @@
             </div>
             <div id="iv-interview" class="iv-body hidden">
               <p class="dim small">캐묻는 자리가 아니라 <b>들어주는 자리</b>다. 불려온 병사의 <b>멘탈이 +1</b> 회복된다 —
-                계기판에서 무너져 가는 놈부터 불러라. 멘탈 2 이하는 큰 사고의 문이다.</p>
+                계기판에서 무너져 가는 놈부터 불러라. 멘탈 2 이하는 큰 사고의 문이다.<br>
+                <b>먹히느냐는 평판이 정한다</b> — 씹히는 주임원사 앞에서는 듣는 시늉만 하고 나간다.</p>
               <label>불러올 병사 <select id="interview-who"></select></label>
               <textarea id="interview-q" rows="2" placeholder="예: 요즘 잠은 자냐. 힘든 거 있으면 말해라."></textarea>
               <div class="radio-btns">
-                <button id="btn-interview-send" class="btn95" type="button">불러서 이야기한다 (멘탈 +1 · 평판 −1)</button>
+                <button id="btn-interview-send" class="btn95" type="button">불러서 이야기한다 (멘탈 +1)</button>
               </div>
               <div id="interview-log" class="iv-log"></div>
               <div id="interview-more" class="radio-btns hidden">
@@ -183,7 +187,7 @@
                 검열 전에 폭탄을 뽑는 유일한 방법이다.<br>
                 장소 이름 옆에 적힌 것은 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
               <div class="radio-btns">
-                <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1 · 평판 −1)</button>
+                <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1)</button>
               </div>
             </div>
             <div id="iv-notice" class="iv-body hidden">
@@ -192,7 +196,7 @@
                 <b>관행을 콕 집어 막으면 그 가라가 끊긴다.</b> 무엇을·무엇에·어떤 자리에서인지가 문장에 있어야 한다 —
                 「군기를 잡아라」류는 아무것도 못 막는다. 지침이 서 있는 한 그 관행은 다시 안 생긴다.</p>
               <div class="radio-btns">
-                <button id="btn-notice-post" class="btn95" type="button">게시한다 (평판 −1)</button>
+                <button id="btn-notice-post" class="btn95" type="button">게시한다</button>
               </div>
             </div>
             <div class="radio-btns">

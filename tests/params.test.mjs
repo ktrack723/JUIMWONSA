@@ -96,10 +96,17 @@ test('힘든 일을 대충 하면 다친다 — 가라+난이도 초과분이 �
   assert.ok(high > low, '가라 8 + 난이도 8이 가라 3 + 난이도 5보다 안전하다니');
 });
 
-test('가라가 높은데 지능이 낮으면 사고 위험 가중 — 알아서 잘 대충 할 머리가 없다', () => {
-  const smart = PM.incidentRisk({ gara: 7, conflict: 3 }, { intel: 8, macho: 5, difficulty: 3 }).small;
-  const dumb = PM.incidentRisk({ gara: 7, conflict: 3 }, { intel: 4, macho: 5, difficulty: 3 }).small;
-  assert.ok(dumb > smart);
+test('감당 못 하는 관행이 많을수록 사고 위험이 오른다 — 어설프면 다친다', () => {
+  // 예전에는 `max(0, 가라 − 지능)`이라는 근사치가 이 자리에 있었다. 목록이 생긴 뒤로는
+  // 실물(garaOverreach)이 그 자리를 대신하고, 근사치 쪽 계수는 지웠다 — 엔진이 언제나
+  // overreach를 넘기게 된 다음부터 한 번도 안 읽혔는데 튜닝표에 남아 있었다.
+  const unit = { intel: 4, macho: 5, difficulty: 3, comrade: 5 };
+  const fine = PM.incidentRisk({ gara: 7, conflict: 3, overreach: 0 }, unit).small;
+  const over = PM.incidentRisk({ gara: 7, conflict: 3, overreach: 3 }, unit).small;
+  assert.ok(over > fine, '감당 못 하는 관행이 위험을 안 올린다');
+  // 지능은 이제 **어느 관행이 감당 밖인가**로만 들어온다 — 그건 garaOverreach가 센다
+  assert.equal(PM.garaOverreach(PM.GARA_IDS, 4) > PM.garaOverreach(PM.GARA_IDS, 8), true,
+    '머리가 나쁠수록 감당 밖인 관행이 많아야 한다');
 });
 
 test('갈등이 적당히 높으면 잔사고가 준다 — 군기가 눌러 놓는다', () => {
@@ -303,28 +310,49 @@ test('분위기의 하락은 전원에게 붙는다 — 어두우면 −1, 눌�
 });
 
 // ── 멘탈 경제 — 하락은 전원, 회복은 몇 명 ────────────────
-test('회복 인원은 전우애가 정한다 — 소수부는 확률이다', () => {
+test('회복은 하한 위에서 전우애가 정한다 — 시간은 어디서나 약이다', () => {
   const never = () => 0.999, always = () => 0;
-  // 얕은 부대는 기대값 0.5명 — 안 돌아오는 날이 있고 한 명 돌아오는 날이 있다
-  assert.equal(PM.recoverCount(2, never), 0, '얕은 부대에서 매일 사람이 돌아온다');
-  assert.equal(PM.recoverCount(2, always), 1);
-  assert.ok(PM.recoverCount(10, never) > PM.recoverCount(5, never), '끈끈한 부대가 더 안 챙긴다');
+  const M = PM.TUNING.mental;
+  // 얕은 부대라도 하한만큼은 언제나 돌아온다. 없이 재 봤더니 그 부대는 100일이면 전원이
+  // 멘탈 0에 눌러앉았다 — 「큰 사고의 문」이 예외가 아니라 상시 켜진 기본값이 됐다.
+  assert.equal(PM.recoverCount(2, never), M.recoverMin, '얕은 부대의 회복이 하한 아래로 갔다');
+  assert.ok(PM.recoverCount(10, never) > PM.recoverCount(2, never), '끈끈한 부대가 더 안 챙긴다');
+  // 부대가 평소 아래면 전우애 몫이 꺼지고 하한만 남는다 — 서로 챙기는 것은 여유가 있을 때다
+  assert.equal(PM.recoverCount(10, never, { warm: false }), M.recoverMin);
+  assert.ok(PM.recoverCount(10, never, { warm: true }) > M.recoverMin);
+
+  // 제일 힘든 놈부터, 평상 상태까지만
   const men = [1, 2, 3, 6, 6].map(m => ({ mental: m }));
-  const ok = { happy: PM.TUNING.start.happy, conflict: 3 };
-  assert.deepEqual(PM.mentalPass(men, ok, 2, never), [1, 2, 3, 6, 6], '안 돌아오는 날에 회복이 붙었다');
-  // 끈끈한 부대는 **제일 힘든 놈부터** 돌아온다
+  const ok = { happy: M.recoverAt, conflict: 3 };
   const warm = PM.mentalPass(men, ok, 10, never);
   assert.equal(warm[0], 2); assert.equal(warm[1], 3);
   assert.deepEqual(warm.slice(2), [3, 6, 6], '평상 상태인 사람까지 밀어 올렸다');
+  const up = PM.mentalPass([{ mental: 8 }, { mental: 9 }], { happy: 10, conflict: 0 }, 10, () => 0);
+  assert.deepEqual(up, [8, 9], '평상 상태 위인 사람이 회복 대상이 됐다');
 });
 
-test('회복은 평상 상태까지만이고, 분위기가 평소 아래면 아예 없다', () => {
-  const men = [2, 5, 6, 8].map(m => ({ mental: m }));
-  const low = { happy: PM.TUNING.start.happy - 1, conflict: 3 };
-  assert.deepEqual(PM.mentalPass(men, low, 10, () => 0), [2, 5, 6, 8], '평소 아래인데 회복이 붙었다');
-  // 평상 상태(6) 위에 있는 사람은 회복 대상이 아니다 — 안 깎인 것이지 회복된 게 아니다
-  const up = PM.mentalPass([{ mental: 8 }, { mental: 9 }], { happy: 10, conflict: 0 }, 10, () => 0);
-  assert.deepEqual(up, [8, 9]);
+test('분위기가 나쁜 밤에 무너지는 것은 전원이 아니라 몇 명이다', () => {
+  const M = PM.TUNING.mental;
+  // 하락이 전원이던 시절, 하루의 하락(16점)이 열흘치 회복이었다 — 그 비대칭 하나가
+  // 멘탈 경제를 통째로 부쉈다. 이제 하락에도 인원이 있고, 누가 무너질지는 모른다.
+  const bad = { happy: 0, conflict: 3 };
+  const men = Array.from({ length: 16 }, () => ({ mental: 6 }));
+  const out = PM.mentalPass(men, bad, PM.TUNING.comrade.neutral, () => 0);
+  const dropped = out.filter(m => m < 6).length;
+  assert.ok(dropped > 0 && dropped < men.length, `무너진 인원이 ${dropped}명이다 — 전원도 0명도 아니어야 한다`);
+  // 하락 인원은 mentalFall이 정한다. 같은 밤에 회복 하한이 한 명을 도로 올려놓으므로
+  // 명부에 남는 자국은 그보다 적거나 같다 — 하락과 회복이 같은 밤에 도는 것이 이 경제다.
+  assert.ok(dropped <= PM.mentalFall(bad, PM.TUNING.comrade.neutral), '하락 인원이 정원을 넘었다');
+
+  // 깊이도 본다 — 문턱을 더 지나칠수록 더 많이 무너진다. 「행복 3」과 「행복 0」이 같은
+  // 부대면, 부대를 바닥까지 쥐어짜는 것이 공짜가 된다(실측: 그 플레이가 완주율 1위였다).
+  assert.ok(PM.mentalFall({ happy: 0, conflict: 3 }, 5) > PM.mentalFall({ happy: 3, conflict: 3 }, 5));
+  assert.equal(PM.mentalFall({ happy: M.recoverAt, conflict: 3 }, 5), 0, '평범한 부대에서 사람이 무너졌다');
+  // 이미 바닥난 사람은 하락 추첨에서 빠진다 — 뽑아 봐야 아무 일도 안 난다.
+  // (같은 밤에 회복 하한이 한 명을 올려놓으므로 총합은 오히려 는다.)
+  const floored = PM.mentalPass([{ mental: 0 }, { mental: 0 }], bad, 5, () => 0);
+  assert.ok(floored.every(m => m >= 0), '눈금 아래로 내려갔다');
+  assert.equal(floored.reduce((a, b) => a + b, 0), M.recoverMin, '바닥난 사람이 또 깎였다');
 });
 
 test('명부 원본은 안 건드린다 — 새 값을 돌려줄 뿐이다', () => {
