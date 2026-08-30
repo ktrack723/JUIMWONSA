@@ -153,3 +153,25 @@ test('군가가 울리는 슬롯은 실존 슬롯이다', async () => {
     for (const k of u.songSlots) assert.ok(SLOT_KEYS.includes(k), `${u.id}가 없는 슬롯 「${k}」에서 노래한다`);
   }
 });
+
+// ── 저가 모델 배정 — 업자마다 하나씩 있어야 한다 ────────
+// 빠진 업자는 판정(E-3·N·I-2)까지 기본 모델 정가로 낸다. OpenRouter가 그랬다.
+test('llm.js가 아는 업자 전부에 저가 모델이 배정돼 있다', async () => {
+  const [{ PROVIDERS, priceOf, defaultModelOf }, game] = await Promise.all([
+    import('../js/llm.js'),
+    readFile(new URL('../js/game.js', import.meta.url), 'utf8'),
+  ]);
+  const block = game.match(/const CHEAP_MODEL = \{([\s\S]*?)\};/);
+  assert.ok(block, 'game.js에서 저가 모델 표를 못 찾았다');
+  for (const id of Object.keys(PROVIDERS)) {
+    assert.ok(new RegExp(`\\b${id}\\s*:`).test(block[1]), `업자 「${id}」에 저가 모델이 없다 — 판정까지 정가로 낸다`);
+  }
+  // 그리고 그 모델들이 실제로 기본 모델보다 싸야 한다
+  for (const m of block[1].matchAll(/(\w+)\s*:\s*'([^']+)'/g)) {
+    const [, provider, cheap] = m;
+    const cheapPrice = priceOf(cheap), basePrice = priceOf(defaultModelOf(provider));
+    assert.ok(cheapPrice, `저가 모델 ${cheap}의 단가를 가격표가 모른다`);
+    assert.ok(cheapPrice[0] < basePrice[0],
+      `${provider}의 저가 모델 ${cheap}($${cheapPrice[0]})이 기본 모델($${basePrice[0]})보다 안 싸다`);
+  }
+});

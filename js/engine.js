@@ -134,6 +134,23 @@ export class Engine {
   #gen({ label, system, messages, schema = null, maxTokens = 3000 }) {
     return this.llm.call({ label, system, messages, schema, cache: true, effort: 'low', maxTokens });
   }
+  /**
+   * 판정 계열(E-3·N·I-2). 저가 모델로 태운다.
+   *
+   * ⚠ 여기 붙은 cache:true는 **Haiku에서는 아무 일도 안 한다.** 최소 캐시 단위가
+   * 모델마다 다르고 세대순도 아니다 — Opus 5는 512, Sonnet 5는 1024, **Haiku 4.5는 4096**
+   * 토큰이다. 우리 system 블록은 1,200~1,400토큰이라 Opus·Sonnet에서는 캐시되고
+   * Haiku에서는 조용히 안 된다(오류도 없다, cache_creation_input_tokens가 0일 뿐).
+   *
+   * 그래도 Haiku로 두는 이유는 실측했기 때문이다(단가 $1 vs $2 vs $5, 입력 한 콜당):
+   *   E-3(sys 597tok — 부대 프롬프트가 없어 어느 모델에서도 최소치 미달)
+   *        haiku $0.00083 · sonnet $0.00165 · opus $0.00145   → haiku
+   *   N·I-2(sys ~1,200tok — sonnet에서는 캐시된다)
+   *        haiku $0.00142 · sonnet $0.00070 · opus $0.00176   → sonnet
+   * 블록마다 모델을 갈라 태우면 100일에 $0.05쯤 아끼는데, 그만큼 갈래가 는다.
+   * 지금은 한 모델로 두고 이 주석을 남긴다 — 「캐시가 붙는 줄 알았다」가 아니라
+   * 「안 붙는 걸 알고 골랐다」로 남기려는 것이다.
+   */
   #judge({ label, system, user, schema }) {
     return this.llm.call({
       label, system, messages: [{ role: 'user', content: user }],

@@ -126,15 +126,22 @@ export function priceOf(model) {
   return slash >= 0 ? lookupPrice(m.slice(slash + 1)) : null;
 }
 function lookupPrice(m) {
-  if (PRICES[m]) return PRICES[m];
-  const hit = Object.keys(PRICES).filter(k => m.startsWith(k)).sort((a, b) => b.length - a.length)[0];
-  return hit ? PRICES[hit] : null;
+  // 같은 모델을 업자마다 다르게 적는다: Anthropic은 claude-haiku-4-5, OpenRouter는
+  // claude-haiku-4.5다. 점을 대시로 눕혀 한 표로 본다 — 안 그러면 OpenRouter 쪽 비용이
+  // 통째로 null이 되어 콘솔이 $0을 찍는다.
+  for (const cand of [m, m.replace(/\./g, '-')]) {
+    if (PRICES[cand]) return PRICES[cand];
+    const hit = Object.keys(PRICES).filter(k => cand.startsWith(k)).sort((a, b) => b.length - a.length)[0];
+    if (hit) return PRICES[hit];
+  }
+  return null;
 }
 
 const PRICES = { // $ per MTok (input, output)
+  'claude-fable-5': [10, 50],
   'claude-opus-5': [5, 25],
   'claude-opus-4': [5, 25],
-  'claude-sonnet-5': [3, 15],
+  'claude-sonnet-5': [2, 10],    // Sonnet 5는 4.6($3/$15)보다 싸다 — 접두사가 겹치니 이 줄이 먼저다
   'claude-sonnet-4': [3, 15],
   'claude-haiku-4-5': [1, 5],
   'gpt-5-nano': [0.05, 0.4],

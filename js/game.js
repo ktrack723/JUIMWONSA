@@ -34,12 +34,14 @@ const state = {
   stage: null,           // 일과 무대 (three.js). WebGL이 없으면 null인 채로 돈다
 };
 
-// 판정 계열(E-3·N·I-2)을 태울 저가 모델. 업자별로 하나씩만 안다 — 모르면 기본 모델.
-function cheapModelOf() {
-  if (llm.provider === 'anthropic') return 'claude-haiku-4-5';
-  if (llm.provider === 'openai') return 'gpt-5-mini';
-  return null;
-}
+// 판정 계열(E-3·N·I-2)을 태울 저가 모델. 업자마다 하나씩.
+// null로 떨어지면 그 업자는 판정까지 **기본 모델 정가로** 낸다 — OpenRouter가 그랬다.
+const CHEAP_MODEL = {
+  anthropic: 'claude-haiku-4-5',
+  openai: 'gpt-5-mini',
+  openrouter: 'anthropic/claude-haiku-4.5',
+};
+function cheapModelOf() { return CHEAP_MODEL[llm.provider] || null; }
 
 // ── 공용 UI ─────────────────────────────────────────────
 function show(screen) {
