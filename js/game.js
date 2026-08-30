@@ -17,6 +17,7 @@ import {
   PLACES, PARAM_LABELS, BAND_LABELS, band,
   slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, SCALE, TUNING,
   GARA_BY_ID, GARA_TIERS, SLOTS, ABSENCE_KINDS, repBite,
+  ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf,
 } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
@@ -195,7 +196,49 @@ function renderHud() {
     + (s.away.length ? ` (부재 ${s.away.length})` : '');
   renderGauges();
   renderGara(s);
+  renderAbuse(s);
   renderCensor(s);
+}
+
+/**
+ * 부조리 내역 — 가라 내역의 짝이다. 다른 것은 하나: **이름이 붙는다.**
+ * 그래서 이 패널은 목록이 아니라 **관계**를 보여준다: 누가 누구에게, 언제부터.
+ * 계기판이 개수(갈등)를 말하고 여기가 확인한 것만 말한다 — 그 틈이 여기서도 게임이다.
+ */
+function renderAbuse(snap) {
+  const a = snap.abuse, today = snap.date;
+  const known = a.known;
+  const unknown = Math.max(0, a.running - known.length);
+  const crimeKnown = known.filter(k => ABUSE_BY_ID[k.id]?.tier === 'crime').length;
+
+  $('#abuse-tally').innerHTML =
+    `<span class="gt-run" title="계기판의 갈등·부조리 수치 그대로다">돌고 있음 <b>${a.running}</b></span>`
+    + `<span class="gt-known" title="덮쳤거나 실토받은 것">확인 <b>${known.length}</b></span>`
+    + `<span class="gt-unknown${unknown ? ' on' : ''}" title="돌고 있는데 아직 못 본 것">미확인 <b>${unknown}</b></span>`
+    + (crimeKnown ? `<span class="gt-court on" title="확인된 것 중 형사건. 덮쳐야만 끊긴다">형사건 <b>${crimeKnown}</b></span>` : '');
+
+  const rows = known
+    .map(k => ({ ...ABUSE_BY_ID[k.id], ...k, age: k.on ? daysBetween(k.on, today) : 0 }))
+    .filter(r => r.label)
+    .sort((x, y) => (ABUSE_TIERS[y.tier].rank - ABUSE_TIERS[x.tier].rank) || (y.age - x.age));
+
+  $('#abuse-known').innerHTML = rows.length ? rows.map(r => {
+    const t = ABUSE_TIERS[r.tier];
+    const by = state.roster?.bySerial(r.by), to = state.roster?.bySerial(r.to);
+    const how = r.how === 'caught' ? '덮쳐서 끊었다' : '본인이 말했다';
+    return `<li class="tier-${r.tier} ${r.how === 'caught' ? 'shut' : 'open'}">
+      <span class="gk-grade tier-${r.tier}" title="${escapeHtml(t.note)}">${escapeHtml(t.label)}</span>
+      <span class="gk-place">${escapeHtml(PLACES[r.place]?.label || '')}</span>
+      <span class="gk-label">${escapeHtml(r.label)}</span>
+      <span class="gk-age">${r.age === 0 ? '오늘' : `${r.age}일 전`} · ${how}</span>
+      <span class="ab-pair">${escapeHtml(by?.name || '?')} <i>→</i> ${escapeHtml(to?.name || '?')}</span>
+      <span class="gk-when">${escapeHtml(whenLine(r.when))}</span>
+      <span class="gk-tell">눈으로 보면 — ${escapeHtml(r.tell)}</span>
+    </li>`;
+  }).join('')
+    : `<li class="dim empty">${unknown
+      ? `확인된 것 없음 — ${unknown}건이 어딘가에서 돌고 있는데 누가 누구인지 모른다.`
+      : '아는 한 지금 도는 것은 없다.'}</li>`;
 }
 
 // ── 검열 — 날짜는 알고 내용은 모른다 ────────────────────
@@ -903,7 +946,16 @@ async function doInterview() {
     ? `<p class="iv-heal">멘탈 ${h.mental.before} → <b>${h.mental.after}</b> — 들어준 만큼은 남는다</p>`
     : `<p class="iv-heal miss">멘탈 ${h.mental.before} — <b>안 통했다.</b> 듣는 시늉만 하고 나갔다.
        평판이 낮으면 면담도 안 먹힌다 (평판 ${state.engine.state.params.rep}/10).</p>`;
-  $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who(h.soldier))}: ${escapeHtml(h.reply)}</p>` + heal;
+  // 실토받은 것 — 이 레버의 두 번째 일이다. 명부에 올랐고, 이제 그 자리를 덮치면 잘 잡힌다.
+  const spoke = h.told.length
+    ? `<p class="iv-told">▣ 말했다 — ${h.told.map(t =>
+      `<b class="tier-${t.tier}">[${escapeHtml(t.grade.label)}]</b> ${escapeHtml(t.label)}
+       <span class="dim">(${escapeHtml(t.by?.name || '?')}에게 · ${escapeHtml(PLACES[t.place]?.label || '')} ·
+       ${escapeHtml(whenLine(t.when))})</span>`).join('<br>')}
+       <br><span class="dim">부조리 명부에 올렸다. <b>그 자리 그 시간에 들이닥치면 잘 잡힌다.</b></span></p>`
+    : '';
+  $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who(h.soldier))}: ${escapeHtml(h.reply)}</p>` + heal + spoke;
+  if (h.told.length) { sfx.bad(); renderHud(); }
   panel('#interview-more', true);
   renderHud(); renderRoster(); renderCost();
   saveCampaign();
@@ -932,13 +984,29 @@ async function doInspect() {
     ? `\n■ 재판급이라 그 자리에서 끊었다 — ${out.pulled.map(g => g.label).join(' · ')} (가라 추가 −${out.pulled.length})`
     : '';
   const when = out.slot ? ` · ${out.slot.label} ${out.slot.time}` : '';
-  await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}`, { typed: false });
+  // 사람 쪽에서 덮친 것 — 여기는 이름이 붙는다. 가라 적발과 줄을 갈라 놓는다.
+  const grabbed = out.caught.length
+    ? '\n■ 현장 검거 — ' + out.caught.map(c => `[${c.grade.label}] ${c.label} (${c.by?.name || '?'} → ${c.to?.name || '?'})`).join(' · ')
+      + ` (그 자리에서 끊었다. 갈등 −${out.caught.length})`
+    : '';
+  const cuffed = out.hauled.length
+    ? '\n⛓ 형사건이라 그 자리에서 데려갔다 — ' + out.hauled.map(h => `${h.soldier.name} (조사 종료 ${h.until})`).join(' · ')
+    : '';
+  const saved = out.rescued.length
+    ? '\n' + out.rescued.map(m => `${m.name}은(는) 오늘 처음으로 숨을 쉬었다. 멘탈 +${TUNING.abuse.rescue}`).join('\n')
+    : '';
+  const bill = out.wasted ? '\n(헛걸음이다 — 행복 −1)' : '\n(뭔가 나온 걸음이라 분위기는 안 깎였다)';
+  await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}${grabbed}${cuffed}${saved}${bill}`, { typed: false });
   renderHud(); renderCost();
   saveCampaign();
-  if (out.pulled.length) sfx.trombone();
-  toast(out.spotted.length
-    ? `${out.spotted.length}건 적발 — 가라 −${1 + out.pulled.length} · 행복 −1 · 평판 −1`
-    : '각은 잡혔지만 잡은 건 없다 — 가라 −1 · 행복 −1 · 평판 −1');
+  if (out.pulled.length || out.hauled.length) sfx.trombone();
+  if (out.hauled.length) renderRoster();
+  const bits = [];
+  if (out.spotted.length) bits.push(`가라 ${out.spotted.length}건`);
+  if (out.caught.length) bits.push(`부조리 ${out.caught.length}건 검거`);
+  toast(bits.length
+    ? `${bits.join(' · ')} — 성과가 있는 걸음이라 행복은 안 깎였다`
+    : '아무것도 안 나왔다 — 가라 −1 · 행복 −1 (헛걸음)');
 }
 
 async function doNotice() {

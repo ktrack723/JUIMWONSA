@@ -906,3 +906,194 @@ test('검열 효과는 확정이고, 평판은 검열이 못 깎는다 — 주�
   // 눈금 밖으로는 안 나간다
   assert.equal(PM.applyCensor({ ...p, rep: 10, happy: 10 }, PM.censorReport([]).effect).rep, 10);
 });
+
+// ══════════════════════════════════════════════════════════
+// 부조리 내역 — 「갈등 3」이 누가 누구에게 하는 무엇 셋인가
+//
+// 가라 내역과 같은 계약(수치가 원본, 목록이 따라간다)인데 결정적으로 다른 것이 하나 있다:
+// **가라는 자리에 붙고 부조리는 사람에 붙는다.** 그 한 줄이 나머지를 전부 가른다.
+// ══════════════════════════════════════════════════════════
+
+const abuseRoster = (n = 16) => Array.from({ length: n }, (_, i) => ({
+  serial: `s${i}`, name: `병${i}`, grade: PM.GRADES[i % 5], character: PM.CHARACTERS[i % 5], mental: 6,
+  cohort: 100 + i * 3,
+}));
+const abuseCohort = m => m.cohort;
+
+test('부조리 하나는 등급·자리·시간·기수차·단서를 전부 들고 있다', () => {
+  for (const a of PM.ABUSE_POOL) {
+    assert.ok(PM.ABUSE_TIERS[a.tier], `${a.id}의 등급이 표에 없다`);
+    assert.ok(PM.PLACES[a.place], `${a.id}의 자리가 대응표에 없다`);
+    assert.ok(a.when.length && a.when.every(k => PM.SLOT_KEYS.includes(k)), `${a.id}의 시간대가 일과표 밖이다`);
+    assert.ok(a.gap >= 0, `${a.id}에 기수 차이 조건이 없다`);
+    assert.ok(PM.INCIDENT_CATEGORIES[a.cat], `${a.id}가 터졌을 때의 유형이 없다`);
+    assert.ok(a.tell && a.sign, `${a.id}에 단서(눈)와 징후(입)가 다 없다`);
+    assert.ok(!/[가-퟿]/.test(a.en), `${a.id}의 en에 한글이 있다 — §9.4가 깨진다`);
+  }
+  // 등급 셋이 다 쓰이고, 터지는 것은 형사건뿐이다
+  for (const t of PM.ABUSE_TIER_KEYS) assert.ok(PM.ABUSE_POOL.some(a => a.tier === t), `${t}가 대장에 없다`);
+  assert.deepEqual(PM.ABUSE_TIER_KEYS.filter(t => PM.ABUSE_TIERS[t].pulls), ['crime']);
+  // 분위기와 무관하게 매일 깎는 것도 형사건뿐이다
+  assert.deepEqual(PM.ABUSE_TIER_KEYS.filter(t => PM.ABUSE_TIERS[t].daily), ['crime']);
+});
+
+test('부조리는 무거워지는 방향으로만 자란다 — 방치가 이득이면 안 된다', () => {
+  for (const a of PM.ABUSE_POOL) {
+    if (!a.becomes) { assert.equal(PM.ABUSE_TIERS[a.tier].rank, 2, `${a.id}는 안 자라는데 형사건도 아니다`); continue; }
+    const next = PM.ABUSE_BY_ID[a.becomes];
+    assert.ok(next, `${a.id}가 없는 것으로 자란다`);
+    assert.ok(PM.ABUSE_TIERS[next.tier].rank > PM.ABUSE_TIERS[a.tier].rank, `${a.id}가 더 가벼운 것으로 자란다`);
+  }
+});
+
+test('부조리는 위계를 타고 흐른다 — 기수 차이가 없으면 성립하지 않는다', () => {
+  const entry = PM.ABUSE_POOL.find(a => a.gap >= 2);
+  const flat = abuseRoster(4).map(m => ({ ...m, cohort: 500 }));   // 전원 같은 기수
+  assert.equal(PM.pickAbusePair(entry, flat, { cohortOf: abuseCohort, rng: () => 0.5 }), null,
+    '기수가 전부 같은데 부조리가 성립했다');
+  const spread = abuseRoster(8);
+  const pair = PM.pickAbusePair(entry, spread, { cohortOf: abuseCohort, rng: () => 0.5 });
+  assert.ok(pair, '기수 차이가 있는데 짝이 안 만들어졌다');
+  const by = spread.find(m => m.serial === pair.by), to = spread.find(m => m.serial === pair.to);
+  assert.ok(to.cohort - by.cohort >= entry.gap, '후임이 선임을 괴롭힌다 — 위계가 거꾸로다');
+});
+
+test('목록은 갈등 수치를 따라가고, 씨앗은 언제나 제일 가벼운 것이다', () => {
+  const roster = abuseRoster();
+  const opts = { roster, cohortOf: abuseCohort, macho: 9, date: '2026-05-18', rng: seq([0.1, 0.4, 0.7, 0.2, 0.9, 0.3, 0.5, 0.6, 0.05, 0.8]) };
+  let list = [];
+  for (const n of [3, 5, 2, 0, 4]) {
+    list = PM.syncAbuseList(list, n, { ...opts, rng: Math.random });
+    assert.equal(list.length, n, `갈등 ${n}인데 목록이 ${list.length}건이다`);
+  }
+  // 새로 생기는 것은 전부 제일 가벼운 등급이다 — 무거운 것은 **자라서** 되는 것이지 생기는 게 아니다.
+  // 이게 없으면 부임 첫날부터 형사건이 굴러다니고, 방치가 아니라 시작이 값을 치른다.
+  const fresh = PM.syncAbuseList([], 6, { ...opts, rng: Math.random });
+  for (const a of fresh) assert.equal(PM.ABUSE_TIERS[PM.ABUSE_BY_ID[a.id].tier].rank, 0, `${a.id}가 씨앗으로 깔렸다`);
+  // 같은 관행이 같은 피해자에게 두 번 붙지 않는다
+  const keys = fresh.map(a => `${a.id}|${a.to}`);
+  assert.equal(new Set(keys).size, keys.length, '같은 관행이 한 사람에게 두 번 붙었다');
+});
+
+test('줄어들 때는 가벼운 것부터 — 무거워진 것은 저절로 안 없어진다', () => {
+  const roster = abuseRoster();
+  const heavy = PM.ABUSE_POOL.find(a => a.tier === 'crime').id;
+  const light = PM.ABUSE_POOL.find(a => a.tier === 'nagging').id;
+  const list = [
+    { id: heavy, by: 's0', to: 's9', since: '2026-01-01' },
+    { id: light, by: 's1', to: 's8', since: '2026-05-01' },
+  ];
+  const out = PM.syncAbuseList(list, 1, { roster, cohortOf: abuseCohort, date: '2026-05-18', rng: () => 0 });
+  assert.deepEqual(out.map(a => a.id), [heavy], '무거운 것이 저절로 사라졌다 — 그러면 덮칠 이유가 없어진다');
+});
+
+test('아무도 안 말리면 무거워진다 — 형사건은 놓친 결과지 주사위가 준 것이 아니다', () => {
+  const seed = PM.ABUSE_POOL.find(a => a.becomes && a.tier === 'nagging');
+  const days = PM.TUNING.abuse.ripenDays;
+  const a = [{ id: seed.id, by: 'x', to: 'y', since: '2026-05-01' }];
+  assert.equal(PM.ripenAbuse(a, PM.dateAdd('2026-05-01', days - 1))[0].id, seed.id, '아직인데 벌써 자랐다');
+  const grown = PM.ripenAbuse(a, PM.dateAdd('2026-05-01', days));
+  assert.equal(grown[0].id, seed.becomes, '방치했는데 안 자랐다');
+  assert.equal(grown[0].since, PM.dateAdd('2026-05-01', days), '자란 날부터 다시 세야 한다');
+  // 두 단계를 지나야 형사건이다 — 임기에 한 번 나오는 일이어야 한다
+  const older = PM.ripenAbuse(grown, PM.dateAdd('2026-05-01', days * 2));
+  assert.equal(PM.ABUSE_TIERS[PM.ABUSE_BY_ID[older[0].id].tier].rank, 2, '두 단계를 지났는데 형사건이 아니다');
+});
+
+test('가라는 지능이 숨기고 부조리는 전우애가 숨긴다 — 두 부대가 정반대로 어렵다', () => {
+  const id = PM.ABUSE_POOL.find(a => a.tier === 'nagging').id;
+  // 끈끈한 부대일수록 자기들끼리 덮는다
+  assert.ok(PM.catchChance(10, id) < PM.catchChance(2, id), '끈끈한 부대가 더 잘 걸린다');
+  // 가라는 반대다 — 머리 좋을수록 잘 숨긴다
+  const g = PM.GARA_POOL.find(x => x.tier === 'petty').id;
+  assert.ok(PM.spotChance(8, g) < PM.spotChance(4, g));
+  // 등급이 높을수록 덜 걸리는 것은 둘 다 같다
+  const crime = PM.ABUSE_POOL.find(a => a.tier === 'crime').id;
+  assert.ok(PM.catchChance(5, crime) < PM.catchChance(5, id), '형사건이 갈굼보다 잘 걸린다');
+  // 알고 들어가면 잘 잡힌다 — 면담과 급습을 하나의 수순으로 묶는 자리
+  assert.ok(PM.catchChance(5, crime, null, { lead: true }) > PM.catchChance(5, crime), '단서가 아무 값도 안 한다');
+  // 평판이 낮으면 오기 전에 소문이 돈다
+  assert.ok(PM.catchChance(5, id, 0) < PM.catchChance(5, id, 10));
+});
+
+test('실토는 평판이 정하고, 무거운 것일수록 잘 나온다', () => {
+  const light = PM.ABUSE_POOL.find(a => a.tier === 'nagging').id;
+  const crime = PM.ABUSE_POOL.find(a => a.tier === 'crime').id;
+  assert.ok(PM.tellChance(10, light) > PM.tellChance(0, light), '평판이 솔직도를 안 민다');
+  assert.ok(PM.tellChance(5, crime) > PM.tellChance(5, light), '맞고 있는 사람이 갈굼보다 말을 안 한다');
+  assert.ok(PM.tellChance(10, crime) <= 1);
+});
+
+test('급습은 자리와 시간이 둘 다 맞아야 덮치고, 덮친 것은 그 자리에서 끊긴다', () => {
+  const e = PM.ABUSE_BY_ID['verbal-grind'];
+  const one = { id: e.id, by: 'a', to: 'b', since: '2026-05-01' };
+  const base = { active: [one], comrade: 2, on: '2026-05-18', rng: () => 0 };
+  // 시간이 어긋나면 아무 일도 안 일어난다
+  const off = PM.inspectAbuse({ ...base, placeKey: e.place, slotKey: PM.SLOT_KEYS.find(k => !e.when.includes(k)) });
+  assert.deepEqual(off.caught, []);
+  assert.deepEqual(off.active, [one], '안 도는 시간인데 목록이 바뀌었다');
+  // 맞으면 덮치고, **그 자리에서 끊긴다** — 가라의 「점검은 정체만 산다」가 여기서는 성립 안 한다
+  const hit = PM.inspectAbuse({ ...base, placeKey: e.place, slotKey: e.when[0] });
+  assert.deepEqual(hit.caught.map(a => a.id), [e.id]);
+  assert.deepEqual(hit.active, [], '덮쳤는데 아직 돈다');
+  assert.equal(hit.known[0].how, 'caught');
+});
+
+test('단서는 관행 이름이 아니라 그 짝을 따라간다 — 자라도 어디를 볼지는 안다', () => {
+  const seed = PM.ABUSE_POOL.find(a => a.becomes && a.tier === 'nagging');
+  const grown = PM.ABUSE_BY_ID[seed.becomes];
+  const now = { id: grown.id, by: 'a', to: 'b', since: '2026-05-10' };
+  const stale = [{ id: seed.id, by: 'a', to: 'b', on: '2026-04-01', how: 'told' }];   // 자라기 전에 들은 것
+  // 낡은 단서라도 짝이 같으면 보너스가 붙는다. 굴림을 경계 사이에 놓고 가른다.
+  const p = PM.catchChance(5, grown.id, null, { lead: true });
+  const bare = PM.catchChance(5, grown.id);
+  assert.ok(p > bare);
+  const mid = (p + bare) / 2;
+  const withLead = PM.inspectAbuse({ active: [now], known: stale, placeKey: grown.place, slotKey: grown.when[0], comrade: 5, on: '2026-05-18', rng: () => mid });
+  const without = PM.inspectAbuse({ active: [now], known: [], placeKey: grown.place, slotKey: grown.when[0], comrade: 5, on: '2026-05-18', rng: () => mid });
+  assert.equal(withLead.caught.length, 1, '낡은 단서가 통째로 죽었다 — 오래 쫓을수록 아는 게 없어진다');
+  assert.equal(without.caught.length, 0);
+});
+
+test('무너지는 것은 당하는 놈부터다 — 인원은 그대로고 순서만 생긴다', () => {
+  const men = Array.from({ length: 8 }, (_, i) => ({ serial: `s${i}`, mental: 6 }));
+  const bad = { happy: 0, conflict: 3 };
+  const abuse = [{ id: PM.ABUSE_POOL.find(a => a.tier === 'hazing').id, by: 's0', to: 's5', since: '2026-05-18' }];
+  const out = PM.mentalPass(men, bad, PM.TUNING.comrade.neutral, () => 0, { abuse, today: '2026-05-18' });
+  assert.ok(out[5] < 6, '당하고 있는데 안 무너졌다');
+  // 인원은 안 늘었다 — 부조리는 「누가」를 정할 뿐이다
+  const plain = PM.mentalPass(men, bad, PM.TUNING.comrade.neutral, () => 0);
+  const hurt = a => a.filter(m => m < 6).length;
+  assert.equal(hurt(out), hurt(plain), '부조리가 하락 인원을 늘렸다');
+});
+
+test('형사건은 분위기가 멀쩡해도 매일 깎는다 — 다만 이틀에 한 번이다', () => {
+  // 회복이 같은 밤에 도니까(하한은 언제나 붙는다) 절대값이 아니라 **차이**를 본다.
+  const men = [{ serial: 'a', mental: 6 }, { serial: 'b', mental: 6 }, { serial: 'c', mental: 2 }];
+  const fine = { happy: PM.TUNING.mental.recoverAt, conflict: 0 };   // 분위기는 멀쩡하다
+  const crime = [{ id: PM.ABUSE_POOL.find(a => a.tier === 'crime').id, by: 'a', to: 'b', since: '2026-05-01' }];
+  const none = PM.mentalPass(men, fine, 5, () => 0.999);
+  const even = PM.mentalPass(men, fine, 5, () => 0.999, { abuse: crime, today: '2026-05-03' });
+  const odd = PM.mentalPass(men, fine, 5, () => 0.999, { abuse: crime, today: '2026-05-02' });
+  assert.ok(even[1] < none[1], '계기판이 멀쩡한데 맞고 있는 사람이 안 깎였다');
+  assert.equal(odd[1], none[1], '매를 매일 맞는다 — 그러면 형사건 하나가 부대 회복 정원을 통째로 먹는다');
+});
+
+test('형사건은 갈등 문턱과 무관하게 큰 사건의 문을 연다', () => {
+  const unit = { intel: 5, macho: 5, difficulty: 5, comrade: 10 };   // 문턱이 사실상 닫힌 부대
+  const shut = PM.incidentRisk({ gara: 4, conflict: 3 }, unit);
+  assert.equal(shut.big, 0, '갈등도 멘탈도 멀쩡한데 문이 열려 있다');
+  const open = PM.incidentRisk({ gara: 4, conflict: 3, crimes: 1 }, unit);
+  assert.ok(open.big > 0, '맞고 있는 사람이 있는데 문이 안 열렸다');
+  assert.equal(open.bigCause, 'abuse', '사건이 그 사람에게 안 간다');
+});
+
+test('성과가 있는 급습은 분위기를 안 깎는다 — 값이 붙는 것은 헛걸음이다', () => {
+  const p = { gara: 5, happy: 5, conflict: 3, rep: 5 };
+  const wasted = PM.applyInspection(p);
+  assert.equal(wasted.happy, 4, '헛걸음인데 분위기가 안 깎였다');
+  assert.equal(wasted.gara, 4, '각은 어느 쪽이든 잡힌다');
+  const found = PM.applyInspection(p, { found: true });
+  assert.equal(found.happy, 5, '뭔가 나온 걸음인데 분위기를 깎았다');
+  assert.equal(found.gara, 4);
+});

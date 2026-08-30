@@ -87,7 +87,10 @@ function fixture({ rng, garaRng, judges = [], ambientReady = true, unit: u = uni
   if (ambientReady) ambient.fill([{ slot: 'reveille', text: '또 아침이네' }, { slot: 'amwork', text: '장갑 한 짝' }]);
   const roster = new Roster(u, { storage: memStorage() });
   for (let i = 0; i < 16; i++) {
-    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: u.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+    // 전입일을 흩뿌린다 — 기수가 전부 같으면 **부조리가 성립할 수 없다.** 부조리는 위계를
+    // 타고 흐르는 것이라 기수 차이가 없으면 짝이 안 만들어진다(실제 게임의 초기 명부도
+    // staggeredJoinDates로 흩뿌려져 들어온다).
+    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: u.jobs[i % 4], grade: 'B', character: '중', joined: `2025-${String(1 + i % 12).padStart(2, '0')}-01` });
   }
   // 부임일이 2026-05-18(월)이 되도록 오늘을 고정 — 평일이라 일과 슬롯이 산다.
   const state = Engine.newCampaign(u, '2026-08-26');
@@ -320,7 +323,7 @@ test('부임 첫날 소음 콜은 브리핑과 나란히 난다 — 직렬 대�
   const ambient = new AmbientPool(unit, { storage: memStorage() });
   const roster = new Roster(unit, { storage: memStorage() });
   for (let i = 0; i < 16; i++) {
-    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: `2025-${String(1 + i % 12).padStart(2, '0')}-01` });
   }
   const engine = new Engine(llm, {
     unit, roster, ambient, state: Engine.newCampaign(unit, '2026-08-26'), rng: seqRng(), handlers: {},
@@ -338,7 +341,7 @@ test('브리핑이 죽어 하루를 다시 열어도, 떠 있는 소음 콜을 �
   const ambient = new AmbientPool(unit, { storage: memStorage() });
   const roster = new Roster(unit, { storage: memStorage() });
   for (let i = 0; i < 16; i++) {
-    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+    roster.enlist({ name: `기존${i}`, sheet: `기존시트${i}`, job: unit.jobs[i % 4], grade: 'B', character: '중', joined: `2025-${String(1 + i % 12).padStart(2, '0')}-01` });
   }
   const engine = new Engine(llm, {
     unit, roster, ambient, state: Engine.newCampaign(unit, '2026-08-26'), rng: seqRng(), handlers: {},
@@ -491,7 +494,7 @@ test('하루 마감은 이 부대의 평소 난이도를 같이 넘긴다 — �
   const llm = new FakeLLM();
   const roster = new Roster(hard, { storage: memStorage() });
   for (let i = 0; i < 16; i++) {
-    roster.enlist({ name: `기존${i}`, sheet: 's', job: hard.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+    roster.enlist({ name: `기존${i}`, sheet: 's', job: hard.jobs[i % 4], grade: 'B', character: '중', joined: `2025-${String(1 + i % 12).padStart(2, '0')}-01` });
   }
   const ambient = new AmbientPool(hard, { storage: memStorage() });
   ambient.fill([{ slot: 'reveille', text: '또 아침이네' }]);
@@ -839,6 +842,7 @@ test('전입 병사도 멘탈을 굴려 받는다 — 저장까지', async () =>
 // ══════════════════════════════════════════════════════════
 
 const GARA = await import('../js/params.js');
+const AB = GARA;
 const placeOf = id => GARA.GARA_BY_ID[id].place;
 
 test('부임하면 「가라 4」가 실제 관행 넷이 된다 — 수치가 원본이고 목록이 따라간다', () => {
@@ -1367,4 +1371,143 @@ test('점검 소견에는 시각과 등급이 재료로 실린다 — 수치는 
   assert.ok(user.includes(court.en), '적발한 것이 재료에 없다');
   assert.ok(user.includes(GARA.GARA_TIERS.court.en), '등급이 재료에 안 실렸다');
   assert.ok(!/\b(가라|행복도|평판)\s*\d/.test(user), '수치가 샜다');
+});
+
+// ══════════════════════════════════════════════════════════
+// 부조리 — 들이닥쳐 검거하고, 불러서 실토받는다
+// ══════════════════════════════════════════════════════════
+
+/** 부조리 하나를 손으로 깔아 놓는다. 짝은 명부에서 기수 차이가 나는 둘을 고른다. */
+function plant(f, tier = 'nagging') {
+  const e = AB.ABUSE_POOL.find(a => a.tier === tier);
+  const men = f.roster.present;
+  const one = { id: e.id, by: men[0].serial, to: men.at(-1).serial, since: f.state.date };
+  f.state.abuse.active = [one];
+  f.state.params.conflict = 1;
+  f.engine.slotNow = AB.SLOTS.find(x => x.key === e.when[0]);
+  return { entry: e, one, by: men[0], to: men.at(-1) };
+}
+
+test('갈등 수치가 곧 돌고 있는 부조리의 개수다 — 가라와 같은 계약이다', async () => {
+  const { engine, state } = fixture({ garaRng: () => 0.4 });
+  assert.equal(state.abuse.active.length, state.params.conflict, '부임 첫날부터 목록과 눈금이 어긋났다');
+  for (let d = 0; d < 8; d++) {
+    await engine.runDay();
+    assert.equal(state.abuse.active.length, state.params.conflict,
+      `부임 ${state.day}일차에 갈등 ${state.params.conflict}과 목록 ${state.abuse.active.length}가 벌어졌다`);
+  }
+  // 짝은 언제나 위계를 탄다
+  for (const a of state.abuse.active) {
+    assert.ok(engine.roster.bySerial(a.by) && engine.roster.bySerial(a.to), '명부에 없는 사람이 끼었다');
+    assert.notEqual(a.by, a.to, '혼자서 자기를 괴롭힌다');
+  }
+  // 화면에는 개수와 확인한 것만 간다 — active는 절대 안 나간다
+  const snap = engine.snapshot();
+  assert.equal(snap.abuse.running, state.params.conflict);
+  assert.ok(!('active' in snap.abuse), '돌고 있는 목록이 통째로 화면에 샜다');
+});
+
+test('들이닥쳐 덮치면 그 자리에서 끊긴다 — 가라와 달리 정체만 사고 나오지 않는다', async () => {
+  const f = fixture({ garaRng: () => 0.001 });
+  const { entry, by, to } = plant(f);
+  const conflict0 = f.state.params.conflict;
+  f.engine.interventionsToday = TUNING.rep.freePerDay;
+  const out = await f.engine.inspect(entry.place);
+
+  assert.equal(out.caught.length, 1, '자리와 시간이 맞는데 못 덮쳤다');
+  assert.equal(out.caught[0].by.serial, by.serial);
+  assert.equal(out.caught[0].to.serial, to.serial);
+  assert.deepEqual(f.state.abuse.active, [], '덮쳤는데 아직 돈다');
+  assert.equal(f.state.params.conflict, conflict0 - 1, '끊었는데 갈등이 안 내렸다');
+  assert.equal(f.state.abuse.known[0].how, 'caught');
+  // 피해자가 숨을 쉰다 — 급습이 값을 하는 자리다
+  assert.ok(out.rescued.some(m => m.serial === to.serial), '끊었는데 그 사람에게 아무 일도 안 일어났다');
+});
+
+test('시간이 어긋나면 같은 자리라도 아무 일도 없다', async () => {
+  const f = fixture({ garaRng: () => 0.001 });
+  const { entry, one } = plant(f);
+  f.engine.slotNow = AB.SLOTS.find(x => !entry.when.includes(x.key));
+  const out = await f.engine.inspect(entry.place);
+  assert.deepEqual(out.caught, [], '안 도는 시간인데 덮쳤다');
+  assert.deepEqual(f.state.abuse.active, [one], '목록이 바뀌었다');
+});
+
+test('형사건을 덮치면 가해자가 그 자리에서 실려 나간다', async () => {
+  const f = fixture({ garaRng: () => 0.001 });
+  const { entry, by } = plant(f, 'crime');
+  const before = f.roster.present.length;
+  f.engine.interventionsToday = TUNING.rep.freePerDay;
+  const out = await f.engine.inspect(entry.place);
+
+  assert.equal(out.caught.length, 1);
+  assert.equal(out.hauled.length, 1, '형사건인데 아무도 안 데려갔다');
+  assert.equal(out.hauled[0].soldier.serial, by.serial, '피해자를 데려갔다');
+  assert.equal(f.roster.present.length, before - 1);
+  assert.equal(f.roster.bySerial(by.serial).away.kind, 'custody');
+  // 가벼운 것은 안 데려간다 — 그건 끊고 끝이다
+  const g = fixture({ garaRng: () => 0.001 });
+  const light = plant(g, 'nagging');
+  const out2 = await g.engine.inspect(light.entry.place);
+  assert.equal(out2.caught.length, 1);
+  assert.deepEqual(out2.hauled, [], '갈굼으로 사람을 데려갔다');
+});
+
+test('성과가 있는 걸음은 분위기를 안 깎는다 — 값이 붙는 것은 헛걸음이다', async () => {
+  const hit = fixture({ garaRng: () => 0.001 });
+  const { entry } = plant(hit);
+  hit.state.gara.active = [];   // 가라 쪽은 비워 둔다 — 부조리만으로 성립하는지 본다
+  hit.state.params.gara = 0;
+  const happy0 = hit.state.params.happy;
+  const out = await hit.engine.inspect(entry.place);
+  assert.equal(out.wasted, false);
+  assert.equal(hit.state.params.happy, happy0, '뭔가 나온 걸음인데 분위기를 깎았다');
+
+  const miss = fixture({ garaRng: () => 0.999 });
+  const h0 = miss.state.params.happy;
+  const out2 = await miss.engine.inspect('armory');
+  assert.equal(out2.wasted, true);
+  assert.equal(miss.state.params.happy, h0 - 1, '헛걸음인데 값을 안 치렀다');
+});
+
+test('당하는 놈은 실토하고, 가해자는 절대 안 분다', async () => {
+  const f = fixture();
+  const { entry, by, to } = plant(f);
+  f.state.params.rep = 10;          // 솔직하게 말할 자리
+  f.engine.rng = () => 0;           // 실토 굴림 성공
+
+  const v = await f.engine.interview(to.serial, '요즘 어떠냐');
+  assert.equal(v.told.length, 1, '당하고 있는데 아무 말도 안 했다');
+  assert.equal(v.told[0].id, entry.id);
+  assert.equal(v.told[0].by.serial, by.serial);
+  assert.equal(f.state.abuse.known[0].how, 'told');
+  // 실토는 명부에만 오른다 — **끊기지는 않는다.** 끊는 것은 덮치는 일이다
+  assert.equal(f.state.abuse.active.length, 1, '말했다고 저절로 멎었다');
+
+  // 가해자를 불러도 제 입으로는 절대 안 나온다
+  const g = fixture();
+  const p2 = plant(g);
+  g.state.params.rep = 10;
+  g.engine.rng = () => 0;
+  const a = await g.engine.interview(p2.by.serial, '요즘 어떠냐');
+  assert.deepEqual(a.told, [], '가해자가 제 입으로 자백했다');
+});
+
+test('실토받은 뒤에 들이닥치면 잘 잡힌다 — 두 레버가 하나의 수순이다', () => {
+  const crime = AB.ABUSE_POOL.find(a => a.tier === 'crime');
+  const bare = AB.catchChance(10, crime.id, 10);
+  const lead = AB.catchChance(10, crime.id, 10, { lead: true });
+  assert.ok(lead > bare, '알고 들어가나 모르고 들어가나 같다');
+  // 그리고 그 차이가 「해 볼 만한가」를 가르는 크기여야 한다
+  assert.ok(lead - bare >= 0.2, `단서가 겨우 ${(lead - bare).toFixed(2)}만 올린다 — 물어볼 이유가 없다`);
+});
+
+test('검열은 부조리를 못 잡는다 — 검열관이 보는 것은 서류다', async () => {
+  const f = atDay(TUNING.censor.days[0], { garaRng: () => 0.001 });
+  const { one } = plant(f, 'crime');
+  const snap = await f.engine.runDay();
+  assert.ok(snap.today.censor, '검열일이 아니다');
+  // 부조리는 서류에 안 남는다. 가라는 검열이 천장을 잡아 주지만 부조리는 주임원사뿐이다.
+  assert.ok(f.state.abuse.active.some(a => a.by === one.by && a.to === one.to),
+    '검열이 부조리를 걷어 갔다 — 그러면 주임원사가 사람을 볼 이유가 없어진다');
 });

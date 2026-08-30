@@ -55,10 +55,12 @@ import {
   minMentalOf, counselTakes, applyInspection, applyCensor, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
   GARA_BY_ID, GARA_TIERS, garaCap, garaAt, garaWeight, garaOverreach, garaTierOf,
   syncGaraList, inspectGara,
+  ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf, abuseAt, abuseOn, abuseBy,
+  syncAbuseList, inspectAbuse, ripenAbuse, tellChance,
   censorOn, censorAhead, censorSweep, censorReport, custodyFor,
   farewellTone, pickSendoff, PARAM_KEYS,
 } from './params.js';
-import { assignJob, rankLine } from './roster.js';
+import { assignJob, rankLine, cohortOf } from './roster.js';
 import { AmbientPool } from './ambient.js';
 
 const clamp10 = v => Math.max(0, Math.min(10, v));
@@ -98,6 +100,7 @@ export class Engine {
     this.state = state || Engine.newCampaign(unit);
     this.#migrate();
     this.#syncGara();   // 「가라 4」가 실제로 무엇 넷인지를 부임 첫날 굴려 둔다
+    this.#syncAbuse();  // 「갈등 3」이 누가 누구에게 하는 무엇 셋인지도
     // 병영 소음 풀. 부임 때 한 번 채우고 100일 내내 쓴다 — 저장돼 있으면 그걸 집는다.
     this.ambient = ambient || new AmbientPool(unit);
     this.ambient.load();
@@ -127,6 +130,10 @@ export class Engine {
       //   known  — 확인 명부 [{id, on}]. 들이닥쳐서 잡은 것만 오른다. 확인한 그날의 사실이다
       //   seen   — 장소별 마지막 확인 날짜. 명부가 얼마나 낡았는지의 근거
       gara: { active: [], known: [], seen: {}, seenAt: {} },
+      // 부조리 내역 — 갈등 눈금의 내용물. 가라와 같은 계약이되 **사람에 붙는다.**
+      //   active — 지금 돌고 있는 것들 [{id, by, to, since}]. 화면에 통째로는 절대 안 간다
+      //   known  — 확인 명부. 덮쳐서 끊은 것과 면담에서 실토받은 것이 여기 오른다
+      abuse: { active: [], known: [] },
       // 축마다 이어진 「사유 없는 날」 수. 제자리 회복이 이 카운터를 본다 —
       // 매일 당기면 판정이 민 한 칸이 그날 저녁에 도로 돌아와서 바늘이 언다(params.js의 restDays).
       calm: { gara: 0, happy: 0, conflict: 0 },
@@ -152,6 +159,9 @@ export class Engine {
     g.seen ||= {};
     g.seenAt ||= {};
     s.calm = { gara: 0, happy: 0, conflict: 0, ...(s.calm || {}) };
+    const ab = s.abuse || (s.abuse = {});
+    ab.active = (ab.active || []).filter(a => ABUSE_BY_ID[a?.id] && a.by && a.to);
+    ab.known = (ab.known || []).filter(a => ABUSE_BY_ID[a?.id]);
     // 옛 저장분에는 시간대·등급이 없던 가라가 있을 수 있다 — 표에서 사라진 id는 여기서 떨어진다.
     s.censors = (s.censors || []).map(c => ({
       ...c,
@@ -174,6 +184,25 @@ export class Engine {
     s.params.gara = Math.min(s.params.gara, garaCap(banned));
     s.gara.active = syncGaraList(s.gara.active, s.params.gara, { banned, rng: this.garaRng });
   }
+
+  /**
+   * 목록을 갈등 수치에 맞춘다 — 가라와 같은 계약이다. 다만 짝이 필요해서 명부를 본다:
+   * 짝을 못 만들면 목록이 안 자란다. 사람이 빠져나간 부대에서 부조리가 저절로 잦아드는 것도
+   * 사고가 사람을 데려가는 값의 일부다.
+   */
+  #syncAbuse() {
+    const s = this.state;
+    s.abuse.active = syncAbuseList(s.abuse.active, s.params.conflict, {
+      roster: this.roster.soldiers,
+      cohortOf: m => cohortOf(this.unit, m.joined),
+      macho: this.unit.macho.score,
+      date: s.date,
+      rng: this.garaRng,
+    });
+  }
+
+  /** 지금 돌고 있는 형사건 부조리 — 사고 롤이 이걸 본다. 갈등 문턱과 별개로 문을 연다. */
+  #crimes() { return this.state.abuse.active.filter(a => abuseTierOf(a.id).pulls).length; }
 
   /**
    * 프롬프트로 나갈 병사 표기. 저장된 필드에 **그날의 기수·계급**을 얹는다.
@@ -215,6 +244,12 @@ export class Engine {
         seen: { ...s.gara.seen },                   // 장소별 마지막 확인 날짜
         seenAt: { ...s.gara.seenAt },               // 그때가 어느 시간대였는가
         cap: garaCap(this.bannedGara()),            // 금지가 내려 놓은 천장
+      },
+      // 부조리 내역 중 **화면이 봐도 되는 것만.** active는 여기 없다 — 계기판이 개수를 말하고
+      // 명부가 확인한 것만 말한다. 가라와 같은 안개인데, 이쪽은 사람 이름이 걸려 있다.
+      abuse: {
+        running: s.params.conflict,
+        known: s.abuse.known.map(k => ({ ...k })),
       },
       // 검열 — 미리 안다는 것이 주임원사가 검열관에게 가진 유일한 우위다. 그래서 예고는
       // 화면 몫이고, 무엇이 돌고 있는지는 여전히 안 준다. 날짜만 알고 내용은 모른다.
@@ -361,6 +396,9 @@ export class Engine {
     const rest = await Promise.allSettled(specs.slice(1).map((sp, i) => write(sp, i + 1)));
     const failed = rest.find(r => r.status === 'rejected');
     if (failed) throw failed.reason;
+    // 명부가 바뀌었으면 부조리 목록도 따라온다 — 짝이 사람이라, 사람이 없으면 목록이 못 자란다.
+    // 부임 첫날의 「갈등 3」이 실제로 누가 누구에게 하는 무엇 셋이 되는 자리가 여기다.
+    this.#syncAbuse();
     return arrivals;
   }
 
@@ -473,6 +511,7 @@ export class Engine {
           minMental: minMentalOf(this.roster.present),
           overreach: garaOverreach(s.gara.active, this.unit.intel.score),
           heat: garaWeight(s.gara.active),
+          crimes: this.#crimes(),   // 맞고 있는 사람이 있으면 그 사람의 사고는 이미 열려 있다
         }, {
           intel: this.unit.intel.score, macho: this.unit.macho.score,
           comrade: this.unit.comrade.score, difficulty: effDiff,
@@ -494,7 +533,8 @@ export class Engine {
       // 부재자는 부대 분위기에 안 쓸린다 — 여기에 없으니까. 멘탈은 나간 날 그대로 얼어 있다.
       // 하락은 전원, 회복은 전우애가 정한 인원만 — 그 비대칭이 멘탈 경제다(params.mentalPass).
       const present = this.roster.present;
-      const after = mentalPass(present, s.params, this.unit.comrade.score, this.rng);
+      // 누가 무너지는가를 부조리 목록이 정한다 — 인원은 그대로고 순서만 생긴다.
+      const after = mentalPass(present, s.params, this.unit.comrade.score, this.rng, { abuse: s.abuse.active, today: date });
       present.forEach((man, i) => { man.mental = after[i]; });
       this.roster.save();
 
@@ -509,9 +549,15 @@ export class Engine {
       const calmNext = nextCalm(s.calm, touched);
       s.params = applyDrift(s.params, effDiff, driftOpts);
       s.calm = calmNext;
-      // 드리프트도 가라를 민다 — 밀었으면 목록이 따라와야 한다. 이 한 줄이 없으면 개입 없는
-      // 날마다 「게이지의 개수」와 「실제 목록」이 벌어지고, 그 틈만큼 검열도 급습도 헛돈다.
+      // 갈등이 움직였으면 부조리 하나가 새로 시작됐거나 잦아들었다. 가라와 같은 자리다.
       this.#syncGara();
+      this.#syncAbuse();
+      // 그리고 **아무도 안 말린 것은 무거워진다.** 이게 이 시스템의 시계다 —
+      // 갈굼이 스물넷 날 지나면 가혹행위가 되고, 또 그만큼 지나면 형사건이 된다.
+      // 형사건은 주사위가 준 것이 아니라 주임원사가 놓친 것이다.
+      const ripe = ripenAbuse(s.abuse.active, s.date, { rng: this.garaRng });
+      const grown = ripe.filter((a, i) => a.id !== s.abuse.active[i]?.id);
+      s.abuse.active = ripe;
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
@@ -536,6 +582,8 @@ export class Engine {
         taken: [...incidents.flatMap(i => i.absences || []), ...(censorOut?.absences || [])]
           .map(a => a.soldier.name),
         censor: censorOut,
+        // 오늘 무거워진 부조리 — 화면이 알려줄 수는 없다(정체를 모르니까). 콘솔·테스트 몫이다.
+        ripened: grown.length,
       };
       const snap = { ...this.snapshot(), today: ledger };
       await this.h.dayEnd?.(snap);
@@ -557,11 +605,19 @@ export class Engine {
     });
     // 멘탈이 연 큰 사건은 **무너진 그 놈들**의 사건이다 — 멘탈 낮은 순으로 고른다.
     // 그 밖의 사건은 가중 추첨(등급·멘탈)이다.
-    const involved = cause === 'mental'
-      ? this.roster.present
-        .sort((a, b) => (a.mental ?? TUNING.mental.default) - (b.mental ?? TUNING.mental.default))
-        .slice(0, event.involved)
-      : pickInvolved(this.roster.present, event.involved, this.rng);
+    // 부조리가 연 사건은 **당하고 있는 그 사람의** 사건이다 — 가해자를 같이 세운다.
+    // 멘탈이 연 사건은 무너진 놈들의 것이고, 나머지는 가중 추첨이다.
+    const victim = cause === 'abuse'
+      ? this.roster.present.find(m => s.abuse.active.some(a => abuseTierOf(a.id).pulls && a.to === m.serial))
+      : null;
+    const involved = victim
+      ? [victim, ...this.roster.present.filter(m => m !== victim
+        && s.abuse.active.some(a => a.to === victim.serial && a.by === m.serial))].slice(0, Math.max(1, event.involved))
+      : cause === 'mental'
+        ? this.roster.present
+          .sort((a, b) => (a.mental ?? TUNING.mental.default) - (b.mental ?? TUNING.mental.default))
+          .slice(0, event.involved)
+        : pickInvolved(this.roster.present, event.involved, this.rng);
     if (!involved.length) return null;
     const place = PLACES[event.place]?.label || event.place;
     // 유형은 코드가 안다 — 그림도 기록도 이걸 본다. 판정 콜은 늘지 않는다.
@@ -578,6 +634,15 @@ export class Engine {
         // 자리만이 아니라 **지금 이 시간에** 그 자리에서 돌던 것이다. 점호 때 도는 대리 점호가
         // 오후 작업장 사건의 재료가 되면 장면이 부대에 대해 거짓말을 한다.
         garaHere: garaAt(s.gara.active, event.place, slot.key).map(id => GARA_BY_ID[id].en),
+        // 그 자리·그 시간에 사람 사이에서 벌어지고 있는 것. 연루자에 그 짝이 껴 있으면
+        // 사건이 허공에서 나지 않고 **이미 있던 관계에서** 자라 나온다.
+        abuseHere: abuseAt(s.abuse.active, event.place, slot.key)
+          .filter(a => involved.some(m => m.serial === a.to || m.serial === a.by))
+          .map(a => ({
+            en: ABUSE_BY_ID[a.id].en,
+            by: involved.find(m => m.serial === a.by)?.name || null,
+            to: involved.find(m => m.serial === a.to)?.name || null,
+          })),
       }),
     });
     let scene;
@@ -626,7 +691,8 @@ export class Engine {
     // 안 묶어 두면 가라가 하루 +5까지 뛰고, 가라가 오르면 사고 롤이 커져 사건이 더 나는
     // 되먹임이 붙는다(실측: 난이도 높은 부대는 부임 일주일이면 100%가 가라 천장에 붙었다).
     s.params = capDay(applyDirections(s.params, verdict), this.dawn || s.params);
-    this.#syncGara();   // 가라가 움직였으면 관행 하나가 새로 돌기 시작했거나 멎었다
+    this.#syncGara();    // 가라가 움직였으면 관행 하나가 새로 돌기 시작했거나 멎었다
+    this.#syncAbuse();   // 갈등이 움직였으면 부조리 하나가 시작됐거나 잦아들었다
     const escalated = verdict?.outcome === 'escalated';
     // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.
     const stamped = categoryFor(event, escalated);
@@ -806,11 +872,32 @@ export class Engine {
     // 병사의 체감 밴드 — 부대 지표가 아니라 자기 주변이다. 한 칸 오차의 사견이 낀다.
     // 제 마음(spirit)만은 오차 없이 제 것이다 — dressed()가 그 병사의 멘탈 밴드를 싣는다.
     const jitter = v => clamp10(v + Math.floor(this.rng() * 3) - 1);
-    const p = this.state.params;
+    const s0 = this.state;
+    const p = s0.params;
     const felt = { room: band(jitter(p.conflict)), work: band(jitter(p.gara)) };
     const honesty = honestyOf(p.rep);
 
-    const thread = [{ role: 'user', content: P.interviewOpen({ soldier: this.dressed(soldier), felt, honesty, question }) }];
+    // **면담의 두 번째 일 — 실토.** 계기판이 정보 채널로서의 면담을 대체한 뒤로 이 레버에는
+    // 멘탈 +1 말고 할 일이 없었다. 이제 하나가 더 있다: 당하고 있는 놈을 부르면,
+    // 평판이 허락하는 만큼 제 일을 말한다(tellChance = 프롬프트의 honesty와 같은 자리).
+    // **가해자는 절대 안 분다** — 제 입으로 말할 리가 없다. 그래서 계기판에서 멘탈이 낮은
+    // 놈을 고르는 눈이 곧 부조리를 찾는 눈이 된다.
+    const suffered = abuseOn(s0.abuse.active, soldier.serial);
+    const told = suffered.filter(a => this.rng() < tellChance(p.rep, a.id));
+    if (told.length) {
+      const keyOf = a => `${a.id}|${a.by}|${a.to}`;
+      const had = new Set(s0.abuse.known.map(keyOf));
+      for (const a of told) if (!had.has(keyOf(a))) s0.abuse.known.push({ ...a, on: s0.date, how: 'told' });
+    }
+
+    const thread = [{ role: 'user', content: P.interviewOpen({
+      soldier: this.dressed(soldier), felt, honesty, question,
+      // 실토한 것만 장면의 재료로 나간다. 말 안 한 것은 프롬프트에도 안 실린다 —
+      // 안 실어야 「말 안 했다」가 진짜로 말 안 한 것이 된다.
+      suffered: told.map(a => ({ en: ABUSE_BY_ID[a.id].en, sign: null })),
+      // 이 병사가 **하고 있는** 것은 말투에만 실린다. 자백은 안 한다.
+      guilty: abuseBy(s0.abuse.active, soldier.serial).length > 0,
+    }) }];
     const sysMsg = P.interviewSystem(this.unit);
     const call = () => this.#gen({ label: `면담 · ${soldier.name}`, system: sysMsg, messages: thread });
 
@@ -825,6 +912,10 @@ export class Engine {
     this.roster.save();
     return {
       soldier, reply: first, took,
+      // 실토받은 것 — 화면이 명부에 올리고 「누가 누구에게」를 쓴다
+      told: told.map(a => ({ ...ABUSE_BY_ID[a.id], grade: abuseTierOf(a.id), by: this.roster.bySerial(a.by) })),
+      // 말 안 한 것이 남아 있는가는 **개수조차 안 준다** — 그러면 평판을 태워 산 정보가 새고,
+      // 「입을 안 열었다」가 「없다」와 구별이 안 된다. 그 구별이 이 레버의 전부다.
       mental: { before, after: soldier.mental },
       ask: async (q) => {   // 왕복 — 배급도 회복도 안 늘어난다. 스레드는 이 면담 안에서만 산다
         thread.push({ role: 'user', content: P.interviewFollowup(q) });
@@ -866,6 +957,15 @@ export class Engine {
       intel: this.unit.intel.score, rep: s.params.rep, on: s.date, rng: this.garaRng,
     });
     s.gara.known = res.known;
+
+    // 같은 걸음에 **사람 쪽도 본다.** 문을 열면 서류만 보이는 게 아니다 —
+    // 가라는 자리에 붙어 있고 부조리는 거기 서 있는 사람에게 붙어 있다.
+    const hit = inspectAbuse({
+      active: s.abuse.active, known: s.abuse.known, placeKey, slotKey: slot?.key || null,
+      comrade: this.unit.comrade.score, rep: s.params.rep, on: s.date, rng: this.garaRng,
+    });
+    s.abuse.active = hit.active;
+    s.abuse.known = hit.known;
     // 「이 자리를 언제 봤는가」다. 시간까지 적어 두는 이유는, 낮에 본 생활관과 점호 때 본
     // 생활관이 같은 자리가 아니기 때문이다 — 명부의 낡음은 자리만으로는 못 잰다.
     s.gara.seen[placeKey] = s.date;
@@ -880,6 +980,9 @@ export class Engine {
         place: place.label, readings,
         when: slot ? `${slot.label} (${slot.time})` : null,
         found: res.spotted.map(id => ({ en: GARA_BY_ID[id].en, grade: garaTierOf(id).en })),
+        // 사람 쪽에서 덮친 것. 이름은 안 넘긴다 — 소견은 **눈에 보인 것**을 쓰는 자리라,
+        // 누가 누구인지는 화면이 명부로 말하고 장면은 그 광경만 쓴다.
+        caught: hit.caught.map(a => ({ en: ABUSE_BY_ID[a.id].en, grade: abuseTierOf(a.id).en })),
       }),
       schema: null,
     });
@@ -887,7 +990,36 @@ export class Engine {
     // 효과는 장면과 무관하게 확정이다 — LLM이 폭을 정하는 자리는 이 게임에 없다.
     // 명부는 여기서 안 건드린다. 무엇이 멎었는지는 주임원사가 알 길이 없고, 방금 확인한 것이
     // 조용히 멎었다면 그 줄은 그날부터 낡기 시작한다 — 그게 이 게임에 남겨 둔 안개다.
-    s.params = applyInspection(s.params);
+    // 성과가 있으면 분위기를 안 깎는다 — 장부든 사람이든, 뭔가 나온 걸음은 헛걸음이 아니다.
+    s.params = applyInspection(s.params, { found: res.spotted.length > 0 || hit.caught.length > 0 });
+
+    // 덮친 부조리는 **그 자리에서 끊긴다.** 눈앞에서 후임을 세워 놓고 있는데 「정체를 샀다」로
+    // 끝내고 나오는 주임원사는 없다 — 가라의 「점검은 사고 지침이 끊는다」 원칙이 여기서는
+    // 성립하지 않는다. 끊은 만큼 갈등이 내려간다.
+    if (hit.caught.length) s.params.conflict = Math.max(0, s.params.conflict - hit.caught.length);
+    // **형사건을 현장에서 덮치면 가해자가 그 자리에서 실려 나간다.** 구타·강요·기수열외는
+    // 규정상 조사 대상이고(빨간명찰 박탈·전출까지 간다 — docs/research.md §3), 주임원사가
+    // 본 것을 못 본 척할 수 있는 자리가 아니다.
+    // 그리고 이게 형사건의 **유일한 출구**다: 제일 안 걸리는 등급이라(은닉 −0.18) 급습만으로는
+    // 좀처럼 못 잡고, 저절로 잦아들지도 않는다. 잡으면 짝이 통째로 끊긴다.
+    const hauled = [];
+    for (const a of hit.caught) {
+      if (!abuseTierOf(a.id).pulls) continue;
+      const man = this.roster.bySerial(a.by);
+      if (!man || man.away) continue;
+      const rule = custodyFor(this.rng);
+      const gone = this.roster.sendAway(man, { kind: rule.kind, days: rule.days, since: s.date });
+      if (gone) hauled.push({ soldier: gone, kind: rule.kind, until: gone.away.until });
+    }
+    // 덮친 건의 **피해자가 숨을 쉰다.** 그 자리에서 끊긴 것이 그 사람에게는 그날의 전부다.
+    const rescued = [];
+    for (const a of hit.caught) {
+      const man = this.roster.bySerial(a.to);
+      if (!man || man.away || rescued.includes(man)) continue;
+      man.mental = Math.min(10, (man.mental ?? TUNING.mental.default) + TUNING.abuse.rescue);
+      rescued.push(man);
+    }
+    if (hauled.length || rescued.length) this.roster.save();
 
     // 예외 하나 — **재판급은 보고도 두고 나올 수가 없다.** 눈앞에서 실탄이 나오는데
     // 「정체를 샀다」로 끝내는 주임원사는 없다. 그 자리에서 끊긴다(가라 추가 −1)이고,
@@ -900,15 +1032,25 @@ export class Engine {
       s.gara.known = s.gara.known.filter(k => !pulled.includes(k.id));
     }
     this.#syncGara();
+    this.#syncAbuse();
 
     // 놓친 것의 **개수조차** 안 돌려준다. 「3건 중 1건 적발」이라고 말해 버리면
     // 그 자리의 진짜 개수가 통째로 새고, 숨긴다는 것 자체가 의미를 잃는다.
     return {
       place: place.label, findings,
+      // 헛걸음이었는가 — 화면이 「그래서 행복이 왜 안 깎였나」를 쓸 수 있어야 한다
+      wasted: res.spotted.length === 0 && hit.caught.length === 0,
       slot: slot ? { key: slot.key, label: slot.label, time: slot.time } : null,
       effect: { ...TUNING.inspect },
       spotted: res.spotted.map(id => ({ ...GARA_BY_ID[id], grade: garaTierOf(id) })),
       pulled: pulled.map(id => GARA_BY_ID[id]),
+      // 검거한 부조리 — 이름이 붙는다. 가라와 달리 여기는 사람이 걸려 있다.
+      caught: hit.caught.map(a => ({
+        ...ABUSE_BY_ID[a.id], grade: abuseTierOf(a.id),
+        by: this.roster.bySerial(a.by), to: this.roster.bySerial(a.to),
+      })),
+      hauled,   // 형사건이라 그 자리에서 실려 나간 가해자들
+      rescued,  // 그 자리에서 끊겨 숨을 쉰 피해자들
     };
   }
 

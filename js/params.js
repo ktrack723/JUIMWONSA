@@ -255,6 +255,50 @@ export const TUNING = {
     maxTaken: 2,
   },
 
+  // 부조리 내역 — 「갈등 3」이 실제로 무엇 셋인가. 가라와 같은 계약이되 미는 것이 다르다:
+  // 가라는 부대 **지능**이 숨기고(머리 좋으면 표가 안 난다), 부조리는 부대 **전우애**가 숨긴다
+  // (끈끈하면 자기들끼리 덮는다). 그래서 같은 부대가 두 목록에 대해 정반대로 어렵다 —
+  // 해병은 가라가 잘 걸리고 부조리가 안 걸리고, 공군은 그 반대다. 그게 이 축의 값이다.
+  abuse: {
+    catchBase: 1.05, comradePer: 0.07, catchFloor: 0.25, catchCeil: 0.95,
+    tierHide: { nagging: 0, hazing: -0.08, crime: -0.18 },
+    // 불려온 병사가 제 일을 실토할 확률 — 평판 밴드 다섯에 대응한다.
+    // 씹히는 주임원사에게는 아무도 말 안 한다. 이게 면담의 두 번째 일이고,
+    // 계기판이 정보 채널로서의 면담을 대체한 뒤로 비어 있던 자리다.
+    tell: [0.1, 0.3, 0.55, 0.8, 0.95],
+    tellPerRank: 0.15,   // 등급이 무거울수록 잘 나온다 — 맞고 있는 사람은 물어봐 주기를 기다린다
+    characterPer: 0.5,   // 인성이 한 칸 낮을수록 가해 가중이 이만큼
+    machoPer: 0.12,      // 마초가 높은 부대일수록 그 기울기가 세다
+    pileOn: 2.5,         // 이미 당하는 놈에게 쏠리는 가중 — 부조리는 흩어지지 않는다
+    // **새로 생기는 것은 언제나 제일 가벼운 것이다.** 그리고 아무도 안 말리면 이만큼 지나서
+    // 한 단계 무거워진다(becomes 사슬). 그래서 형사건은 **주사위가 준 것이 아니라 놓친 결과**다.
+    //
+    // 처음에는 등급도 추첨으로 깔았다가 물렸다: 부임 첫날부터 형사건이 16% 확률로 돌고 있고,
+    // 하나를 끊어도 그 자리에 또 형사건이 깔려서, 무엇을 해도 사람이 무너졌다(실측: 어느
+    // 전략도 완주 0~8%). 방치가 값을 치러야지 **시작이 값을 치르면** 그건 게임이 아니다.
+    // 24일이었다. 형사건까지 두 단계면 48일이라 100일에 두 세대가 익었고, 어느 플레이도
+    // 다 못 잡아서 임기 말이면 형사건이 1~2건 굴러갔다(실측: 완주율 전 전략 0~8%).
+    // 40일이면 형사건은 80일 방치의 결과다 — 임기에 한 번, 놓쳤을 때만 나온다.
+    ripenDays: 40,
+    // **알고 들어가는 것과 모르고 들어가는 것은 다르다.** 명부에 이미 올라 있는 건은
+    // 덮칠 확률이 이만큼 오른다 — 어디를 봐야 하는지 아니까.
+    // 이게 두 발견 경로를 하나의 수순으로 묶는다: **면담으로 알아내고, 들이닥쳐 끊는다.**
+    // 없이 재 봤더니 실토는 명부만 채우고 아무것도 안 끊어서, 평판을 태워 산 정보가
+    // 쓸 데가 없었다(실측: 명부 19건을 알고도 형사건이 1.8건 굴러갔다).
+    leadBonus: 0.4,
+    // **덮친 그날 그 사람이 숨을 쉰다.** 급습은 행복 −1에 평판을 태우는 비싼 레버인데,
+    // 부조리를 끊어서 얻는 것이 「갈등 −1」뿐이면 값이 안 맞는다 — 실측에서 부조리를 쫓는
+    // 플레이가 아무것도 안 하는 플레이보다 못했다(완주 0% 대 8%, 남은 형사건 1.8건 대 1.0건).
+    // 끌려나간 놈이 있는 날 그 방의 그 사람에게 무슨 일이 일어나는가를 값으로 쳐 준다.
+    // 이게 「들이닥쳐 검거한다」에 값을 주는 자리다.
+    rescue: 2,
+    // 형사건을 방치하면 그 사람이 사고가 된다. 큰 사건 전용 위험이 건당 이만큼 열린다.
+    // 0.010에서 내렸다 — 이 위험은 **슬롯마다** 굴러서 하루로는 아홉 배가 된다. 0.010이면
+    // 형사건 하나가 하루 0.09건의 중대 사건이고, 100일이면 사고가 3~7건 늘어 어느 플레이도
+    // 완주를 못 했다(실측 완주율 0~8%). 멘탈 위험(dangerPer 0.006)과 같은 눈금에 둔다.
+    crimePer: 0.004,
+  },
+
   // 사고가 사람을 데려간다 — 확전한 사건은 연루자 하나를 부대에서 실제로 빼낸다.
   // 카운터만 0으로 돌리는 사고는 종이 위의 일이었다. 탈영은 그 자리를 비우고,
   // 부상은 병원으로 보낸다 — 남은 열다섯으로 며칠을 버티는 것이 사고의 값이다.
@@ -304,6 +348,10 @@ export const repBite = rep => TUNING.rep.bite[repIdx(rep)];
 // ── 날짜 규칙 — 현실 날짜 그대로 기입한다 ─────────────────
 // 부임일 = 플레이 시작한 현실의 오늘 − 100일. 게임 1턴 = 달력 1일.
 // 달력은 언제나 전진하고, 사고가 나면 무사고 카운터만 0이 된다.
+/** 두 날짜 사이의 일수. 부조리가 익는 시계와 명부의 낡음이 같은 셈을 쓴다. */
+export const daysApart = (a, b) =>
+  Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000);
+
 export const dateAdd = (iso, days) => {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -687,6 +735,403 @@ for (const k of SLOT_KEYS) {
 }
 if (!GARA_POOL.some(g => g.tier === 'court')) throw new Error('params.js: 재판급 가라가 하나도 없다 — 검열이 터질 자리가 없다');
 
+// ── 부조리 내역 — 「갈등 3」이 실제로 무엇 셋인가 ──────────
+//
+// 가라 내역과 같은 계약을 쓴다: **수치가 원본이고 목록이 따라간다.** 갈등·부조리 3은 지금
+// 이 부대에서 부조리 셋이 돌고 있다는 뜻이고, 그 셋이 무엇인지는 안 알려준다.
+//
+// 다만 **가라와 결정적으로 다른 것이 하나 있다:**
+//
+//     가라는 자리에 붙고, 부조리는 사람에 붙는다.
+//
+// 재고 맞추기는 창고에서 도는 것이지 누가 하는지는 부차적이다. 반면 「말 안 섞기」는
+// 창고에서 도는 것이 아니라 **김 상병이 이 이병에게** 하는 것이다. 그래서 이 목록의
+// 항목 하나는 언제나 짝을 달고 있다 — `{ id, by, to }`. 그 차이가 게임의 나머지를 전부 가른다:
+//
+//   · 발견 경로가 둘이다. 들이닥쳐 **현장을 덮치거나**, 당하는 놈을 불러 **실토받거나**.
+//     후자가 면담에 두 번째 일을 준다 — 계기판이 정보 채널로서의 면담을 대체한 뒤로
+//     그 레버에는 멘탈 +1 말고 할 일이 없었다.
+//   · 검거하면 **그 자리에서 끊긴다.** 눈앞에서 후임을 세워 놓고 있는데 「정체를 샀다」로
+//     끝내고 나오는 주임원사는 없다. 가라의 「점검은 사고 지침이 끊는다」 원칙이 여기서는
+//     성립하지 않는다 — 사람 문제라서다.
+//   · **검열은 부조리를 못 잡는다.** 검열관이 보는 것은 서류고, 부조리는 서류에 안 남는다.
+//     그래서 가라는 검열이 천장을 잡아 주지만 부조리는 **주임원사 말고 아무도 안 잡는다.**
+//   · 그리고 이것이 멘탈에 **이름을 붙인다.** 예전에는 분위기가 나쁜 밤에 무작위로 몇 명이
+//     무너졌다. 이제는 **당하고 있는 놈부터** 무너진다 — 인원은 그대로고 누구인지만 정해진다.
+//     그 「누구인지」를 알려면 들이닥치거나 불러야 하고, 그게 이 시스템의 전부다.
+//
+//   place·when — 어느 자리 어느 시간에 벌어지는가 (급습이 덮치려면 둘 다 맞아야 한다)
+//   tier       — 등급 (ABUSE_TIERS). 형사건은 방치하면 그 사람이 사고가 된다
+//   gap        — 성립에 필요한 최소 기수 차이. 부조리는 위계를 타고 흐른다
+//   tell       — 화면 몫. 들이닥쳤을 때 눈에 보이는 것
+//   sign       — 화면 몫. 당하는 놈이 면담에서 흘리는 말
+//   cat        — 이것이 터지면 어느 사고 유형으로 기재되는가
+
+// 등급 셋. 가라의 등급표와 같은 자리에 있지만 세는 것이 다르다 —
+// 가라는 「걸리면 무슨 처분인가」였고, 여기는 **사람에게 무엇이 남는가**다.
+//
+// `daily`가 그 차이를 든다: 갈굼과 가혹행위는 **분위기가 나쁜 밤에만** 사람을 깎는다(그날
+// 무너질 몇 명을 고를 때 앞줄에 설 뿐이다). 형사건은 **분위기와 무관하게 매일** 깎는다 —
+// 부대가 아무리 밝아도 맞고 있는 사람은 맞고 있다. 그래서 형사건 하나가 켜져 있으면
+// 계기판이 멀쩡한데 사람 하나가 조용히 바닥으로 간다. 그걸 찾는 것이 이 시스템의 게임이다.
+export const ABUSE_TIERS = {
+  nagging: {
+    rank: 0, label: '갈굼', short: '갈', daily: 0, pulls: false,
+    en: 'petty — the daily grinding-down that never gets written up',
+    note: '하루하루 깎아 내는 것. 한 건으로는 아무 일도 안 나지만 쌓이면 사람이 준다',
+  },
+  hazing: {
+    rank: 1, label: '가혹행위', short: '가', daily: 0, pulls: false,
+    en: 'hazing — a disciplinary matter the moment it surfaces',
+    note: '드러나면 징계다. 「친목」이라는 이름으로 살아남는 자리',
+  },
+  crime: {
+    rank: 2, label: '형사건', short: '형', daily: 1, everyOtherDay: true, pulls: true,
+    en: 'criminal — assault, coercion, exclusion: the kind that ends in a trial',
+    note: '방치하면 그 사람이 사고가 된다. 자해도 탈영도 여기서 나온다',
+  },
+};
+export const ABUSE_TIER_KEYS = Object.keys(ABUSE_TIERS);
+
+export const ABUSE_POOL = [
+  {
+    id: 'verbal-grind', place: 'barracks', when: ['taps', 'sleep'], tier: 'nagging', gap: 1,
+    cat: 'abuse', weight: 4,
+    becomes: 'silent-treat',
+    label: '갈굼', desc: '취침 전마다 붙잡아 놓고 같은 소리를 반복한다',
+    tell: '소등 뒤인데 관물대 앞에 둘이 서 있고, 한 명만 말한다',
+    sign: '「저는 괜찮습니다」를 묻지도 않았는데 먼저 말한다',
+    en: 'a senior keeping a junior standing after lights-out to say the same thing again',
+  },
+  {
+    id: 'errand-run', place: 'messhall', when: ['breakfast', 'lunch', 'dinner'], tier: 'nagging', gap: 2,
+    cat: 'abuse', weight: 3,
+    becomes: 'food-force',
+    label: '식당 셔틀', desc: '제 식판과 후식까지 후임에게 들리고 자리에 앉아 기다린다',
+    tell: '식판 둘을 든 놈 하나와, 빈손으로 먼저 앉은 놈 하나',
+    sign: '밥을 제일 늦게 먹고 제일 먼저 일어난다',
+    en: 'making a junior carry his tray and fetch his dessert while he sits waiting',
+  },
+  {
+    id: 'shop-shuttle', place: 'smoking', when: ['rest', 'taps'], tier: 'nagging', gap: 2,
+    cat: 'abuse', weight: 3,
+    becomes: 'money-hold',
+    label: '매점 셔틀', desc: '개인정비 시간마다 매점 심부름을 시킨다 — 돈은 나중에 준다고 한다',
+    tell: '한 놈만 계속 뛰어갔다 온다. 봉지는 남의 것이다',
+    sign: '개인정비 시간에 제 것을 하는 걸 본 적이 없다',
+    en: 'sending the same junior to the shop every free hour, promising to pay him back later',
+  },
+  {
+    id: 'gear-take', place: 'barracks', when: ['rest', 'taps'], tier: 'nagging', gap: 2,
+    cat: 'supply', weight: 2,
+    becomes: 'money-hold',
+    label: '관물대 뒤지기', desc: '후임 관물대에서 필요한 것을 말없이 가져다 쓴다',
+    tell: '이름표가 다른 물건이 관물대 둘에 걸쳐 있다',
+    sign: '보급 받은 지 얼마 안 된 물건이 없어졌다고 한다',
+    en: 'helping himself to a junior\'s locker without asking',
+  },
+  {
+    id: 'shift-dump', place: 'barracks', when: ['taps', 'sleep'], tier: 'hazing', gap: 2,
+    cat: 'guard', weight: 3,
+    becomes: 'beating',
+    label: '근무 떠넘기기', desc: '제 불침번을 후임에게 대신 세우고 자기는 잔다',
+    tell: '근무표의 이름과 실제로 서 있는 얼굴이 다르다',
+    sign: '눈이 늘 충혈돼 있는데 근무표에는 이름이 없다',
+    en: 'making a junior stand his night watch for him while he sleeps',
+  },
+  {
+    id: 'food-force', place: 'messhall', when: ['dinner'], tier: 'hazing', gap: 2,
+    cat: 'health', weight: 2,
+    becomes: 'beating',
+    label: '악기바리', desc: '친목이라는 이름으로 먹을 수 있는 양을 넘겨 먹인다',
+    tell: '식판 하나에 다 못 먹을 양이 쌓여 있고, 주위가 웃으며 본다',
+    sign: '저녁만 되면 배가 아프다고 한다',
+    en: 'forcing food on a junior past what he can eat, calling it team bonding',
+  },
+  {
+    id: 'silent-treat', place: 'barracks', when: ['reveille', 'taps'], tier: 'hazing', gap: 1,
+    cat: 'abuse', weight: 2,
+    becomes: 'rank-exile',
+    label: '말 안 섞기', desc: '한 명하고만 말을 안 섞는다 — 있는데 없는 사람으로 둔다',
+    tell: '번호를 셀 때 한 사람 앞에서 박자가 한 번 빈다',
+    sign: '누구랑 지내냐고 물으면 대답이 없다',
+    en: 'the whole room deciding not to speak to one man — he is there and not there',
+  },
+  {
+    id: 'pt-punish', place: 'worksite', when: ['amwork', 'pmwork'], tier: 'hazing', gap: 2,
+    cat: 'injury', weight: 3,
+    becomes: 'beating',
+    label: '사적 얼차려', desc: '규정에 없는 얼차려를 자기들끼리 시킨다',
+    tell: '작업이 끝난 자리에 한 명만 남아서 뭔가를 하고 있다',
+    sign: '아픈 데를 물으면 「운동하다 그랬습니다」라고 한다',
+    en: 'juniors made to do unauthorised physical punishment by other soldiers',
+  },
+  {
+    id: 'money-hold', place: 'barracks', when: ['rest', 'taps'], tier: 'hazing', gap: 3,
+    cat: 'abuse', weight: 1,
+    becomes: 'coerce-cover',
+    label: '돈 빌리고 안 갚기', desc: '빌린다고 하고 갚지 않는다. 액수가 늘어난다',
+    tell: '월급날마다 같은 방향으로 계좌이체가 간다',
+    sign: '통장 잔액을 묻자 얼굴이 굳는다',
+    en: 'borrowing money from a junior over and over and never paying it back',
+  },
+  {
+    id: 'sleep-rob', place: 'barracks', when: ['sleep'], tier: 'hazing', gap: 2,
+    cat: 'health', weight: 2,
+    becomes: 'rank-exile',
+    label: '취침 방해', desc: '자는 시간에 불러내 잔심부름과 이야기를 시킨다',
+    tell: '새벽 취침 인원이 한 명 비어 있다',
+    sign: '일과 중에 서서 존다',
+    en: 'pulling a junior out of his bunk at night for errands and talk',
+  },
+  {
+    id: 'rank-exile', place: 'barracks', when: ['reveille', 'taps', 'sleep'], tier: 'crime', gap: 1,
+    cat: 'selfharm', weight: 2,
+    label: '기수열외', desc: '기수 위계에서 통째로 빼 버린다 — 계산에서 뺀다고 말한다',
+    tell: '아무도 그 사람 옆자리에 안 선다. 관물대 하나만 섬처럼 떨어져 있다',
+    sign: '「저는 기수가 없습니다」라는 말을 농담처럼 한다',
+    en: 'cutting one man out of the cohort order entirely — he is counted out of the unit',
+  },
+  {
+    id: 'beating', place: 'storage', when: ['pmwork', 'rest', 'taps'], tier: 'crime', gap: 2,
+    cat: 'abuse', weight: 2,
+    label: '구타', desc: 'CCTV가 안 닿는 자리로 데려가서 손을 댄다',
+    tell: '창고 안쪽 적재함이 치워져 있고, 거기만 바닥이 쓸려 있다',
+    sign: '옷을 갈아입는 자리를 피한다',
+    en: 'taking a junior somewhere the cameras do not reach and putting hands on him',
+  },
+  {
+    id: 'coerce-cover', place: 'office', when: ['amwork', 'pmwork'], tier: 'crime', gap: 2,
+    cat: 'abuse', weight: 1,
+    label: '진술 강요', desc: '다친 경위를 「혼자 넘어졌다」로 맞추게 시킨다',
+    tell: '사고 경위서 두 장의 문장이 토씨까지 같다',
+    sign: '어떻게 다쳤냐고 물으면 외운 문장이 나온다',
+    en: 'coaching a junior to say he fell on his own, so the injury never gets reported',
+  },
+  {
+    id: 'gate-hazing', place: 'guardpost', when: ['taps', 'sleep'], tier: 'hazing', gap: 2,
+    cat: 'guard', weight: 2,
+    becomes: 'beating',
+    label: '근무지 기합', desc: '같이 근무 서는 후임에게 근무 내내 기합을 준다',
+    tell: '초소 안이 유난히 조용하고, 한 명은 앉지 않는다',
+    sign: '누구랑 근무 서고 싶냐고 물으면 이름을 안 댄다',
+    en: 'running a junior ragged for the whole watch while standing post together',
+  },
+];
+
+export const ABUSE_IDS = ABUSE_POOL.map(a => a.id);
+export const ABUSE_BY_ID = Object.fromEntries(ABUSE_POOL.map(a => [a.id, a]));
+
+for (const a of ABUSE_POOL) {
+  if (!PLACES[a.place]) throw new Error(`params.js: 부조리 「${a.id}」의 장소가 대응표에 없다 — ${a.place}`);
+  if (!Array.isArray(a.when) || !a.when.length) throw new Error(`params.js: 부조리 「${a.id}」에 시간대가 없다 — 영원히 안 걸린다`);
+  for (const w of a.when) if (!SLOT_KEYS.includes(w)) throw new Error(`params.js: 부조리 「${a.id}」의 시간대가 일과표 밖이다 — ${w}`);
+  if (!ABUSE_TIERS[a.tier]) throw new Error(`params.js: 부조리 「${a.id}」의 등급이 표에 없다 — ${a.tier}`);
+  if (!INCIDENT_CATEGORIES[a.cat]) throw new Error(`params.js: 부조리 「${a.id}」가 터졌을 때의 유형이 없다 — ${a.cat}`);
+  if (!(a.gap >= 0)) throw new Error(`params.js: 부조리 「${a.id}」에 기수 차이 조건이 없다`);
+  if (!(a.weight > 0)) throw new Error(`params.js: 부조리 「${a.id}」의 가중이 없다`);
+  if (!a.label || !a.desc || !a.en || !a.tell || !a.sign) throw new Error(`params.js: 부조리 「${a.id}」의 표기가 부실하다`);
+}
+if (new Set(ABUSE_IDS).size !== ABUSE_IDS.length) throw new Error('params.js: 부조리 id 중복');
+if (!ABUSE_POOL.some(a => a.tier === 'crime')) throw new Error('params.js: 형사건 부조리가 하나도 없다 — 사람이 사고가 될 자리가 없다');
+// 사슬 검증 — 무거워지는 방향으로만 간다. 반대로 가면 방치가 이득이 된다.
+for (const a of ABUSE_POOL) {
+  if (!a.becomes) continue;
+  const next = ABUSE_BY_ID[a.becomes];
+  if (!next) throw new Error(`params.js: 부조리 「${a.id}」가 없는 것으로 자란다 — ${a.becomes}`);
+  if (ABUSE_TIERS[next.tier].rank <= ABUSE_TIERS[a.tier].rank) {
+    throw new Error(`params.js: 부조리 「${a.id}」가 더 가벼운 것으로 자란다 — ${a.becomes}`);
+  }
+}
+// 새로 생기는 것은 제일 가벼운 것뿐이어야 한다 — 그래야 형사건이 「놓친 결과」가 된다
+if (!ABUSE_POOL.some(a => ABUSE_TIERS[a.tier].rank === 0)) throw new Error('params.js: 씨앗이 될 가벼운 부조리가 없다');
+// 갈등 눈금(0~10)만큼은 돌 수 있어야 한다 — 대장이 눈금보다 짧으면 갈등이 만점을 못 찍는다
+if (ABUSE_POOL.length < SCALE.max) throw new Error('params.js: 부조리 대장이 눈금보다 짧다');
+
+export const abuseTierOf = id => ABUSE_TIERS[ABUSE_BY_ID[id]?.tier] || ABUSE_TIERS.nagging;
+/** 그 자리에서 **그 시간에** 벌어지는 것들. 급습은 자리와 시간이 둘 다 맞아야 덮친다. */
+export const abuseAt = (active, placeKey, slotKey = null) => active.filter(a => {
+  const t = ABUSE_BY_ID[a.id];
+  return t?.place === placeKey && (!slotKey || t.when.includes(slotKey));
+});
+/** 이 병사가 **당하고 있는** 것들. 멘탈이 이걸 본다. */
+export const abuseOn = (active, serial) => active.filter(a => a.to === serial);
+/** 이 병사가 **하고 있는** 것들. 가해자는 절대 제 입으로 안 분다. */
+export const abuseBy = (active, serial) => active.filter(a => a.by === serial);
+/** 지금 당하고 있는 사람들의 군번. 분위기 하락이 이 사람들부터 친다. */
+export const abuseVictims = active => [...new Set(active.map(a => a.to))];
+
+/**
+ * 부조리 하나를 누가 누구에게 하는가. **위계를 타고 흐른다** — 기수 차이가 조건이다.
+ *
+ * 짝을 코드가 고르는 것은 이름과 등급을 코드가 고르는 것과 같은 자리다(§1 표의 1번 질문).
+ * LLM에 맡기면 전원이 무난한 가운데로 수렴해서 「누가 하필 그 사람인가」가 사라진다.
+ * 가중은 셋이 정한다:
+ *   · 가해 — 인성이 낮을수록. 마초가 높은 부대일수록 그 기울기가 세다
+ *   · 피해 — 등급이 낮고 멘탈이 낮을수록 (사건 연루 가중과 같은 자리다)
+ *   · 그리고 **이미 당하고 있는 놈이 더 당한다.** 부조리는 흩어지지 않고 한 사람에게 쏠린다 —
+ *     그게 이 게임이 「한 명씩 조용히 무너진다」고 말할 때의 그 모양이다
+ */
+export function pickAbusePair(entry, roster, { cohortOf, active = [], macho = TUNING.comrade.neutral, rng = Math.random } = {}) {
+  const A = TUNING.abuse;
+  const men = roster.filter(m => !m.away);
+  if (men.length < 2) return null;
+  const cohort = new Map(men.map(m => [m.serial, cohortOf(m)]));
+  // 가해 후보 — 기수 차이를 만들 수 있을 만큼 위에 있는 사람
+  const seniors = men.filter(m => men.some(x => cohort.get(x.serial) - cohort.get(m.serial) >= entry.gap));
+  if (!seniors.length) return null;
+  const machoLean = 1 + Math.max(0, macho - TUNING.comrade.neutral) * A.machoPer;
+  const byW = seniors.map(m => {
+    const bad = Math.max(0, CHARACTERS.indexOf('중') - CHARACTERS.indexOf(m.character ?? '중'));
+    return Math.max(0.1, 1 + bad * A.characterPer * machoLean);
+  });
+  const by = seniors[weightedPick(byW, rng)];
+  // 피해 후보 — 그 사람보다 gap 이상 아래
+  const juniors = men.filter(m => cohort.get(m.serial) - cohort.get(by.serial) >= entry.gap);
+  if (!juniors.length) return null;
+  const victims = new Set(active.map(a => a.to));
+  const toW = juniors.map(m => {
+    const w = involveWeight(m);
+    return victims.has(m.serial) ? w * A.pileOn : w;   // 쏠린다
+  });
+  const to = juniors[weightedPick(toW, rng)];
+  return { by: by.serial, to: to.serial };
+}
+
+/**
+ * 목록을 수치에 맞춘다 — 가라의 syncGaraList와 같은 계약이다. **수치가 원본이고 목록이 따라간다.**
+ * 다만 여기는 짝이 필요해서 명부를 본다: 짝을 못 만들면(인원이 없거나 기수 차이가 안 나면)
+ * 목록이 안 자란다. 그래서 사람이 빠져나간 부대에서는 부조리가 저절로 잦아든다 —
+ * 그것도 사고가 사람을 데려가는 값의 일부다.
+ * 같은 관행을 같은 짝에게 두 번 깔지 않는다.
+ */
+export function syncAbuseList(active, target, { roster = [], cohortOf, macho, date, rng = Math.random } = {}) {
+  const here = new Set(roster.filter(m => !m.away).map(m => m.serial));
+  // 부대에 없는 사람이 낀 건은 멎는다 — 가해자든 피해자든 하나가 빠지면 그 관계는 끝난다
+  let list = active.filter(a => ABUSE_BY_ID[a.id] && here.has(a.by) && here.has(a.to));
+  const want = Math.max(0, Math.min(target, ABUSE_POOL.length));
+  // 줄어들 때는 **제일 가벼운 것부터** 잦아든다. 무거워진 것은 저절로 안 없어진다 —
+  // 그게 「눌러 놓은 게 터질 땐 크게 터진다」의 실물이고, **검거에 값을 주는 자리**다.
+  //
+  // 처음에는 무작위로 뺐다가 물렸다: 그러면 갈등이 한 칸 내려갈 때마다 형사건이 공짜로
+  // 사라지고, 무엇이든 스물넷 날을 못 살아서 아무것도 안 익었다(실측: 형사건 0.0건).
+  // 그러면 들이닥칠 이유가 없어지고 **방치가 최적 전략이 된다**(실측: 방치 17~25%로 1위).
+  // 형사건을 끊는 길은 이제 하나뿐이다 — 덮치는 것.
+  // 같은 등급끼리는 **제일 최근에 시작된 것**이 먼저 잦아든다. 오래된 것이 먼저 빠지면
+  // 아무것도 익을 시간을 못 얻어서 형사건이 영영 안 나온다(실측: 100일 내내 0.0건).
+  // 오래 끌고 온 것일수록 질기다 — 그게 이 목록이 시계를 갖는다는 뜻이다.
+  const rankOf = a => ABUSE_TIERS[ABUSE_BY_ID[a.id]?.tier]?.rank ?? 0;
+  while (list.length > want) {
+    let worst = 0;
+    for (let i = 1; i < list.length; i++) {
+      const d = rankOf(list[i]) - rankOf(list[worst]);
+      if (d < 0 || (d === 0 && (list[i].since || '') > (list[worst].since || ''))) worst = i;
+    }
+    list.splice(worst, 1);
+  }
+  // 추첨이 이미 있는 짝을 뽑는 일은 흔하다(대장 열넷에 명부 열여섯이면 충돌이 잦다).
+  // 그때 멈춰 버리면 목록이 수치를 영영 못 따라간다 — 한 번 물리고 고친 자리다:
+  // 갈등 3인데 부조리가 1건만 깔려서, 나머지 둘이 「어디에도 없는 갈등」이 됐다.
+  // 다시 뽑는다. 예산이 다 떨어지면 그때가 진짜로 못 만드는 자리다(인원이 없거나 기수가 안 난다).
+  // **한 번 물린 씨앗은 이번 채우기에서 뺀다.** 안 그러면 굴림이 같은 것을 계속 뽑는 판에서
+  // (테스트의 고정 난수가 정확히 그렇다) 예산만 태우고 목록이 수치를 못 따라간다 —
+  // 갈등 3인데 부조리 1건이 깔려서 나머지 둘이 「어디에도 없는 갈등」이 됐다.
+  const blocked = new Set();
+  let tries = want * ABUSE_POOL.length + ABUSE_POOL.length;
+  while (list.length < want && tries-- > 0) {
+    // 같은 관행은 **같은 피해자에게 한 번만**이다. 가해자만 다르면 된다고 두면
+    // 「기수열외」가 한 사람에게 둘씩 붙는데, 그건 두 건이 아니라 한 건이 넓은 것이다.
+    const taken = new Set(list.map(a => `${a.id}|${a.to}`));
+    const pool = ABUSE_POOL.filter(e => ABUSE_TIERS[e.tier].rank === 0
+      && !blocked.has(e.id) && list.filter(a => a.id === e.id).length < 2);
+    if (!pool.length) break;
+    const entry = pool[weightedPick(pool.map(e => e.weight), rng)];
+    const pair = pickAbusePair(entry, roster, { cohortOf, active: list, macho, rng });
+    if (!pair || taken.has(`${entry.id}|${pair.to}`)) { blocked.add(entry.id); continue; }
+    list.push({ id: entry.id, ...pair, since: date });
+  }
+  return list;
+}
+
+/**
+ * 아무도 안 말린 부조리는 **무거워진다.** 순수 함수다 — 하루 마감에 한 번 돈다.
+ *
+ * 이게 이 시스템의 시계다. 새로 생기는 것은 언제나 갈굼이고, ripenDays가 지나도록 아무도
+ * 안 들이닥치면 가혹행위가 되고, 또 지나면 형사건이 된다. 그래서 **형사건은 주사위가 준 것이
+ * 아니라 주임원사가 놓친 것**이고, 「들이닥쳐 검거한다」가 값을 갖는다: 싸게 끊을 수 있는
+ * 창이 스물넷 날이다.
+ * 무거워지면 `since`가 다시 찍힌다 — 다음 단계까지 또 그만큼이 걸린다.
+ */
+export function ripenAbuse(active, today, { rng = Math.random } = {}) {
+  const days = TUNING.abuse.ripenDays;
+  return active.map(a => {
+    const e = ABUSE_BY_ID[a.id];
+    if (!e?.becomes || !a.since) return a;
+    if (daysApart(a.since, today) < days) return a;
+    // 같은 짝에게 이미 그 관행이 돌고 있으면 갈아탈 자리가 없다 — 그냥 더 오래 간다
+    if (active.some(x => x !== a && x.id === e.becomes && x.to === a.to)) return a;
+    return { ...a, id: e.becomes, since: today, from: a.id };
+  });
+}
+
+/**
+ * 들이닥쳤을 때 현장을 덮칠 확률. 가라와 같은 모양이되 미는 것이 다르다 —
+ * 가라는 부대 **지능**이 숨기고, 부조리는 부대 **전우애**가 숨긴다. 끈끈한 부대일수록
+ * 자기들끼리 덮기 때문이다(그 부대의 병사간 룰에 이미 그렇게 적혀 있다: 「무슨 일이 나도
+ * 자기들끼리 끝낸다」). 등급이 높을수록 조심하니 덜 걸리는 것은 가라와 같고,
+ * 평판이 낮으면 오기 전에 소문이 도는 것도 같다.
+ */
+export function catchChance(comrade, id = null, rep = null, { lead = false } = {}) {
+  const A = TUNING.abuse;
+  const t = id ? ABUSE_BY_ID[id] : null;
+  const hide = t ? (A.tierHide[t.tier] ?? 0) : 0;
+  const raw = Math.max(A.catchFloor, Math.min(A.catchCeil,
+    A.catchBase - comrade * A.comradePer + hide + (lead ? A.leadBonus : 0)));
+  return rep == null ? raw : raw * repBite(rep);
+}
+
+/**
+ * 불려온 병사가 제 일을 실토할 확률. **평판이 곧 솔직도다** — 프롬프트의 honestyOf와 같은 자리.
+ * 다만 **무거운 것일수록 잘 나온다.** 갈굼은 「그냥 군생활입니다」로 넘기지만, 맞고 있는 사람은
+ * 물어봐 주기를 기다리고 있다. 그리고 이 축이 필요했다: 형사건은 제일 잘 숨어서(등급 은닉)
+ * 급습만으로는 거의 못 잡는다 — **제일 위험한 것이 제일 안 보인다**는 긴장을 유지하면서
+ * 그것을 뚫는 길이 하나는 있어야 하고, 그 길이 「불러서 물어보는 것」이다.
+ */
+export const tellChance = (rep, id = null) => {
+  const A = TUNING.abuse;
+  const base = A.tell[BAND_LABELS.indexOf(band(rep))];
+  const rank = id ? (ABUSE_TIERS[ABUSE_BY_ID[id]?.tier]?.rank ?? 0) : 0;
+  return Math.min(1, base + rank * A.tellPerRank);
+};
+
+/**
+ * 들이닥친 결과가 부조리 명부를 어떻게 고치는가. 순수 함수다 — 가라의 inspectGara와 같은 모양인데
+ * **끝이 다르다: 덮친 것은 그 자리에서 멎는다.** 눈앞에서 후임을 세워 놓고 있는데
+ * 「정체를 샀다」로 끝내고 나오는 주임원사는 없어서다.
+ */
+export function inspectAbuse({ active, known = [], placeKey, slotKey = null, comrade, rep = null, on, rng = Math.random }) {
+  const here = abuseAt(active, placeKey, slotKey);
+  const keyOf = a => `${a.id}|${a.by}|${a.to}`;
+  // 이미 아는 건이면 어디를 봐야 하는지 안다 — 면담에서 실토받은 것이 여기서 값을 한다.
+  //
+  // 단서는 **관행이 아니라 짝**을 따라간다. 주임원사가 알아낸 것은 「김 상병이 이 이병에게
+  // 뭘 한다」이지 그 관행의 이름이 아니고, 갈굼이 말 안 섞기로 자란 뒤에도 어디를 봐야
+  // 하는지는 그대로 안다. id로 맞대면 관행이 익는 순간 단서가 통째로 죽어서, 오래 쫓을수록
+  // 아는 게 없어지는 이상한 일이 벌어진다.
+  const leads = new Set(known.map(k => `${k.by}|${k.to}`));
+  const caught = here.filter(a => rng() < catchChance(comrade, a.id, rep, { lead: leads.has(`${a.by}|${a.to}`) }));
+  const gone = new Set(caught.map(keyOf));
+  return {
+    caught,
+    // 덮친 것은 멎는다 — 목록에서 바로 빠진다
+    active: active.filter(a => !gone.has(keyOf(a))),
+    // 명부에는 **끊은 것으로** 오른다. 가라 명부처럼 낡지 않는다: 지나간 일이라서다.
+    // 명부는 **짝으로** 정리한다 — 끊은 것은 그 짝에 대해 알던 낡은 줄까지 같이 내린다.
+    known: [...known.filter(k => !gone.has(keyOf(k)) && !caught.some(c => c.by === k.by && c.to === k.to)),
+      ...caught.map(a => ({ ...a, on, how: 'caught' }))],
+  };
+}
+
 /** 지침이 막아 놓은 것을 뺀 가라 정원. 금지가 늘수록 가라가 오를 수 있는 천장이 내려간다. */
 export const garaCap = (banned = []) => GARA_IDS.filter(id => !banned.includes(id)).length;
 
@@ -1031,7 +1476,7 @@ export function comradeEffect(comrade) {
  *               그 자체로 폭탄이라, 개수만 보는 눈금이 못 잡는 위험을 이 항이 든다.
  * 둘 다 안 주면(테스트·옛 호출) 그 항이 0인 것과 같다.
  */
-export function incidentRisk({ gara, conflict, minMental = 10, overreach = 0, heat = 0 }, { intel, macho, difficulty, comrade }) {
+export function incidentRisk({ gara, conflict, minMental = 10, overreach = 0, heat = 0, crimes = 0 }, { intel, macho, difficulty, comrade }) {
   const R = TUNING.roll, M = TUNING.mental, G = TUNING.gara;
   const C = comradeEffect(comrade);
   const clumsy = overreach * G.overreachRisk;
@@ -1047,7 +1492,14 @@ export function incidentRisk({ gara, conflict, minMental = 10, overreach = 0, he
   // 같은 갈등 8이라도 끈끈한 부대에서는 아직 안 열리고, 서로 남인 부대에서는 이미 열려 있다.
   const fromConflict = conflict >= C.open ? (conflict - C.open + 1) * R.big.per * C.scale : 0;
   const fromMental = minMental <= M.dangerAt ? (M.dangerAt - minMental + 1) * M.dangerPer : 0;
-  return { small, big: fromConflict + fromMental, bigCause: fromMental > fromConflict ? 'mental' : 'conflict' };
+  // 그리고 **형사건 부조리는 그 자체로 문이다.** 갈등 수치가 문턱을 넘기를 기다릴 필요가 없다 —
+  // 맞고 있는 사람이 있으면 그 사람의 사고는 이미 열려 있다. 전우애가 두꺼워 갈등 문턱이
+  // 사실상 닫혀 있는 부대(해병 10.0)에서 큰 사고가 나는 유일한 길이기도 하다.
+  const fromCrime = crimes * TUNING.abuse.crimePer;
+  const big = fromConflict + fromMental + fromCrime;
+  const cause = fromCrime >= fromMental && fromCrime >= fromConflict ? 'abuse'
+    : fromMental > fromConflict ? 'mental' : 'conflict';
+  return { small, big, bigCause: cause };
 }
 
 /**
@@ -1225,18 +1677,44 @@ export function recoverCount(comrade, rng = Math.random, { warm = true } = {}) {
  * 하락이 전원이고 회복이 몇 명인 비대칭이 이 게임의 멘탈 경제다 — 그래서 얕은 부대에서는
  * 사람이 쌓이듯 무너지고, 주임원사가 하루 한 명씩 붙잡는 것 말고는 되돌릴 길이 없다.
  */
-export function mentalPass(soldiers, params, comrade = TUNING.comrade.neutral, rng = Math.random) {
+export function mentalPass(soldiers, params, comrade = TUNING.comrade.neutral, rng = Math.random, { abuse = [], today = null } = {}) {
   const M = TUNING.mental;
   const out = soldiers.map(s => s.mental ?? M.default);
-  // 하락 — 사유 하나당 fallPer명이 그날 밤에 무너진다. **누구인지는 모른다.**
-  // 아직 남아 있는 사람 중에서 뽑는다: 이미 바닥난 사람을 다시 뽑아 봐야 아무 일도 안 난다.
+  const alive = i => out[i] > SCALE.min;
+
+  // ① 형사건 부조리는 **분위기와 무관하게 매일** 깎는다. 부대가 아무리 밝아도 맞고 있는
+  //    사람은 맞고 있다 — 계기판이 멀쩡한데 사람 하나가 조용히 바닥으로 가는 자리가 여기다.
+  for (const a of abuse) {
+    const t = abuseTierOf(a.id);
+    if (!t.daily) continue;
+    // **이틀에 한 번**이다. 매일이면 형사건 하나가 부대 전체의 회복 정원(하루 1~2.5명)을
+    // 통째로 잡아먹어서, 한 사람을 붙잡느라 나머지 열다섯이 같이 내려간다(실측: 공군 성실
+    // 플레이의 멘탈 평균이 2.9 → 1.3으로 반토막 났다). 매를 매일 맞는 것은 아니다.
+    // since의 날짜 차이로 가른다 — 상태를 안 늘리고도 결정적이다.
+    if (t.everyOtherDay && a.since && today && daysApart(a.since, today) % 2 !== 0) continue;
+    const i = soldiers.findIndex(s => s.serial === a.to);
+    if (i >= 0 && alive(i)) out[i] = clamp(out[i] - t.daily);
+  }
+
+  // ② 분위기 하락 — 사유 하나당 fallPer명이 그날 밤에 무너진다. 예전에는 **누구인지 몰랐다.**
+  //    이제는 안다: **당하고 있는 놈부터**다. 무거운 것을 당하는 사람이 앞줄이고, 그 뒤가
+  //    나머지 중 무작위다. 인원은 한 명도 안 늘었고 순서만 생겼는데, 그 순서가 「왜 하필
+  //    저 사람인가」에 처음으로 답을 준다 — 그리고 그 답은 부조리 명부에만 적혀 있다.
   const fall = mentalFall(params, comrade);
   if (fall > 0) {
-    const pool = out.map((m, i) => [m, i]).filter(([m]) => m > SCALE.min).map(([, i]) => i);
-    for (let k = 0; k < fall && pool.length; k++) {
-      const at = Math.floor(rng() * pool.length);
-      out[pool[at]] = clamp(out[pool[at]] - 1);
-      pool.splice(at, 1);
+    const bite = new Map();
+    for (const a of abuse) {
+      const i = soldiers.findIndex(s => s.serial === a.to);
+      if (i >= 0) bite.set(i, Math.max(bite.get(i) ?? 0, abuseTierOf(a.id).rank + 1));
+    }
+    const front = [...bite.entries()].filter(([i]) => alive(i)).sort((a, b) => b[1] - a[1]).map(([i]) => i);
+    const rest = out.map((m, i) => i).filter(i => alive(i) && !bite.has(i));
+    for (let k = 0; k < fall; k++) {
+      let i;
+      if (front.length) i = front.shift();
+      else if (rest.length) i = rest.splice(Math.floor(rng() * rest.length), 1)[0];
+      else break;
+      out[i] = clamp(out[i] - 1);
     }
   }
   // 회복 게이트를 **전부 아니면 전무**로 두면 안 된다. 예전에는 「행복 ≥ 5」에서만 회복이
@@ -1295,11 +1773,22 @@ export function applyCensor(params, effect = {}) {
   return out;
 }
 
-export function applyInspection(params) {
+/**
+ * 불시점검의 확정 효과. **성과가 있으면 분위기를 안 깎는다.**
+ *
+ * 행복 −1은 「들이닥쳤다」의 값이 아니라 **헛걸음**의 값이다. 서랍을 다 열어 놓고 아무것도
+ * 없이 나가면 그게 제일 밉다. 반대로 뭔가 나오면 — 장부든, 후임을 세워 놓고 있던 놈이든 —
+ * 병사들도 그 걸음의 이유를 안다.
+ *
+ * 이 한 줄이 없으면 **부조리를 쫓는 플레이가 성립하지 않는다.** 부조리는 자리와 시간을 맞춰
+ * 여러 번 들이닥쳐야 잡히는데 걸음마다 −1이면, 잡을 때쯤 부대가 죽어 있다(실측: 부조리를
+ * 쫓은 플레이의 행복이 0.0, 멘탈 0.1 — 아무것도 안 한 플레이보다 나빴다).
+ */
+export function applyInspection(params, { found = false } = {}) {
   return {
     ...params,
     gara: clamp(params.gara + TUNING.inspect.gara),
-    happy: clamp(params.happy + TUNING.inspect.happy),
+    happy: found ? params.happy : clamp(params.happy + TUNING.inspect.happy),
   };
 }
 
