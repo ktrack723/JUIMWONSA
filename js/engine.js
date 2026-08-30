@@ -46,7 +46,8 @@ import {
   band, honestyOf, complianceOf, initialParams, applyDirections, applyIntervention,
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
-  pickInvolved, rollGrades, categoryFor, PLACES, TUNING,
+  pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
+  minMentalOf, applyInspection, categoryFor, PLACES, TUNING,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -112,7 +113,12 @@ export class Engine {
    * 계급은 날이 갈수록 오르므로 저장돼 있지 않다 — 나갈 때마다 계산한다.
    */
   dressed(soldier) {
-    return { ...soldier, standing: rankLine(this.unit, soldier, this.state.date) };
+    return {
+      ...soldier,
+      standing: rankLine(this.unit, soldier, this.state.date),
+      // 멘탈은 화면에는 숫자로, 프롬프트에는 밴드로 간다 — 수치 차단은 그대로다.
+      spirit: band(soldier.mental ?? TUNING.mental.default),
+    };
   }
   dressedAll(list) { return (list || []).map(s => this.dressed(s)); }
 
@@ -168,6 +174,7 @@ export class Engine {
   /** 전입 명세 하나를 굴린다 — 난수 소비와 군번 채번이 전부 여기서, 호출 전에 끝난다. */
   #recruitSpec(joined, pending = []) {
     const { grade, character } = rollGrades(this.unit, this.rng);
+    const mental = rollMental(character, this.rng);
     // 직무 균형과 동명이인 회피는 아직 명부에 안 오른 병렬 대기분(pending)까지 세어야 한다.
     const waiting = [...this.roster.soldiers, ...pending];
     const job = assignJob(this.unit, waiting, this.rng);
@@ -175,7 +182,7 @@ export class Engine {
     // 「김민준·이서준」으로 수렴해서, 부대마다 이름의 결이 다르다는 사실 자체가 사라진다.
     const name = this.roster.rollName(this.rng, waiting.map(x => x.name));
     const serial = this.roster.reserveSerial(joined);
-    return { name, serial, job, grade, character, joined };
+    return { name, serial, job, grade, character, mental, joined };
   }
 
   /** 명세대로 P를 불러 시트를 받아 명부에 올린다 — 이 부분만이 병렬로 돈다. */
@@ -328,16 +335,22 @@ export class Engine {
           chatter: this.ambientFor(slot.key, 3),
         });
 
-        const roll = rollSlot(s.params, {
-          intel: this.unit.intel.score, macho: this.unit.macho.score, difficulty: effDiff,
+        const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.soldiers) }, {
+          intel: this.unit.intel.score, macho: this.unit.macho.score,
+          comrade: this.unit.comrade.score, difficulty: effDiff,
         }, slot.kind, this.rng);
         if (!roll) continue;
 
-        const incident = await this.#runIncident(slot, roll.tier);
+        const incident = await this.#runIncident(slot, roll.tier, roll.cause);
         if (incident) incidents.push(incident);
       }
 
       // 하루 마감 — 드리프트, 조용한 날 평판 회복, 카운터, 날짜 전진.
+      // 병사별 멘탈 드리프트 — 부대 분위기가 전원을 쓸어간다. 파라미터 드리프트보다 먼저,
+      // 오늘의(드리프트 전) 분위기로 계산한다.
+      for (const man of this.roster.soldiers) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
+      this.roster.save();
+
       s.params = applyDrift(s.params, effDiff, { interventions: this.interventionsToday });
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures);
@@ -353,10 +366,16 @@ export class Engine {
   }
 
   // 사건 하나 — E-1 장면 → 지침 → E-2 결과 → E-3 확전 판정.
-  async #runIncident(slot, tier) {
+  async #runIncident(slot, tier, cause = null) {
     const s = this.state;
     const event = pickEvent(tier, slot.kind, this.rng);
-    const involved = pickInvolved(this.roster.soldiers, event.involved, this.rng);
+    // 멘탈이 연 큰 사건은 **무너진 그 놈들**의 사건이다 — 멘탈 낮은 순으로 고른다.
+    // 그 밖의 사건은 가중 추첨(등급·멘탈)이다.
+    const involved = cause === 'mental'
+      ? this.roster.soldiers.slice()
+        .sort((a, b) => (a.mental ?? TUNING.mental.default) - (b.mental ?? TUNING.mental.default))
+        .slice(0, event.involved)
+      : pickInvolved(this.roster.soldiers, event.involved, this.rng);
     if (!involved.length) return null;
     const place = PLACES[event.place]?.label || event.place;
     // 유형은 코드가 안다 — 그림도 기록도 이걸 본다. 판정 콜은 늘지 않는다.
@@ -409,6 +428,9 @@ export class Engine {
     const escalated = verdict?.outcome === 'escalated';
     // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.
     const stamped = categoryFor(event, escalated);
+    // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
+    for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated);
+    this.roster.save();
     if (escalated) {
       // 사건이 사고가 됐다 — 무사고 카운터만 0. 날짜도, 병사도, 파라미터도 안 돌아간다.
       this.accidentToday = true;
@@ -434,8 +456,11 @@ export class Engine {
   // ── 일과 중 개입 셋 — 전부 평판 −1. 개입 횟수가 곧 평판이다 ──
 
   /**
-   * I-1. 면담 — 병사를 지정해 불러다 이야기한다. 별도 단명 스레드.
-   * 돌려주는 손잡이로 왕복하고, 스레드는 그 면담에서 닫힌다.
+   * I-1. 면담 — 상담이다. 병사를 불러 이야기를 들어주고, 그 자리가 **멘탈을 +1 회복**시킨다.
+   * 파라미터가 계기판에 다 떠 있는 게임에서 면담의 일은 정보 캐기가 아니라 사람 붙잡기다:
+   * 계기판의 멘탈 낮은 놈을 골라 부르는 것이 곧 큰 사고(자해·탈영) 예방이다.
+   * 여전히 평판 −1이다 — 주임원사실로 불려가는 것 자체가 소문이 나는 일이라서다.
+   * 별도 단명 스레드. 돌려주는 손잡이로 왕복하고, 스레드는 그 면담에서 닫힌다.
    */
   async interview(serial, question) {
     const soldier = this.roster.bySerial(serial);
@@ -444,9 +469,10 @@ export class Engine {
     this.interventionsToday += 1;
 
     // 병사의 체감 밴드 — 부대 지표가 아니라 자기 주변이다. 한 칸 오차의 사견이 낀다.
+    // 제 마음(spirit)만은 오차 없이 제 것이다 — dressed()가 그 병사의 멘탈 밴드를 싣는다.
     const jitter = v => clamp10(v + Math.floor(this.rng() * 3) - 1);
     const p = this.state.params;
-    const felt = { room: band(jitter(p.conflict)), work: band(jitter(p.gara)), mood: band(jitter(p.happy)) };
+    const felt = { room: band(jitter(p.conflict)), work: band(jitter(p.gara)) };
     const honesty = honestyOf(p.rep);
 
     const thread = [{ role: 'user', content: P.interviewOpen({ soldier: this.dressed(soldier), felt, honesty, question }) }];
@@ -455,9 +481,14 @@ export class Engine {
 
     const first = await call();
     thread.push({ role: 'assistant', content: first });
+    // 들어준 것이 통했다 — 대화가 실제로 성립한 뒤에만 회복이 붙는다 (호출이 죽으면 없다).
+    const before = soldier.mental ?? TUNING.mental.default;
+    soldier.mental = counselMental(before);
+    this.roster.save();
     return {
       soldier, reply: first,
-      ask: async (q) => {   // 왕복 — 배급은 안 깎인다. 스레드는 이 면담 안에서만 산다
+      mental: { before, after: soldier.mental },
+      ask: async (q) => {   // 왕복 — 배급도 회복도 안 늘어난다. 스레드는 이 면담 안에서만 산다
         thread.push({ role: 'user', content: P.interviewFollowup(q) });
         const out = await call();
         thread.push({ role: 'assistant', content: out });
@@ -466,7 +497,12 @@ export class Engine {
     };
   }
 
-  /** I-2. 불시점검 — 장소를 지정해 들이닥친다. 그 장소가 드러내는 밴드만 실린다. */
+  /**
+   * I-2. 불시점검 — 군기 점검이다. 계기판이 상시로 열린 게임에서 「밴드를 본다」는
+   * 원래 의의는 죽었다. 대신 이것은 파라미터를 직접 미는 유일한 결정적 레버다:
+   * 들이닥치면 일은 각이 잡히고(가라 −1) 분위기는 가라앉는다(행복 −1). 순수 코드다.
+   * LLM은 그 자리에서 눈에 띈 것(점검 소견)만 쓴다 — 장소-대응표는 그 장면의 재료로 남는다.
+   */
   async inspect(placeKey) {
     const place = PLACES[placeKey];
     if (!place) throw new Error(`대응표에 없는 장소: ${placeKey}`);
@@ -481,7 +517,9 @@ export class Engine {
       user: P.inspectUser({ place: place.label, readings }),
       schema: null,
     });
-    return { place: place.label, findings };
+    // 효과는 장면과 무관하게 확정이다 — LLM이 폭을 정하는 자리는 이 게임에 없다.
+    this.state.params = applyInspection(this.state.params);
+    return { place: place.label, findings, effect: { ...TUNING.inspect } };
   }
 
   /**

@@ -52,6 +52,7 @@ const unit = {
   id: 'probe', name: '표식부대', branch: '표식군', desc: '감사용',
   culture: 'CULT표식', rules: 'REGS표식', soldierRules: 'SRULES표식',
   intel: { score: 5, desc: '보통 머리' }, macho: { score: 5, desc: '보통 피' },
+  comrade: { score: 5, desc: '보통 사이' },
   difficulty: 5, serviceMonths: 18, serial: { branchCode: '3', seqBase: 70000000 },
   cohort: { base: 1300, at: '2023-11' }, rankMonths: [2, 8, 14], nameStyle: 'elite',
   jobs: ['a', 'b', 'c', 'd'],
@@ -476,4 +477,86 @@ test('계급과 기수는 저장되지 않는다 — 날이 가면 계급이 오
     assert.ok(!('rank' in s), '계급이 저장됐다 — 100일 내내 같은 계급이 된다');
     assert.ok(!('cohort' in s), '기수가 저장됐다');
   }
+});
+
+// ── 멘탈 — 저장되는 개인 상태. 상담이 올리고, 사건이 깎고, 분위기가 쓸어간다 ──
+test('면담은 상담이다 — 그 병사의 멘탈이 +1 오르고, 왕복해도 한 번만 오른다', async () => {
+  const { engine, roster, state } = fixture();
+  const man = roster.soldiers[0];
+  man.mental = 3;
+  const rep0 = state.params.rep;
+  const h = await engine.interview(man.serial, '요즘 잠은 자냐');
+  assert.equal(man.mental, 4, '상담이 멘탈을 안 올렸다');
+  assert.deepEqual(h.mental, { before: 3, after: 4 }, '화면에 보여줄 회복량이 안 실렸다');
+  await h.ask('더 얘기해봐');
+  assert.equal(man.mental, 4, '왕복마다 올랐다 — 스팸으로 무한 회복이 된다');
+  assert.equal(state.params.rep, rep0 - 1, '상담이어도 평판 비용은 개입 1회분이다');
+});
+
+test('면담 프롬프트에 그 병사의 멘탈이 밴드로 실린다 — 숫자는 안 나간다', async () => {
+  const { llm, engine, roster } = fixture();
+  roster.soldiers[0].mental = 1;
+  await engine.interview(roster.soldiers[0].serial, '괜찮냐');
+  const user = llm.byLabel('면담')[0].messages[0].content;
+  assert.ok(/spirit: very-low/.test(user), '멘탈 밴드가 안 실렸다');
+  assert.ok(!/spirit: 1\b/.test(user), '멘탈 숫자가 샜다');
+});
+
+test('점검은 군기 레버다 — 가라 −1 · 행복 −1이 코드로 확정 적용된다', async () => {
+  const { engine, state } = fixture();
+  const { gara, happy, rep } = state.params;
+  const out = await engine.inspect('worksite');
+  assert.equal(state.params.gara, gara - 1);
+  assert.equal(state.params.happy, happy - 1);
+  assert.equal(state.params.rep, rep - 1);
+  assert.deepEqual(out.effect, { gara: -1, happy: -1 }, '화면에 보여줄 효과가 안 실렸다');
+});
+
+test('사건 연루는 멘탈을 깎고, 사고가 되면 더 깎는다', async () => {
+  const { engine, roster } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'escalated', gara: 'same', happy: 'same', conflict: 'same' }],
+  });
+  for (const man of roster.soldiers) man.mental = 6;
+  engine._directive = null;
+  await engine.runDay();
+  const hit = roster.soldiers.filter(s => s.mental < 6);
+  assert.equal(hit.length, 1, '연루자 수만큼 깎여야 한다');
+  // 확전 −2 + 그날 드리프트(행복 5·갈등 3 → 0) = 4
+  assert.equal(hit[0].mental, 4, '확전인데 −2가 아니다');
+});
+
+test('부대가 어두우면 하루 마감에 전원의 멘탈이 내려간다 — 그리고 저장된다', async () => {
+  const { engine, roster, state } = fixture();
+  state.params.happy = 2;
+  for (const man of roster.soldiers) man.mental = 6;
+  await engine.runDay();
+  assert.ok(roster.soldiers.every(s => s.mental === 5), '분위기 드리프트가 안 쓸었다');
+  // 저장까지 — 다시 읽어도 남아 있어야 「어제 무너진 놈이 오늘도 무너져 있는」 게임이 된다
+  const again = new Roster(unit, { storage: roster.storage });
+  again.load();
+  assert.ok(again.soldiers.every(s => s.mental === 5), '멘탈이 저장 안 됐다');
+});
+
+test('멘탈이 바닥난 병사가 있으면 그 놈의 큰 사건이 열린다', async () => {
+  const { llm, engine, roster } = fixture({
+    // sample 4개 → 슬롯 롤 첫 개에서 큰 롤이 잡히게 0.001
+    rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.001, 0]),
+  });
+  roster.soldiers[7].mental = 1;   // 한 명이 무너져 있다
+  engine._directive = null;
+  await engine.runDay();
+  const e1 = llm.byLabel('사건 장면')[0];
+  assert.ok(e1, '멘탈 위험이 큰 사건을 안 열었다');
+  const user = JSON.stringify(e1.messages);
+  assert.ok(user.includes('기존7'), '무너진 그 놈이 아니라 딴 놈이 연루됐다');
+  assert.ok(user.includes('major'), '큰 사건이 아니다');
+});
+
+test('전입 병사도 멘탈을 굴려 받는다 — 저장까지', async () => {
+  const llm = new FakeLLM();
+  const roster = new Roster(unit, { storage: memStorage() });
+  const engine = new Engine(llm, { unit, roster, state: Engine.newCampaign(unit, '2026-08-26'), handlers: {} });
+  const arrivals = await engine.fillRoster();
+  assert.ok(arrivals.every(a => typeof a.mental === 'number' && a.mental >= 0 && a.mental <= 10));
 });

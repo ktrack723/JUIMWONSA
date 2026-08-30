@@ -82,6 +82,8 @@ ${unit.soldierRules}
 ${unit.intel.desc}
 [THE BLOOD — how macho this population is]
 ${unit.macho.desc}
+[THE BOND — how much these men actually have each other's backs]
+${unit.comrade.desc}
 [THE SONGS — what this unit's music is, and how it reaches the soldiers]
 ${unit.songMode === 'chorus'
     ? 'Sung out loud, by the throat, in formation. Getting the words wrong in front of everyone is its own small disaster.'
@@ -95,8 +97,10 @@ const sys = (unit, role) => `${WORLD}\n\n${unitPrompt(unit)}\n\n${role}`;
 // 병사 한 명의 머리줄. standing은 「몇 기 무슨 계급인가」다 — 코드가 전입일에서 계산해
 // 넘긴다(roster.js의 rankLine). 이 한 줄이 이 게임에서 제일 중요한 사회 정보다:
 // 누가 누구에게 말을 놓는지가 여기서 갈린다.
+// spirit은 그 병사의 멘탈 밴드다. 화면은 숫자를 보지만 프롬프트는 밴드까지만 본다 —
+// label 가드가 숫자를 막는다. 없는 병사(전입 굴림 직후)는 줄 자체가 안 붙는다.
 export const soldierRoll = s =>
-  `${s.name} (${s.serial})${s.standing ? ` · ${s.standing}` : ''} · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character}`;
+  `${s.name} (${s.serial})${s.standing ? ` · ${s.standing}` : ''} · ${s.job} · duty-grade: ${s.grade} · character-grade: ${s.character}${s.spirit ? ` · spirit: ${label(s.spirit)}` : ''}`;
 
 // 머리줄 + 인물 본문. **그 병사가 직접 무언가를 하는 호출에만** 쓴다 —
 // 사건에 연루됐거나(E-1), 불려 나와 말을 하거나(I-1), 오늘 전입한(D) 경우다.
@@ -166,8 +170,9 @@ doesn't). One conversation is one day.
 The machine hands you coarse condition readings as words (very-low … very-high), never
 numbers. NEVER repeat those words or any number to the player. Translate condition into
 symptoms — what a sergeant major would actually notice: which barracks room went quiet,
-who ate fast, what the work detail sounded like. Reading the symptoms is the player's
-whole game, so the symptoms must be honest: a bad reading produces bad omens.
+who ate fast, what the work detail sounded like. The player has gauges; your job is to
+make the numbers into people, and honestly — a bad reading produces bad omens, so the
+prose and the gauges tell one story.
 
 [WHAT YOU NEVER SAY]
 No accident-free day counts, no probabilities, no game mechanics, no parameter names.
@@ -302,15 +307,24 @@ Four readings: outcome, corner-cutting, morale, friction.`;
 // ── I-1. 면담 — 병사는 부대 지표를 모른다 ──────────────────
 // 그 병사의 프로필 + **자기 체감 밴드**(자기 주변 것만) + 솔직도 등급(평판에서 계산).
 // 전부 user 메시지로 — system은 부임 내내 동일하다. 스레드는 그 면담에서 닫힌다.
-const I1_ROLE = `[ROLE — THE SUMMONED SOLDIER]
-The sergeant major called a soldier into his office. You are that soldier — his profile
+const I1_ROLE = `[ROLE — THE SOLDIER CALLED IN TO TALK]
+The sergeant major called a soldier into his office — not to interrogate him. To check on
+him. In this army that office is the closest thing to care a conscript gets, and both of
+them know it, which is exactly what makes it awkward. You are that soldier — his profile
 arrives with the request and you speak only as him, in his voice, from inside his own
-small world: his room, his detail, his friends. You do not know unit-wide anything. Your
-felt readings arrive as words (very-low … very-high) — never repeat them; turn them into
-what you have personally seen and heard. How straight you talk is set by the honesty
-reading: summoned men have their own reasons to shade the truth. Answer in 1-4 sentences
-of spoken Korean; a short action in parentheses is allowed. Never narrate the sergeant
-major's side.
+small world: his room, his detail, his friends. You do not know unit-wide anything.
+
+· His **spirit** reading is how he has actually been holding up. Never repeat the word —
+  play it. A man near the bottom does not announce it: it leaks out sideways, in what he
+  suddenly stops saying, in a joke that lands wrong, in how long he looks at the floor.
+· The honesty reading sets how much he lets the sergeant major in. Low means deflection —
+  a flat everything-is-fine used as a wall. High means, eventually, something true.
+· Being asked how you are doing, by someone who can't order you to be okay, does something
+  even to a closed man. Let the talk move him a little — grudgingly, invisibly, but there.
+· Felt readings for his room and his detail arrive as words (very-low … very-high) —
+  never repeat them; turn them into things he has personally seen and heard.
+Answer in 1-4 sentences of spoken Korean; a short action in parentheses is allowed.
+Never narrate the sergeant major's side.
 ${KO}`;
 
 export const interviewSystem = unit => sys(unit, I1_ROLE);
@@ -321,10 +335,9 @@ ${soldierSheet(soldier)}
 [WHAT IT FEELS LIKE FROM WHERE YOU STAND — words for you only, never repeat them]
 · your barracks room lately: ${label(felt.room)}
 · your work detail lately: ${label(felt.work)}
-· your own mood lately: ${label(felt.mood)}
-[HOW STRAIGHT YOU TALK TODAY] ${label(honesty)}
+[HOW MUCH YOU LET HIM IN TODAY] ${label(honesty)}
 
-[THE SERGEANT MAJOR ASKS]
+[THE SERGEANT MAJOR SAYS]
 """
 ${question}
 """
@@ -333,7 +346,7 @@ Answer him.`;
 }
 
 // 면담 왕복 — 두 번째 질문부터는 질문만 실린다. 프로필은 스레드에 이미 있다.
-export const interviewFollowup = question => `[THE SERGEANT MAJOR ASKS]\n"""\n${question}\n"""\n\nAnswer him.`;
+export const interviewFollowup = question => `[THE SERGEANT MAJOR SAYS]\n"""\n${question}\n"""\n\nAnswer him.`;
 
 // ── I-2. 불시점검 — 병사 입이 아니라 눈으로 본다 ────────────
 // 그 장소가 드러내는 파라미터의 밴드만 실린다. 장소-대응표는 params.js에 산다.

@@ -1133,13 +1133,16 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .stage-bubbles { position: absolute; inset: 0; pointer-events: none; }
 .stage-bubbles .bubble {
   position: absolute; transform: translateX(-50%);
-  max-width: 46%; padding: 3px 7px; font-size: 11px; line-height: 1.35;
+  max-width: min(48%, 230px); padding: 3px 7px; font-size: 11px; line-height: 1.35;
   background: #f7f4e6; color: #23231c; border: 1px solid #3c3a2c;
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, .3); white-space: nowrap;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, .3);
+  /* nowrap이면 긴 군가 소절이 max-width를 뚫고 나간다 — 접는다 */
+  white-space: normal; word-break: keep-all; text-align: center;
   animation: bubble-in .35s ease-out;
 }
 .stage-bubbles .bubble::after {
-  content: ''; position: absolute; left: 12px; bottom: -5px;
+  /* 꼬리도 피벗과 같은 자리(가운데)다 — 왼쪽에 박아 두면 몸통과 어긋나 보인다 */
+  content: ''; position: absolute; left: 50%; margin-left: -5px; bottom: -5px;
   border: 5px solid transparent; border-top-color: #f7f4e6; border-bottom: 0;
 }
 /* 군가는 목으로 부르는 것과 스피커에서 나오는 것이 다르게 보여야 한다 */
@@ -1182,3 +1185,68 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .roster-row .rk-일병 { background: #dfe8d8; }
 .roster-row .rk-상병 { background: #efe4c8; }
 .roster-row .rk-병장 { background: #e9d3c4; border-color: var(--stamp); font-weight: 700; }
+
+/* ── 부대 계기판 — 다섯 파라미터 상시 노출 ─────────────── */
+.pgauge {
+  display: grid; grid-template-columns: 84px 1fr 46px; align-items: center;
+  gap: var(--s2); margin-bottom: 7px;
+}
+.pg-label { font-size: var(--fs-sm); font-weight: 600; }
+.pg-bar {
+  position: relative; height: 18px; background: var(--dlg-dim);
+  border: 1px solid var(--ink-soft); overflow: hidden;
+}
+.pg-fill { height: 100%; transition: width .5s ease; min-width: 0; }
+.pgauge.diff .pg-fill { background: linear-gradient(180deg, #8a8676, #6d6a58); }
+.pgauge.gara .pg-fill { background: linear-gradient(180deg, #d9b23a, #b08d1e); }
+.pgauge.happy .pg-fill { background: linear-gradient(180deg, #7fae62, #5d8a42); }
+.pgauge.conflict .pg-fill { background: linear-gradient(180deg, #c96a4a, #a4442a); }
+.pgauge.rep .pg-fill { background: linear-gradient(180deg, #6c8fb4, #4a6d94); }
+.pg-danger {
+  position: absolute; top: -2px; bottom: -2px; width: 0;
+  border-left: 2px dashed var(--stamp-deep);
+}
+.pgauge.danger-now .pg-bar { border-color: var(--stamp-deep); box-shadow: 0 0 0 1px var(--stamp); }
+.pgauge.danger-now .pg-label { color: var(--stamp-deep); }
+.pg-num { font-family: var(--font-mono); font-size: var(--fs-md); font-weight: 700; text-align: right; }
+.pg-num small { font-weight: 400; color: var(--ink-soft); }
+
+/* 병사 멘탈 미니 게이지 — 명부 줄 안에 눕는다 */
+.mgauge {
+  display: inline-block; vertical-align: middle;
+  width: 44px; height: 9px; margin: 0 2px 0 4px;
+  background: var(--dlg-dim); border: 1px solid var(--ink-soft); overflow: hidden;
+}
+.mgauge i { display: block; height: 100%; }
+.mgauge.mg-ok i { background: #5d8a42; }
+.mgauge.mg-low i { background: #c08a1e; }
+.mgauge.mg-danger i { background: #a4442a; }
+.mgauge.mg-danger { border-color: var(--stamp-deep); animation: mg-blink 1s steps(2, end) infinite; }
+@keyframes mg-blink { 50% { box-shadow: 0 0 0 2px rgba(164, 68, 42, .5); } }
+@media (prefers-reduced-motion: reduce) { .mgauge.mg-danger { animation: none; } }
+.mg-num { font-family: var(--font-mono); font-size: var(--fs-xs); }
+.iv-heal { color: #3e6b2c; font-size: var(--fs-sm); margin: 2px 0 var(--s2); }
+
+/* ── 모바일 (아이폰 등 좁은 화면) ───────────────────────
+   레이아웃은 900px에서 한 열로 접힌다(위). 여기는 480px 이하의 손가락·글자 크기 몫이다. */
+@media (max-width: 480px) {
+  main { padding: var(--s2); }
+  .day-grid { gap: var(--s2); }
+  .stage-sky { height: 168px; }
+  .stage-bubbles .bubble { font-size: 10px; max-width: 48%; }
+  .day-window { max-height: 46vh; min-height: 220px; }
+  .pace-bar { flex-wrap: wrap; row-gap: var(--s1); }
+  .intervene-tabs { flex-wrap: wrap; }
+  .intervene-tabs .iv-tab { flex: 1 1 30%; min-height: 44px; }
+  .radio-btns { flex-wrap: wrap; }
+  .radio-btns .btn95 { flex: 1 1 100%; min-height: 44px; }
+  .btn95.big { min-height: 48px; }
+  .pgauge { grid-template-columns: 72px 1fr 40px; }
+  .roster-list { max-height: 200px; }
+  #interview-who, #inspect-where { width: 100%; }
+  textarea { font-size: 16px; }   /* 16px 미만이면 iOS가 포커스 때 화면을 확대해 버린다 */
+  input, select { font-size: 16px; }
+  .unit-cards { grid-template-columns: 1fr; }
+  .marquee span { font-size: var(--fs-xs); }
+  #console-panel { width: 100vw; left: 0; right: 0; }
+}

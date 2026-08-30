@@ -112,11 +112,14 @@ test('갈등이 적당히 높으면 잔사고가 준다 — 군기가 눌러 놓
 test('rollSlot은 결정적 rng로 결정적으로 돈다 — 큰 롤이 먼저다', () => {
   const params = { gara: 5, conflict: 10 };
   const unit = { intel: 5, macho: 5, difficulty: 5 };
-  assert.deepEqual(PM.rollSlot(params, unit, 'work', seq([0.0001])), { tier: 'major' });
+  assert.deepEqual(PM.rollSlot(params, unit, 'work', seq([0.0001])), { tier: 'major', cause: 'conflict' });
   assert.equal(PM.rollSlot(params, unit, 'work', seq([0.99, 0.99])), null);
   const calm = { gara: 0, conflict: 0 };
   const safeUnit = { intel: 10, macho: 0, difficulty: 1 };
   assert.deepEqual(PM.rollSlot(calm, safeUnit, 'work', seq([0.0001])), { tier: 'minor' });
+  // 멘탈이 바닥난 놈이 있으면 갈등이 낮아도 큰 롤이 열린다 — 원인이 mental로 찍힌다
+  assert.deepEqual(PM.rollSlot({ gara: 0, conflict: 0, minMental: 1 }, safeUnit, 'work', seq([0.0001])),
+    { tier: 'major', cause: 'mental' });
 });
 
 test('사건 풀 밖 창작은 없다 — pickEvent는 티어·슬롯에 맞는 후보만 준다', () => {
@@ -244,4 +247,132 @@ test('장소마다 드러내는 파라미터가 있고, 전부 실존 파라미�
   assert.ok(PM.PLACES.worksite.reveals.includes('gara'));
   // 평판은 어느 장소도 안 드러낸다 — 평판은 병사가 아니라 주임원사의 것이다
   for (const p of Object.values(PM.PLACES)) assert.ok(!p.reveals.includes('rep'));
+});
+
+// ── 멘탈 — 병사별 저장 상태. 큰 사고의 두 번째 문이다 ────
+test('멘탈 굴림은 0~10 안이고, 인성 하위는 낮게 시작한다', () => {
+  for (let i = 0; i < 60; i++) {
+    const m = PM.rollMental('중', Math.random);
+    assert.ok(m >= 0 && m <= 10);
+  }
+  // 같은 난수면 인성만큼 정확히 낮다
+  const fixed = () => 0.5;
+  assert.equal(PM.rollMental('최악', fixed), PM.rollMental('중', fixed) - 2);
+  assert.equal(PM.rollMental('하', fixed), PM.rollMental('중', fixed) - 1);
+});
+
+test('부대 분위기가 멘탈을 쓸어간다 — 밝으면 +1, 어두우면 −1, 눌리면 또 −1', () => {
+  const base = { gara: 5, rep: 5 };
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 9, conflict: 3 }), 6);
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 3 }), 4);
+  // 어둡고 눌리면 사유가 둘이지만 하루 한 걸음이다
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 8 }), 4);
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 5, conflict: 5 }), 5, '보통 날에 움직였다');
+  assert.equal(PM.mentalDrift(0, { ...base, happy: 0, conflict: 9 }), 0, '바닥 밑으로 뚫었다');
+});
+
+test('상담은 +1, 연루는 −1, 사고가 되면 −2다', () => {
+  assert.equal(PM.counselMental(4), 5);
+  assert.equal(PM.counselMental(10), 10);
+  assert.equal(PM.incidentMental(5, false), 4);
+  assert.equal(PM.incidentMental(5, true), 3);
+  assert.equal(PM.incidentMental(0, true), 0);
+});
+
+test('멘탈이 dangerAt(2) 이하로 떨어진 병사가 있으면 큰 사고가 열린다', () => {
+  const unit = { intel: 5, macho: 5, difficulty: 5 };
+  for (const ok of [10, 5, 3]) {
+    assert.equal(PM.incidentRisk({ gara: 5, conflict: 3, minMental: ok }, unit).big, 0,
+      `멘탈 ${ok}인데 큰 사고가 열렸다`);
+  }
+  const at2 = PM.incidentRisk({ gara: 5, conflict: 3, minMental: 2 }, unit);
+  const at0 = PM.incidentRisk({ gara: 5, conflict: 3, minMental: 0 }, unit);
+  assert.ok(at2.big > 0, '멘탈 2에서 안 열렸다');
+  assert.ok(at0.big > at2.big, '더 무너졌는데 위험이 같다');
+  assert.equal(at2.bigCause, 'mental');
+  // 갈등과 멘탈이 둘 다 열렸으면 위험은 합산이고, 원인은 더 큰 쪽이다
+  const both = PM.incidentRisk({ gara: 5, conflict: 10, minMental: 2 }, unit);
+  assert.ok(both.big > at2.big);
+  assert.equal(both.bigCause, 'conflict');
+});
+
+test('minMental을 안 주면 안전값이다 — 멘탈이 생기기 전의 호출이 안 깨진다', () => {
+  const unit = { intel: 5, macho: 5, difficulty: 5 };
+  assert.equal(PM.incidentRisk({ gara: 5, conflict: 3 }, unit).big, 0);
+  assert.equal(PM.minMentalOf([]), 10, '빈 명부가 위험을 열었다');
+  assert.equal(PM.minMentalOf([{ mental: 4 }, { mental: 7 }]), 4);
+  assert.equal(PM.minMentalOf([{}]), PM.TUNING.mental.default, '멘탈 없는 옛 병사를 못 읽었다');
+});
+
+test('연루 가중은 등급이 낮을수록, 멘탈이 낮을수록 크다', () => {
+  const w = (grade, mental) => PM.involveWeight({ grade, mental });
+  assert.ok(w('폐급', 6) > w('에이스', 6));
+  assert.ok(w('B', 2) > w('B', 6), '무너진 놈이 더 잘 걸려야 한다');
+  assert.equal(w('B', 6), w('B', 8), '기준(6) 위는 가중이 없어야 한다');
+  assert.equal(w('B', undefined), w('B', 6), '멘탈 없는 옛 병사는 중립이어야 한다');
+});
+
+// ── 불시점검(군기 점검) — 순수 코드 효과 ─────────────────
+test('점검은 가라 −1 · 행복 −1이고, LLM은 폭을 못 만진다', () => {
+  const p = { gara: 5, happy: 5, conflict: 5, rep: 5 };
+  const out = PM.applyInspection(p);
+  assert.equal(out.gara, 4);
+  assert.equal(out.happy, 4);
+  assert.equal(out.conflict, 5);
+  assert.equal(out.rep, 5, '점검 효과가 평판을 건드렸다 — 평판은 applyIntervention 몫이다');
+  assert.equal(PM.applyInspection({ ...p, gara: 0, happy: 0 }).gara, 0, '바닥을 뚫었다');
+  assert.notEqual(out, p, '원본을 돌려줬다');
+});
+
+// ── 전우애 — 갈등을 흡수하는 부대 완충재 ────────────────
+test('전우애가 높을수록 문턱이 뒤로 밀리고, 낮을수록 앞당겨진다', () => {
+  const open = c => PM.comradeEffect(c).open;
+  assert.equal(open(PM.TUNING.comrade.neutral), PM.TUNING.roll.big.open, '중립이 기준선이 아니다');
+  assert.ok(open(10) > open(5), '끈끈한데 문턱이 안 밀렸다');
+  assert.ok(open(1) < open(5), '서로 남인데 문턱이 그대로다');
+  // 단조 — 전우애가 오르는 동안 문턱이 한 번도 안 내려가야 한다
+  for (let c = 1; c <= 10; c++) assert.ok(open(c) >= open(c - 1), `전우애 ${c}에서 문턱이 거꾸로 갔다`);
+});
+
+test('전우애가 낮을수록 번짐 폭도 크고 잔사건도 잦다', () => {
+  const e = c => PM.comradeEffect(c);
+  assert.ok(e(1).scale > e(5).scale && e(5).scale > e(10).scale, '번짐 배수가 단조가 아니다');
+  assert.ok(e(1).small > 0 && e(10).small < 0, '잔사건 가산의 부호가 뒤집혔다');
+  assert.equal(e(5).scale, 1, '중립 배수가 1이 아니다');
+  assert.equal(e(5).small, 0, '중립에서 잔사건이 움직였다');
+  assert.ok(e(0).scale >= 0, '배수가 음수로 떨어졌다');
+});
+
+test('전우애를 안 주면 중립이다 — 옛 부대 데이터가 안 깨진다', () => {
+  assert.deepEqual(PM.comradeEffect(undefined), PM.comradeEffect(PM.TUNING.comrade.neutral));
+  const unit = { intel: 5, macho: 5, difficulty: 5 };
+  const withNeutral = PM.incidentRisk({ gara: 5, conflict: 9 }, { ...unit, comrade: 5 });
+  const without = PM.incidentRisk({ gara: 5, conflict: 9 }, unit);
+  assert.deepEqual(without, withNeutral);
+});
+
+test('같은 갈등이라도 전우애가 얕은 부대에서만 큰 사고가 열린다', () => {
+  const at = (comrade, conflict) =>
+    PM.incidentRisk({ gara: 5, conflict }, { intel: 5, macho: 5, difficulty: 5, comrade }).big;
+  // 갈등 8 — 기본 문턱이지만 전우애가 이걸 갈라놓는다
+  assert.equal(at(10, 8), 0, '끈끈한 부대가 갈등 8에서 터졌다');
+  assert.ok(at(2, 8) > 0, '서로 남인 부대가 갈등 8에서 멀쩡하다');
+  // 열린 뒤에도 얕은 쪽이 더 크게 번진다
+  assert.ok(at(2, 10) > at(10, 10), '갈등 10에서 번짐 폭이 안 갈렸다');
+});
+
+test('전우애는 큰 사고만 막는다 — 잔사고까지 없애 주지는 않는다', () => {
+  // 끈끈하고 빡센 부대(마초·난이도 높음)는 여전히 작은 사건이 잦아야 한다
+  const tough = PM.incidentRisk({ gara: 5, conflict: 3 }, { intel: 4, macho: 9, difficulty: 8, comrade: 10 });
+  const easy = PM.incidentRisk({ gara: 5, conflict: 3 }, { intel: 8, macho: 2, difficulty: 3, comrade: 2 });
+  assert.ok(tough.small > easy.small, '빡센 부대의 잔사고가 편한 부대보다 적다');
+  assert.equal(tough.big, 0);
+  assert.equal(easy.big, 0);
+});
+
+test('멘탈이 여는 문은 전우애와 무관하다 — 한 사람이 무너지는 것은 부대가 못 막는다', () => {
+  const at = comrade =>
+    PM.incidentRisk({ gara: 5, conflict: 0, minMental: 1 }, { intel: 5, macho: 5, difficulty: 5, comrade }).big;
+  assert.ok(at(10) > 0, '전우애가 멘탈 위험까지 막아 버렸다');
+  assert.equal(at(10), at(1), '멘탈 위험이 전우애를 탄다');
 });

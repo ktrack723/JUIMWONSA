@@ -121,6 +121,8 @@ export class Roster {
       if (!raw) return false;
       const data = JSON.parse(raw);
       this.soldiers = data.soldiers || [];
+      // 멘탈이 생기기 전의 저장분 — 기본값으로 채워 읽는다. 옛 세이브가 죽으면 안 된다.
+      for (const s of this.soldiers) s.mental ??= TUNING.mental.default;
       this.seq = data.seq || this.seq;
       return this.soldiers.length > 0;
     } catch { return false; }
@@ -162,9 +164,13 @@ export class Roster {
    * 이름을 안 주면 여기서 굴린다(부대 결에 맞게, 명부에 없는 것으로).
    * P 호출은 engine.js가 한다 — 명부는 프롬프트를 모른다.
    */
-  enlist({ name, sheet, job, grade, character, joined, serial = null, rng = Math.random }) {
+  enlist({ name, sheet, job, grade, character, joined, serial = null, mental = null, rng = Math.random }) {
     serial = serial || makeSerial(this.unit, joined, this.seq++);
-    const soldier = { name: name || this.rollName(rng), serial, job, grade, character, sheet, joined };
+    const soldier = {
+      name: name || this.rollName(rng), serial, job, grade, character, sheet, joined,
+      // 멘탈은 계급과 달리 **저장한다** — 전입일에서 계산되는 값이 아니라 살아온 결과라서다.
+      mental: mental ?? TUNING.mental.default,
+    };
     this.soldiers.push(soldier);
     this.save();
     return soldier;
