@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="vehicle">
+  <title>vehicle</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#d8a13a" stroke-width="3"/>
+  <path d="M8 38 V22 h24 v16" fill="none" stroke="#e8e4d8" stroke-width="3"/>
+  <path d="M32 38 V26 h10 l8 8 v4" fill="none" stroke="#e8e4d8" stroke-width="3"/>
+  <path d="M6 38 h52" stroke="#e8e4d8" stroke-width="3"/>
+  <circle cx="19" cy="44" r="5" fill="none" stroke="#e8e4d8" stroke-width="3"/><circle cx="45" cy="44" r="5" fill="none" stroke="#e8e4d8" stroke-width="3"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="abuse">
+  <title>abuse</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#c0453b" stroke-width="3"/>
+  <circle cx="24" cy="22" r="7" fill="none" stroke="#e8e4d8" stroke-width="3"/>
+  <path d="M12 52 q0 -14 12 -14 q12 0 12 14" fill="none" stroke="#e8e4d8" stroke-width="3" stroke-linecap="round"/>
+  <path d="M56 14 L42 30 h9 L38 46" fill="none" stroke="#e8e4d8" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

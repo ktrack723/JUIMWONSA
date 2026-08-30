@@ -254,7 +254,7 @@ const sunFallback = f => ({ x: Math.max(0, Math.min(1, (f - 0.25) / 0.5)), y: 0.
  * 어느 판때기가 사고를 쳤는지가 눈에 보여야 「달려가는」 그림이 된다.
  * 대응이 끝나면 지운다.
  */
-function markIncident(on) {
+function markIncident(on, cat = null) {
   const box = $('#stage-bubbles');
   box.querySelector('.incident-mark')?.remove();
   if (!on) return;
@@ -262,7 +262,9 @@ function markIncident(on) {
   const p = pos.length ? pos[Math.floor(Math.random() * pos.length)] : { x: 0.5 };
   const el = document.createElement('div');
   el.className = 'incident-mark';
-  el.textContent = '❗';
+  // 유형의 글자를 세운다 — 무슨 일이 터졌는지가 무대에서도 한눈에 갈린다.
+  el.textContent = cat?.icon || '❗';
+  el.title = cat?.label || '사건';
   el.style.left = `${(Math.min(0.9, Math.max(0.1, p.x)) * 100).toFixed(1)}%`;
   box.appendChild(el);
 }
@@ -326,15 +328,50 @@ function renderNotices() {
 }
 
 // ── 동향 기록 창 ────────────────────────────────────────
-async function addEntry(kind, text, { typed = true } = {}) {
+async function addEntry(kind, text, { typed = true, badge = null } = {}) {
   const win = $('#day-window');
   const div = document.createElement('div');
   div.className = `day-entry ${kind}`;
   win.appendChild(div);
+  // 딱지가 붙으면 본문은 자식으로 내려간다 — typeInto가 칸을 통째로 비우기 때문이다.
+  let body = div;
+  if (badge) {
+    div.appendChild(badge);
+    body = document.createElement('div');
+    body.className = 'entry-body';
+    div.appendChild(body);
+  }
   const scroll = () => { win.scrollTop = win.scrollHeight; };
-  if (typed) await pace.typeInto(div, text, scroll);
-  else { div.textContent = text; scroll(); }
+  if (typed) await pace.typeInto(body, text, scroll);
+  else { body.textContent = text; scroll(); }
   await pace.beat(pace.readMs(text) * 0.4);
+}
+
+/**
+ * 사고 유형 딱지 — 그림 한 장 + 갈래·이름.
+ * 유형은 코드가 정한 열둘 중 하나라(params.js의 `INCIDENT_CATEGORIES`), 지침이 아무리
+ * 자유롭고 장면이 아무리 갈라져도 붙을 그림이 반드시 하나 있다.
+ * **그림 파일이 없어도 안 깨진다** — 로드에 실패하면 유형의 icon 글자로 떨어진다.
+ */
+function categoryBadge(cat, note = '') {
+  if (!cat) return null;
+  const box = document.createElement('div');
+  box.className = `cat-badge cat-${cat.class}`;
+  const art = document.createElement('img');
+  art.className = 'cat-art';
+  art.src = cat.art;
+  art.alt = cat.label;
+  art.addEventListener('error', () => {
+    const fb = document.createElement('span');
+    fb.className = 'cat-art fallback';
+    fb.textContent = cat.icon;
+    art.replaceWith(fb);
+  }, { once: true });
+  const txt = document.createElement('div');
+  txt.className = 'cat-text';
+  txt.innerHTML = `<b>${escapeHtml(cat.label)}</b><span>${escapeHtml(cat.className)}${note ? ` · ${escapeHtml(note)}` : ''}</span>`;
+  box.append(art, txt);
+  return box;
 }
 
 // ── 엔진 손잡이 — 하루의 전부가 여기로 들어온다 ─────────
@@ -355,20 +392,24 @@ function makeHandlers() {
       else await addEntry('slot', `[${slot.label}]`, { typed: false });
       await holdGate();   // ⏸가 눌려 있으면 여기서 선다
     },
-    incident: async ({ scene, place, slot }) => {
+    incident: async ({ scene, place, slot, tier, category }) => {
       sfx.bad();
-      markIncident(true);
-      await addEntry('incident', `❗ ${slot.label} · ${place}\n${scene}`);
+      markIncident(true, category);
+      await addEntry('incident', `❗ ${slot.label} · ${place}\n${scene}`, {
+        badge: categoryBadge(category, `${slot.label} · ${place} · ${tier === 'major' ? '중대' : '경미'}`),
+      });
       return await askDirective();
     },
     outcome: async ({ scene }) => {
       markIncident(false);
       await addEntry('outcome', scene);
     },
-    verdict: async ({ escalated, tier }) => {
+    verdict: async ({ escalated, tier, category }) => {
       if (escalated) {
         sfx.trombone();
-        await addEntry('stamp', `■ 사고 확정 (${tier === 'major' ? '중대' : '경미'}) — 무사고 기록 0일로 회귀. 날짜는 돌아가지 않는다.`, { typed: false });
+        // 확전하면 유형이 넘어갈 수 있다 — 사고 대장에 찍히는 것은 「무엇이 되었는가」다.
+        await addEntry('stamp', `■ 사고 확정 (${tier === 'major' ? '중대' : '경미'}) — 무사고 기록 0일로 회귀. 날짜는 돌아가지 않는다.`,
+          { typed: false, badge: categoryBadge(category, '사고 대장 기재') });
       } else {
         sfx.love();
         await addEntry('stamp', '□ 수습 — 사건은 사고가 되지 않았다. 무사고 기록 유지.', { typed: false });

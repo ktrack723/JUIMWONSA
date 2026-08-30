@@ -323,7 +323,7 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
     P: P.recruitSystem(ascii) + P.recruitUser({ name: 'Kim', serial: '26-20000001', standing: 'cohort 812, corporal', job: 'cook', grade: 'B', character: 'ok', joined: '2026-01-01' }),
     D: P.daySystem(ascii) + P.briefingUser({ date: '2026-08-29', weekday: 'Sat', season: 'summer', slots: ['reveille'], difficulty: 'high', bands: aBands, yesterday: 'quiet day', arrivals: [aSoldier], departures: [aSoldier], excerpt: [aSoldier] }),
     'D(첫날)': P.briefingUser({ date: 'd', weekday: 'w', season: 's', slots: [], difficulty: 'mid', bands: aBands, yesterday: '' }),
-    'E-1': P.incidentUser({ slotLabel: 'work', place: 'yard', tier: 'minor', event: 'a fall', involved: [aSoldier], notices: ['no soccer'] }),
+    'E-1': P.incidentUser({ slotLabel: 'work', place: 'yard', tier: 'minor', event: 'a fall', category: 'injury during work', involved: [aSoldier], notices: ['no soccer'] }),
     'E-1(지침없음)': P.incidentUser({ slotLabel: 'work', place: 'yard', tier: 'major', event: 'a fall', involved: [aSoldier] }),
     'E-2': P.outcomeUser({ directive: 'stop it', standing: 'partial' }),
     'E-2(개입없음)': P.outcomeUser({ directive: null, standing: 'partial' }),

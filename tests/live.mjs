@@ -16,7 +16,7 @@
 import { LlmClient } from '../js/llm.js';
 import * as P from '../js/prompts.js';
 import { UNITS, UNIT_BY_ID } from '../js/units.js';
-import { EVENT_POOL, PLACES } from '../js/params.js';
+import { EVENT_POOL, PLACES, categoryFor } from '../js/params.js';
 import { resolveTestModel, requireTestKey } from './test-model.mjs';
 import fs from 'node:fs';
 
@@ -55,7 +55,10 @@ async function runOne(unit, kase, directive) {
   const sys = P.daySystem(unit);
   const thread = [{
     role: 'user',
-    content: P.incidentUser({ slotLabel: '오전일과', place, tier: event.tier, event: event.desc, involved, notices: [] }),
+    content: P.incidentUser({
+      slotLabel: '오전일과', place, tier: event.tier, event: event.desc,
+      category: categoryFor(event)?.en, involved, notices: [],
+    }),
   }];
   const scene = await llm.call({ label: `live E-1 ${kase.id}`, system: sys, messages: thread, cache: true, effort: 'low', maxTokens: 2000 });
   thread.push({ role: 'assistant', content: scene });

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "무사고 100일: 주임원사 — LLM 텍스트 부대 운영 시뮬레이터 (일일 턴제, GitHub Pages 정적 사이트)",
   "scripts": {
-    "test": "node --test tests/params.test.mjs tests/units.test.mjs tests/roster.test.mjs tests/names.test.mjs tests/ambient.test.mjs tests/stage.test.mjs tests/schema.test.mjs tests/llm.test.mjs tests/pacing.test.mjs tests/hierarchy.test.mjs tests/engine.test.mjs",
+    "test": "node --test tests/params.test.mjs tests/units.test.mjs tests/roster.test.mjs tests/names.test.mjs tests/ambient.test.mjs tests/stage.test.mjs tests/incidents.test.mjs tests/schema.test.mjs tests/llm.test.mjs tests/pacing.test.mjs tests/hierarchy.test.mjs tests/engine.test.mjs",
     "live": "node tests/live.mjs",
     "serve": "python3 -m http.server 8000"
   }

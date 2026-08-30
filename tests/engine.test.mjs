@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { Engine } from '../js/engine.js';
 import { Roster } from '../js/roster.js';
 import { AmbientPool } from '../js/ambient.js';
-import { TUNING } from '../js/params.js';
+import { TUNING, INCIDENT_CATEGORIES } from '../js/params.js';
 import { RECRUIT_SCHEMA as P_RECRUIT } from '../js/prompts.js';
 
 // ── 가짜 LLM — label로 갈라 결정적 응답을 준다 ──────────
@@ -143,6 +143,10 @@ test('사건은 E-1·E-2·E-3 세 콜이고, 확전이면 카운터만 0이 된�
   // 사고 — 무사고 카운터만 0. 하루 마감 +1도 없다.
   assert.equal(snap.streak, 0, '확전인데 카운터가 살아 있다');
   assert.equal(state.accidents.length, 1);
+  // 사고 대장에는 유형이 같이 찍힌다 — 화면이 여기에 그림을 붙인다
+  const filed = state.accidents[0];
+  assert.ok(INCIDENT_CATEGORIES[filed.category], `사고 대장에 유형이 안 찍혔다: ${filed.category}`);
+  assert.ok(filed.desc && filed.tier, '사고 대장에 사건 내용·티어가 빠졌다');
   // 날짜는 안 돌아간다
   assert.equal(snap.date, '2026-05-19');
   // 병사 데이터와 파라미터는 유지된다 — 리셋되는 것은 카운터뿐이다

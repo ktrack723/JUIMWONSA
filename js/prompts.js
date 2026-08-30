@@ -226,11 +226,12 @@ Write the morning briefing and the ambient slot lines.`;
 
 // E-1. 사건 장면 — 사고 롤이 성공했을 때. 후보와 심각도는 코드의 풀에서 왔다.
 // 활성 지침(공지) 목록이 여기 실린다 — 게시된 지침은 이후 모든 사건 생성에 주입된다.
-export function incidentUser({ slotLabel, place, tier, event, involved, notices = [] }) {
+export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [] }) {
   return `[INCIDENT — the machine rolled one. Write the scene as it is found]
 · when: ${slotLabel}
 · where: ${place}
 · severity-tier: ${tier === 'major' ? 'major (the kind that ends careers)' : 'minor (the everyday kind)'}
+· kind (stay inside it — the file it lands in is already stamped): ${category || 'unclassified'}
 · what (candidate from the pool — make it concrete): ${event}
 [INVOLVED]
 ${involved.map(soldierSheet).join('\n\n')}
@@ -241,6 +242,8 @@ Write the incident scene, 3-6 sentences, as the sergeant major finds it: what is
 happening, who is doing what, what it looks like it could become. Stop before any
 resolution — nobody has responded yet.`;
 }
+
+// 유형(kind)은 코드가 정한 열둘 중 하나다 — 장면이 그 유형을 벗어나면 붙는 그림이 어긋난다.
 
 // E-2. 대응 결과 — 그 자리에서 내린 지침(유저)이 그대로 실린다. 채점되지 않는다.
 // 평판 밴드가 「지침이 먹히는 정도」로 들어간다 — 낮으면 말이 안 선다.

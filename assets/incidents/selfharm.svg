@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="selfharm">
+  <title>selfharm</title>
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1d2118" stroke="#4b7fa8" stroke-width="3"/>
+  <path d="M32 10 q7 9 0 14 q-7 -5 0 -14 Z" fill="none" stroke="#e8e4d8" stroke-width="2.6"/>
+  <rect x="26" y="26" width="12" height="26" rx="3" fill="none" stroke="#e8e4d8" stroke-width="3"/>
+  <path d="M18 52 h28" stroke="#e8e4d8" stroke-width="3" stroke-linecap="round"/>
+</svg>

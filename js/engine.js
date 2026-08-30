@@ -7,6 +7,8 @@
 //   → 슬롯 아홉: 슬롯마다 사고 롤(코드). 성공하면 사건 —
 //       E-1 장면 → (지침 입력) → E-2 결과 → E-3 확전 판정(스레드 밖, 지침 못 봄)
 //       확전이면 **사고** — 무사고 카운터만 0. 병사·파라미터는 그대로.
+//       사건에는 언제나 유형이 하나 붙는다(params.js의 열둘). 씨앗이 풀에서 오므로
+//       장면이 아무리 갈라져도 유형은 코드가 알고, 화면은 거기에 그림을 붙인다.
 //   → 하루 마감: 드리프트 적용, 조용한 날 평판 회복, 카운터 ±, 날짜 전진.
 //
 // 일과 중 주임원사가 할 수 있는 일은 셋 — 면담(I-1)·불시점검(I-2)·공지(N).
@@ -45,7 +47,7 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
-  minMentalOf, applyInspection, PLACES, TUNING,
+  minMentalOf, applyInspection, categoryFor, PLACES, TUNING,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -376,12 +378,14 @@ export class Engine {
       : pickInvolved(this.roster.soldiers, event.involved, this.rng);
     if (!involved.length) return null;
     const place = PLACES[event.place]?.label || event.place;
+    // 유형은 코드가 안다 — 그림도 기록도 이걸 본다. 판정 콜은 늘지 않는다.
+    const category = categoryFor(event);
 
     // E-1. 사건 장면 — 활성 지침 목록이 여기 주입된다.
     this.thread.push({
       role: 'user',
       content: P.incidentUser({
-        slotLabel: slot.label, place, tier, event: event.desc,
+        slotLabel: slot.label, place, tier, event: event.desc, category: category?.en,
         involved: this.dressedAll(involved), notices: s.notices,
       }),
     });
@@ -395,7 +399,7 @@ export class Engine {
     this.thread.push({ role: 'assistant', content: scene });
 
     // 지침 입력 — 화면이 텍스트를 돌려주거나, 무시(null)를 돌려준다.
-    const directive = (await this.h.incident?.({ slot, place, tier, event, involved, scene })) || null;
+    const directive = (await this.h.incident?.({ slot, place, tier, event, category, involved, scene })) || null;
 
     // E-2. 대응 결과 — 지침 원문이 그대로 실린다. 평판 밴드가 「먹히는 정도」다.
     this.thread.push({
@@ -422,6 +426,8 @@ export class Engine {
 
     s.params = applyDirections(s.params, verdict);
     const escalated = verdict?.outcome === 'escalated';
+    // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.
+    const stamped = categoryFor(event, escalated);
     // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
     for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated);
     this.roster.save();
@@ -429,10 +435,10 @@ export class Engine {
       // 사건이 사고가 됐다 — 무사고 카운터만 0. 날짜도, 병사도, 파라미터도 안 돌아간다.
       this.accidentToday = true;
       s.streak = 0;
-      s.accidents.push({ date: s.date, desc: event.desc });
+      s.accidents.push({ date: s.date, desc: event.desc, tier, category: stamped?.id || null });
     }
-    await this.h.verdict?.({ escalated, verdict, event, tier });
-    return { desc: event.desc, tier, escalated, directive: !!directive };
+    await this.h.verdict?.({ escalated, verdict, event, tier, category: stamped });
+    return { desc: event.desc, tier, escalated, directive: !!directive, category: stamped?.id || null };
   }
 
   // 어제의 코드 요약 — 다음 날 D의 입력이 된다. 원문 스레드는 닫힌다.
