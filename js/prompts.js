@@ -209,7 +209,7 @@ export const BRIEFING_SCHEMA = {
   additionalProperties: false,
 };
 
-export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [], away = [], returns = [] }) {
+export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [], away = [], returns = [], lead = null }) {
   return `[TODAY] ${date} (${weekday}) · season: ${season}
 [SCHEDULE] ${slots.join(' → ')}
 [WORKLOAD READING] ${label(difficulty)}
@@ -225,9 +225,22 @@ never have anyone speak to them. Their empty bunk is part of this morning]
 ${away.length ? away.map(s => `${s.name} (${s.serial}) — ${s.en}, due back ${s.until}`).join('\n') : '(none — everyone is accounted for)'}
 [BACK TODAY — they walk back in this morning]
 ${returns.length ? returns.map(s => `${s.name} (${s.serial}) — was ${s.en}`).join('\n') : '(none)'}
-[ROSTER EXCERPT — soldiers likely on view today. Roll lines only: you are writing the
-unit's symptoms, not these four men's inner lives. Names and standing are what you need]
+[THE FOUR LOWEST MEN THIS MORNING — not a random sample. These are the men currently
+carrying the least, and **the list is ordered: the first man is the one carrying the least.**
+Spirit readings are coarse and several of them can read the same; the order is not.
+Roll lines only — you are writing the unit's symptoms, not these four men's inner lives.
+**If anyone in this briefing is quiet, not eating, awake at odd hours, or being stepped
+around, it is one of these men, and the nearer the top of the list the more it is him.**
+Do not invent a man who is struggling — the struggling man is on this list. If the whole
+list reads mid or better, the morning is fine and you say so instead.]
 ${excerpt.length ? excerpt.map(soldierRoll).join('\n') : '(none)'}
+[SOMETHING IN THE AIR — a place and a time somebody mentioned this morning. You do NOT
+know what is going on there and neither does he: it is a half-sentence he caught, from
+somebody who did not want to be the one who said it. Put it in the briefing as exactly
+that — a place and a time and the fact that it was mentioned at all. Never guess what it
+is, never name a practice, never say who said it, never treat it as established. One
+sentence, and then move on as if it were nothing.]
+${lead ? `· ${lead.place}, around ${lead.when}` : '(nothing came to his ear this morning — do not invent one)'}
 
 Write the morning briefing and the ambient slot lines.`;
 }

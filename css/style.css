@@ -48,7 +48,7 @@
   --ok:         #2f5230;   /* 승인 올리브 */
   --warn:       #6d5417;   /* 주의 오커 */
   --alert:      #7a2020;
-  --gold:       #9a7b1f;   /* 진급 금색 — 이 색이 나오는 자리는 마지막 밤 하나뿐이다 */
+  --gold:       #9a7b1f;   /* 진급 금색 — 심사표의 「원사 진급」과 마지막 밤, 그 둘뿐이다 */
 
   /* 등급 */
   --easy:       #2f5230;
@@ -1118,6 +1118,17 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .hud-censor.today {
   border: 2px solid var(--stamp); color: var(--stamp-deep); background: #f6e6e4; font-weight: 700;
 }
+
+/* ── 오늘의 낌새 ─────────────────────────────────────────
+   아침에 흘러든 말 한 조각. 검열 예고와 나란히 서지만 결이 다르다 — 저쪽은 확정된
+   미래고 이쪽은 **틀릴 수 있는 현재**라, 경고색이 아니라 종이에 연필로 적어 둔 결로 둔다. */
+.hud-lead {
+  margin-top: var(--s2); padding: var(--s1) var(--s2); font-size: var(--fs-xs);
+  border: 1px dashed var(--dlg-edge); background: var(--dlg-lit);
+}
+.hud-lead .hud-k { display: block; opacity: .7; }
+.hud-lead b { display: block; margin: 2px 0; font-family: var(--font-mono); }
+.hud-lead i { display: block; font-style: normal; opacity: .8; line-height: 1.4; }
 .censor-list { list-style: none; font-size: var(--fs-sm); }
 .censor-list li {
   padding: var(--s1) 0 var(--s2) var(--s2); border-bottom: 1px dashed var(--dlg-edge);
@@ -1466,3 +1477,25 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
   .marquee span { font-size: var(--fs-xs); }
   #console-panel { width: 100vw; left: 0; right: 0; }
 }
+
+
+/* ── 임기 성적표 ─────────────────────────────────────────
+   두 블록으로 갈라 놓는 것이 요점이다. 위는 군이 세는 것(사고 건수와 최장 연속),
+   아래는 아무도 안 세는 것(끊은 관행·부조리, 숨 쉬게 한 사람). 둘 사이의 여백이
+   이 게임이 100일 내내 해 온 말이라, 선 하나로 눈에 보이게 갈라 둔다. */
+.promo-sheet { margin-top: var(--s2); display: grid; gap: var(--s2); }
+.sheet-block { border: 1px solid var(--dlg-edge); background: var(--dlg-lit); padding: var(--s2); }
+.sheet-block h4 {
+  margin: 0 0 var(--s1); font-size: var(--fs-xs); letter-spacing: .04em;
+  opacity: .75; font-weight: 600;
+}
+.sheet-block + .sheet-block { border-style: dashed; }
+.sheet-row {
+  display: flex; justify-content: space-between; gap: var(--s2);
+  padding: 2px 0; font-size: var(--fs-xs);
+}
+.sheet-row b { font-family: var(--font-mono); }
+.verdict-promoted { color: var(--gold); }
+.verdict-retained { color: var(--warn); }
+.verdict-transferred,
+.verdict-relieved { color: var(--stamp-deep); }

@@ -50,11 +50,56 @@ test('부임일 = 오늘 − 100일. 완주하면 정확히 오늘 심사를 맞
   assert.equal(PM.reviewDate(start, 0), today);
 });
 
-test('사고가 나면 심사일이 미래로 밀린다 — 날짜는 안 돌아간다', () => {
-  // 50일차까지 무사고: 심사일 = 오늘 + 50
-  assert.equal(PM.reviewDate('2026-07-10', 50), '2026-08-29');
-  // 같은 날 사고로 streak 0: 심사일 = 오늘 + 100
-  assert.equal(PM.reviewDate('2026-07-10', 0), '2026-10-18');
+test('심사일은 임기 만료일이라 안 움직인다 — 사고가 나도 그날 열린다', () => {
+  // 부임일 + 100. 예전에는 「지금부터 무사고면 진급하는 날」이라 사고마다 밀렸는데,
+  // 밀리는 것에 끝이 없어서 임기가 무한히 늘어났다. 이제 날짜는 부임일에 정해진다.
+  assert.equal(PM.reviewDate('2026-07-10'), '2026-10-18');
+  assert.equal(PM.reviewDate('2026-07-10', 50), PM.reviewDate('2026-07-10', 0),
+    '무사고 연속이 심사일을 움직였다 — 임기는 성적과 무관하게 같은 날 끝난다');
+});
+
+// ── 임기 심사 — 100일째에 반드시 열린다 ────────────────────
+test('심사는 사고 건수를 먼저 읽고 최장 연속을 그 다음에 읽는다', () => {
+  const at = (accidents, bestStreak) => PM.tourVerdict({ accidents, bestStreak }).id;
+  assert.equal(at(0, 100), 'promoted', '무사고 100일이 진급이 아니다');
+  assert.equal(at(1, 60), 'retained', '한 건 딛고 오래 간 임기가 유임이 아니다');
+  assert.equal(at(1, 20), 'transferred', '짧게 끊긴 임기가 유임으로 통과했다');
+  assert.equal(at(4, 90), 'transferred');
+  assert.equal(at(6, 90), 'relieved', '사고 여섯 건이 해임이 아니다');
+  // 끊은 가라도 구한 사람도 심사에 안 올라간다 — 그게 이 게임의 요지다
+  assert.deepEqual(PM.tourVerdict({ accidents: 3, bestStreak: 40, garaCut: 99, rescued: 99 }),
+    PM.tourVerdict({ accidents: 3, bestStreak: 40 }));
+  for (const v of Object.values(PM.TOUR_VERDICTS)) {
+    assert.ok(v.label.length > 1 && v.line.length > 10, '판정에 말이 없다');
+  }
+});
+
+test('목표는 자리를 옮겨 앉는다 — 진급이 닫히면 유임이 열린다', () => {
+  const day1 = PM.tourOutlook({ accidents: 0, bestStreak: 0, streak: 0, dayNo: 1 });
+  assert.equal(day1.now.id, 'promoted', '첫날부터 진급 자리가 아니다');
+  assert.equal(day1.next, null, '진급 위에 또 뭐가 있다');
+
+  // 사고 한 건 — 진급은 그 자리에서 닫힌다. 화면이 그걸 숨기면 안 된다.
+  const hit = PM.tourOutlook({ accidents: 1, bestStreak: 12, streak: 0, dayNo: 30 });
+  assert.equal(hit.now.id, 'transferred', '사고 한 건 · 최장 12일이 전출이 아니다');
+  assert.equal(hit.next.label, PM.TOUR_VERDICTS.retained.label, '다음 자리가 유임이 아니다');
+  assert.ok(/38일 더/.test(hit.need), `모자란 일수를 안 말한다: ${hit.need}`);
+  assert.ok(hit.reachable, '30일차에 무사고 38일이 못 닿는다고 한다');
+
+  // 임기 막바지 — 산술적으로 못 닿으면 못 닿는다고 말한다
+  const late = PM.tourOutlook({ accidents: 1, bestStreak: 12, streak: 0, dayNo: 90 });
+  assert.equal(late.reachable, false, '남은 11일에 무사고 38일이 닿는다고 한다');
+
+  // 사고가 너무 많으면 그 등급 자체가 닫힌다
+  const many = PM.tourOutlook({ accidents: 4, bestStreak: 80, streak: 0, dayNo: 90 });
+  assert.equal(many.now.id, 'transferred');
+  assert.ok(/이미 4건/.test(many.need), `사고 초과를 안 말한다: ${many.need}`);
+  assert.equal(many.reachable, false);
+
+  // 바닥에서도 다음 자리가 있다 — 목표가 없는 날은 없어야 한다
+  const bottom = PM.tourOutlook({ accidents: 9, bestStreak: 5, streak: 0, dayNo: 50 });
+  assert.equal(bottom.now.id, 'relieved');
+  assert.ok(bottom.next && bottom.need, '해임 자리에 다음 목표가 없다');
 });
 
 test('계절·요일은 날짜에서 계산한다 — 여름·겨울 +1, 주말 일과 없음', () => {

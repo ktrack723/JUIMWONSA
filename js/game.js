@@ -16,7 +16,7 @@ import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } f
 import {
   PLACES, PARAM_LABELS, BAND_LABELS, band,
   slotsFor, weekdayOf, dayFraction, effectiveDifficulty, reportChance, TUNING,
-  GARA_BY_ID, GARA_TIERS, SLOTS, ABSENCE_KINDS, repBite,
+  GARA_BY_ID, GARA_TIERS, SLOTS, SLOT_BY_KEY, ABSENCE_KINDS, repBite, tourVerdict, tourOutlook,
   ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf,
 } from './params.js';
 import { AmbientPool } from './ambient.js';
@@ -190,7 +190,9 @@ function renderHud() {
   const s = state.engine.snapshot();
   $('#hud-date').textContent = `${s.date} (${s.weekday}) · 부임 ${s.dayNo}일차`;
   $('#hud-streak').textContent = `${s.streak}일 / ${s.goal}일`;
-  $('#hud-review').textContent = s.reviewDate;
+  $('#hud-review').textContent = `${s.reviewDate} (${s.daysLeft}일 남음)`;
+  renderOutlook(s);
+  renderLead(s);
   $('#hud-accidents').textContent = `${s.accidents}건`;
   // 병력은 오늘 부대에 있는 인원이다. 입원·이탈은 따로 센다 — 그 자리는 채워지지 않는다.
   $('#hud-unit').textContent = `${state.unit.name} · 병력 ${s.roster}/${ROSTER_SIZE}명`
@@ -737,7 +739,9 @@ function makeHandlers() {
     dayEnd: async (snap) => {
       renderHud(); renderTimeline(9); renderNotices();
       saveCampaign();
-      if (snap.promoted) return await showPromotion(snap);
+      // 임기가 끝났으면 그날로 심사다 — 진급이든 아니든. 100일이 지나도 계속 굴러가던 것을
+      // 여기서 닫는다(실측: 진급까지 중앙값 해병 649일 · 공군 360일이었다).
+      if (snap.promoted || snap.over) return await showReview(snap);
       const t = snap.today || { incidents: 0, accidents: 0, interventions: 0, moved: {} };
       // 「조용한 날」은 평판이 회복되는 날의 이름이다 — 개입까지 없어야 조용한 날이다.
       const events = t.incidents
@@ -767,17 +771,38 @@ async function runOneDay() {
   $('#btn-next-day').textContent = '다음 날 아침점호 ▶';
 }
 
-async function showPromotion(snap) {
-  const acc = snap.accidents;
+/**
+ * 임기 심사 — 100일째에 반드시 열린다.
+ *
+ * **성적표가 두 장인 것이 요점이다.** 위는 심사가 세는 것(사고 건수와 최장 연속)이고,
+ * 아래는 당신만 아는 것(끊은 관행, 끊은 부조리, 숨 쉬게 한 사람). 군은 아래를 안 센다 —
+ * 그게 이 게임이 100일 내내 해 온 말이고, 마지막 밤의 「묻힌 것」 장부가 그 말을 끝낸다.
+ *
+ * 그리고 여기가 **가라·부조리를 끊는 일에 종점 가치가 생기는 자리**다. 그전까지 그 일은
+ * 그날의 게이지를 한 칸 미는 것이 전부라, 임기가 끝나면 아무도 세어 주지 않았다.
+ */
+async function showReview(snap) {
+  const v = tourVerdict({ accidents: snap.accidents, bestStreak: snap.record.bestStreak });
+  const r = snap.record;
   $('#promo-text').innerHTML =
-    `<b>무사고 연속 ${snap.goal}일. ${escapeHtml(snap.date)} 부로 원사 진급 상신이 통과됐다.</b><br>` +
-    (acc ? `그동안 사고 ${acc}건을 딛고 온 길이다. 병사들은 아무도 축하한다는 말을 안 했지만, 오늘 배식줄이 이상하게 조용했다.`
-      : `부임 후 단 한 건도 터뜨리지 않았다. 완벽한 100일 — 심사장에서 아무도 그 말을 믿지 않았다.`) +
-    `<br>진급은 이 부대를 뜬다는 뜻이다. <b>오늘이 마지막 밤이다.</b>`;
+    `<b>${escapeHtml(snap.date)} — 주임원사 임기 ${snap.goal}일 만료. 심사 결과: `
+    + `<span class="verdict-${v.id}">${escapeHtml(v.label)}</span></b><br>${escapeHtml(v.line)}`;
+  $('#promo-sheet').innerHTML =
+    `<div class="sheet-block"><h4>심사표 — 군이 세는 것</h4>`
+    + row('무사고 최장 연속', `${r.bestStreak}일 / ${snap.goal}일`)
+    + row('사고 누계', `${snap.accidents}건`)
+    + `</div>`
+    + `<div class="sheet-block"><h4>그 밖에 당신이 한 일 — 심사표에는 없다</h4>`
+    + row('끊은 관행', `${r.garaCut}건`)
+    + row('끊은 부조리', `${r.abuseCut}건`)
+    + row('숨 쉬게 한 사람', `${r.rescued}명`)
+    + row('면담 · 점검 · 공지', `${r.counsels} · ${r.inspects} · ${r.notices}회`)
+    + `</div>`;
   panel('#promo-panel', true);
-  sfx.fanfare();
+  if (v.id === 'promoted') sfx.fanfare(); else sfx.trombone();
   await runFarewell();
 }
+const row = (k, val) => `<div class="sheet-row"><span>${escapeHtml(k)}</span><b>${escapeHtml(val)}</b></div>`;
 
 // ── 마지막 씬 — 환송회 ─────────────────────────────────
 // 거하게 차려지느냐 아무도 없느냐는 **행복도**가 정한다(engine.farewell → params.farewellTone).
@@ -838,7 +863,7 @@ async function runFarewell() {
   const sil = out.silence || {};
   const unknown = sil.unknown || 0;
   $('#farewell-text').innerHTML = `<b>${escapeHtml(sc.note)}</b><br>` +
-    `${escapeHtml(state.unit.name)} 근무 끝. 무사고 ${TUNING.goal}일 · 사고 누계 ${state.engine.snapshot().accidents}건.` +
+    `${escapeHtml(state.unit.name)} 근무 끝. 임기 ${TUNING.goal}일 · 무사고 최장 ${state.engine.snapshot().record.bestStreak}일 · 사고 누계 ${state.engine.snapshot().accidents}건.` +
     `<br><span class="dim">장부에 오른 사건 ${sil.reported || 0}건. `
     + `실제로 있었던 것은 ${sil.happened || 0}건이다 — 그중 ${sil.buried || 0}건은 그날 위로 안 갔고, `
     + (unknown > 0
@@ -924,6 +949,54 @@ function renderCost() {
     ? `오늘 개입 <b>${used}회</b> — 다음 한 번은 <b class="free">평판을 안 깎는다</b>.`
     : `오늘 개입 <b>${used}회</b> — 다음부터 <b class="cost">평판 −1</b>씩.`)
     + ` 지금 평판 <b>${rep}/10</b>이라 개입이 <b>${Math.round(repBite(rep) * 100)}%</b>쯤 먹힌다.`;
+}
+
+/**
+ * 지금 이대로면 무엇으로 끝나는가, 그리고 한 등급 위는 무엇이 필요한가.
+ *
+ * **이 게임의 목표는 부임 3주쯤에 한 번 죽는다** — 사고가 한 번 나면 무사고 100일은
+ * 산술적으로 불가능해지고(실측: 첫 사고의 중앙값이 20~30일차), 남은 일흔 날은 이미 못 딴
+ * 상을 향해 걷는 시간이 된다. 그때 목표가 자리를 옮겨 앉는 것을 화면이 말해 줘야 한다.
+ */
+function renderOutlook(snap) {
+  const el = $('#hud-outlook');
+  if (!el) return;
+  const o = tourOutlook({
+    accidents: snap.accidents, bestStreak: snap.record.bestStreak,
+    streak: snap.streak, dayNo: snap.dayNo,
+  });
+  el.innerHTML = `<span class="hud-k">이대로 끝나면</span>`
+    + `<b class="verdict-${o.now.id}">${escapeHtml(o.now.label)}</b>`
+    + (o.next
+      ? `<i>${escapeHtml(o.next.label)}까지 — ${escapeHtml(o.need)}${o.reachable ? '' : ' <b>(이 임기에는 못 닿는다)</b>'}</i>`
+      : '<i>더 올라갈 자리가 없다.</i>');
+}
+
+/**
+ * 오늘의 낌새 — 브리핑에 흘러든 말 한 조각.
+ *
+ * **이 게임에서 화면이 「오늘 뭘 해라」에 제일 가깝게 말하는 자리다.** 그전까지 하루는
+ * 아무 계기 없이 시작했다: 계기판은 어제와 같고, 명부는 비어 있고, 어디를 왜 털어야 하는지
+ * 화면이 한 번도 말해 주지 않았다(실측: 성실하게 굴린 공군 20일에 가라 확인 0건).
+ *
+ * 주는 것은 **자리와 시간**뿐이다. 무엇이 도는지는 여전히 들이닥쳐야 알고 — 그게 이 게임의
+ * 틀이다 — 이 말이 맞는 말인지도 가 봐야 안다. 얼마나 맞는 편인지만 평판이 말해 준다.
+ */
+function renderLead(snap) {
+  const el = $('#hud-lead');
+  if (!el) return;
+  const lead = snap.lead;
+  el.classList.toggle('hidden', !lead);
+  if (!lead) return;
+  const place = PLACES[lead.place]?.label || lead.place;
+  const slot = SLOT_BY_KEY[lead.slot];
+  const bite = Math.round(repBite(snap.params.rep) * 100);
+  el.innerHTML = `<span class="hud-k">오늘의 낌새</span>`
+    + `<b>${escapeHtml(place)} · ${escapeHtml(slot?.label || lead.slot)} ${escapeHtml(slot?.time || '')}</b>`
+    + `<i>그 시간에 거기서 뭔가 있다는 말이 아침에 돌았다. 무엇인지는 아무도 안 말했다.`
+    + ` <b>이 부대에서 이런 말은 열에 ${Math.round(bite / 10)}쯤 맞는다</b> (평판 ${snap.params.rep}/10).`
+    + `<br>근거를 갖고 간 걸음이라 <b>빈손으로 나와도 분위기는 안 깎인다.</b>`
+    + ` 다만 들이닥치면 각이 잡혀 <b>가라가 한 칸 내려간다</b> — 그게 이 부대에 이득인지는 당신이 판단한다.</i>`;
 }
 
 function renderInspectClock() {
@@ -1013,7 +1086,10 @@ async function doInspect() {
   const saved = out.rescued.length
     ? '\n' + out.rescued.map(m => `${m.name}은(는) 오늘 처음으로 숨을 쉬었다. 멘탈 +${TUNING.abuse.rescue}`).join('\n')
     : '';
-  const bill = out.wasted ? '\n(헛걸음이다 — 행복 −1)' : '\n(뭔가 나온 걸음이라 분위기는 안 깎였다)';
+  const bill = out.wasted ? '\n(헛걸음이다 — 행복 −1)'
+    : out.warranted && !out.spotted.length && !out.caught.length
+      ? '\n(빈손이지만 아침에 말이 돌던 자리다 — 근거가 있던 걸음이라 분위기는 안 깎였다)'
+      : '\n(뭔가 나온 걸음이라 분위기는 안 깎였다)';
   await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}${grabbed}${cuffed}${surfaced}${saved}${bill}`, { typed: false });
   renderHud(); renderCost();
   saveCampaign();

@@ -19,7 +19,7 @@
   <header id="topbar">
     <div class="classif">군사 II급 비밀 // 인사기록 및 부대 동향 // 무단 열람 및 복제 금지</div>
     <div class="toolbar">
-      <div class="marquee"><span>부대 운영 단말 v1.0 · 무사고 연속 100일 달성 시 원사 진급 심사 상신 · 사고 발생 시 무사고 기록 0일로 회귀 · 임기 제한 없음 · 날짜는 되돌아가지 않음 · 병사는 전역할 때까지 남아서 당신을 지켜봄</span></div>
+      <div class="marquee"><span>부대 운영 단말 v1.0 · 주임원사 임기 100일 · 무사고 연속 100일 달성 시 원사 진급 상신 · 사고 발생 시 무사고 기록 0일로 회귀 · 임기 만료일에 심사는 반드시 열림 · 날짜는 되돌아가지 않음 · 병사는 전역할 때까지 남아서 당신을 지켜봄</span></div>
       <button id="btn-console" class="btn95 tiny" type="button" title="LLM 호출 기록">통신기록</button>
       <button id="btn-bgm" class="btn95 tiny" type="button">음향 ON</button>
     </div>
@@ -29,8 +29,9 @@
     <!-- 부팅 -->
     <section id="screen-boot" class="screen">
       <h1 class="title-main">무사고 100일<br><small>주임원사 · 부대 운영 단말</small></h1>
-      <p class="subtitle">만년상사. 이번이 마지막 진급 기회다. <b>무사고 100일</b>을 찍으면 원사다.<br>
-        사고가 터지면 카운터는 0으로 돌아간다. 병사들은 그대로 남아서, 당신을 지켜본다.</p>
+      <p class="subtitle">만년상사. 이번이 마지막 진급 기회다. <b>임기는 100일</b>이고, 그 안에 <b>무사고 100일</b>을 찍으면 원사다.<br>
+        사고가 터지면 카운터는 0으로 돌아간다 — 그래도 <b>100일째에 심사는 열린다.</b> 갈리는 것은 성적이다.<br>
+        병사들은 그대로 남아서, 당신을 지켜본다.</p>
       <div class="panel95 boot-panel" data-title="부임 신고 및 단말기 인증"><span class="win-status">회선 대기</span>
         <p class="warn">본 단말은 <b>전부</b> 대규모언어모형으로 구동된다. 인증키 없이는 개방되지 않는다.<br>
         부대 규정과 파라미터는 고정이지만, <b>병사들이 실제로 무슨 말을 하고 무슨 일이 벌어지는지는 전량 실시간 연산</b>이다.<br>
@@ -63,7 +64,7 @@
     <section id="screen-unit" class="screen hidden">
       <h2 class="section-title">부임지 선택 <span class="doc-no">인사명령 제100호</span></h2>
       <p class="section-sub">군을 하나 골라 부임한다. <b>부임일은 현실의 오늘로부터 100일 전으로 소급 기재된다</b> —
-        한 번도 안 터뜨린 완주는 정확히 오늘 진급 심사를 맞는다. 터뜨리면 심사일이 미래로 밀린다.</p>
+        <b>심사는 그날 열린다 — 터뜨렸든 아니든.</b> 갈리는 것은 성적이다.</p>
       <div id="unit-cards" class="unit-cards"></div>
     </section>
 
@@ -74,12 +75,18 @@
           <div class="panel95 hud" data-title="상황판">
             <div id="hud-date" class="hud-date"></div>
             <div class="hud-row"><span class="hud-k">무사고</span><span id="hud-streak" class="hud-v big"></span></div>
-            <div class="hud-row"><span class="hud-k">진급 심사일</span><span id="hud-review" class="hud-v"></span></div>
+            <div class="hud-row"><span class="hud-k">임기 만료 · 심사일</span><span id="hud-review" class="hud-v"></span></div>
             <div class="hud-row"><span class="hud-k">사고 누계</span><span id="hud-accidents" class="hud-v"></span></div>
+            <!-- 지금 이대로 끝나면 무엇이고, 한 등급 위는 무엇이 필요한가.
+                 진급은 첫 사고에 닫히므로, 목표가 자리를 옮겨 앉는 것이 보여야 한다. -->
+            <div id="hud-outlook" class="hud-outlook"></div>
             <div class="hud-row"><span class="hud-k">부대</span><span id="hud-unit" class="hud-v"></span></div>
             <!-- 검열 예고 — 주임원사가 검열관에게 가진 유일한 우위다. 날짜는 알고 내용은 모른다.
                  예고 기간 밖에서는 이 줄 자체가 없다. -->
             <div id="hud-censor" class="hud-censor hidden"></div>
+            <!-- 오늘의 낌새 — 아침 브리핑에 흘러든 말 한 조각. 자리와 시간만 알려 준다.
+                 무엇이 도는지는 여전히 들이닥쳐야 알고, 맞는 말인지도 가 봐야 안다. -->
+            <div id="hud-lead" class="hud-lead hidden"></div>
           </div>
           <!-- 부대 계기판 — 다섯 파라미터 상시 노출. 수치는 화면 몫이고,
                프롬프트에는 여전히 밴드만 나간다 (숫자가 새면 테스트가 깨진다). -->
@@ -202,7 +209,8 @@
                 검열 전에 폭탄을 뽑는 유일한 방법이다.<br>
                 <b>같은 걸음에 사람 쪽도 본다</b> — 그 자리 그 시간에 벌어지고 있는 부조리는 <b>현장에서 끊긴다</b>
                 (갈등 −1, 그 피해자는 숨을 쉰다). <b class="tier-crime">형사건</b>이면 가해자를 그 자리에서 데려간다.<br>
-                <b>성과가 하나라도 있으면 행복은 안 깎인다</b> — 값이 붙는 것은 헛걸음이다.<br>
+                <b>성과가 하나라도 있으면 행복은 안 깎인다</b> — 값이 붙는 것은 헛걸음이다.
+                <b>아침 낌새가 가리킨 자리·시간</b>이면 빈손으로 나와도 헛걸음이 아니다.<br>
                 장소 이름 옆에 적힌 것은 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
               <div class="radio-btns">
                 <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1)</button>
@@ -242,9 +250,11 @@
             </div>
           </div>
 
-          <!-- 진급 -->
-          <div id="promo-panel" class="panel95 radio-panel hidden" data-title="진급 심사 결과">
+          <!-- 임기 심사 — 100일이 끝나면 반드시 온다. 진급이든 아니든 여기서 갈린다.
+               성적표가 두 장인 것이 요점이다: 심사가 세는 것과, 당신만 아는 것. -->
+          <div id="promo-panel" class="panel95 radio-panel hidden" data-title="임기 심사 결과">
             <p id="promo-text" class="radio-note"></p>
+            <div id="promo-sheet" class="promo-sheet"></div>
           </div>
 
           <!-- 환송회 — 마지막 밤. 거하게 차려지느냐 아무도 없느냐는 행복도가 정한다 -->
