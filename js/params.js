@@ -41,7 +41,6 @@ export const TUNING = {
     hardSloppyPer: 0.015, // 힘든 일을 대충 하면 다친다 — max(0, 가라+난이도−10) 1당.
                           // 0.03이던 것을 반으로 내렸다: 난이도 8 부대가 하루 0.89건이라
                           // 하루가 7.5콜이 되고 플레이어가 매일 지침을 쓰는 게임이 됐다(실측).
-    dumbSloppyPer: 0.02,  // 대충할 머리가 안 됨 — max(0, 가라−지능) 1당
     suppressAt: 5,        // 갈등이 이 이상이면 잔사고가 줄어든다 (군기가 눌러 놓는다)
     suppress: 0.02,       // 억제분
     big: { open: 8, per: 0.02 },  // 8을 넘기면 큰 사고 전용 위험이 열린다
@@ -65,15 +64,57 @@ export const TUNING = {
   // 이중 과금이다. 달력이 하는 일은 둘로 줄였다 — 힘든 날은 싸울 기력이 없어 갈등이
   // 내려가고(원래 주석 그대로다), 평소보다 편한 날(주말·비수기)은 숨통이 트인다.
   drift: {
-    garaHigh: 7, garaLow: 3,      // 가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
+    // garaHigh를 7에서 6으로 내렸다. 이 게임의 **코어 딜레마의 위쪽 절반**이 여기 걸려 있는데,
+    // 7은 100일 중 4~9일만 닿는 자리라 「가라를 놔두면 병사가 편하다」가 사실상 안 켜졌다.
+    // 6이면 해병 21일 · 공군 8일 — 놔두기로 한 선택이 실제로 값을 치러 주는 빈도다.
+    garaHigh: 6, garaLow: 3,      // 가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
     hardOver: 1,                  // 평소보다 이만큼 힘든 날 — 싸울 기력도 없다 (갈등↓)
     easyUnder: 1,                 // 평소보다 이만큼 편한 날 — 숨통이 트인다 (행복↑)
-    happyLow: 3, happyHigh: 8,    // 행복↓ → 갈등↑, 행복↑ → 갈등↓
+    // happyHigh를 8에서 7로 내렸다. 8은 **어떤 플레이로도 안 닿는 자리**였다(100일 × 4판 실측:
+    // 행복이 도달한 최고치가 시작값 5였다). 밴드가 「high」로 읽히는 자리가 7부터인데 규칙이
+    // 켜지는 자리가 8이면, 계기판이 high라고 말하는 동안 아무 일도 안 일어난다.
+    happyLow: 3, happyHigh: 7,    // 행복↓ → 갈등↑, 행복↑ → 갈등↓
     conflictHigh: 7,              // 갈등↑ → 행복↓
+
+    // ── 제자리 회복의 속도 — 축마다 다르다 (실측으로 갈랐다) ──────
+    //
+    // 제자리 회복을 **매일** 붙였더니 바늘이 얼었다. 판정은 하루 한 칸까지만 밀 수 있고
+    // (capDay) 회복도 하루 한 칸이라, 둘이 정확히 상쇄된 것이다. 100일 × 4판 실측:
+    //   가라 1~4 (시작 4)  ·  행복 0~5 (시작 5)  ·  갈등 3~8 (시작 3)
+    // 즉 **시작값이 곧 천장**이었다. 계기판을 상시로 열어 놓고 「다 보이는 바늘을 어디부터
+    // 돌보느냐가 게임」이라고 해 놨는데, 돌봐서 좋아지는 축이 하나도 없었다.
+    //
+    // 그래서 축을 성격으로 가른다. 기준은 「판정이 이 축을 올려 주는가」다:
+    //   · 행복 — 심판은 행복을 **한 번도 up으로 안 찍는다**(§3.1-d 실측: 48개 중 0개).
+    //     이 축은 제자리 회복이 **유일한 상방**이라 매일 붙어야 한다.
+    //   · 가라·갈등 — 심판이 up 쪽으로 기우는 축이다. 매일 당기면 밀린 것이 다음 날 정확히
+    //     돌아와서 아무 일도 안 일어난다. **이틀 조용해야** 한 칸 돌아온다.
+    // 「조용하다」는 그 축이 그날 사유로 안 움직였다는 뜻이다(판정·개입·검열 전부 포함).
+    restDays: { happy: 1, gara: 2, conflict: 2 },
+    // 그리고 **멀리 밀린 축은 매일 당긴다.** 제자리에서 이만큼 벌어지면 restDays를 안 기다린다 —
+    // 「제자리로 돌아온다」는 거리에 비례하는 힘이라야 뜻이 맞는다. 상수 회복은 둘 중 하나가
+    // 된다: 판정보다 세면 바늘이 얼고(예전), 약하면 벽까지 걸어가서 눌러앉는다(고치는 중에 겪었다).
+    // 가까이서 느슨하고 멀리서 팽팽한 것이 스프링이고, 그래야 바늘이 **폭을 갖고 논다.**
+    restFar: 2,
   },
 
   // 평판 — LLM이 못 건드린다. 개입(면담·점검·공지)마다 −1, 조용한 날 +1 회복.
-  rep: { perIntervention: -1, quietDay: +1 },
+  //
+  // **하루 첫 개입은 안 깎는다.** 개입마다 −1이고 회복이 「개입 0회인 날 +1」이면, 하루 한 번씩만
+  // 손대도 순 −1/일이라 열흘이면 평판이 0이 된다. 실측(100일): 방치는 평판 10, 하루 한 번이라도
+  // 개입하는 플레이는 평판 0 — **중간이 없었다.** 그러면 게임의 절반(개입 레버 셋)이 못 쓰는
+  // 물건이 되고, 「개입의 화폐」라던 축이 사실상 「개입했냐 안 했냐」의 깃발 하나로 납작해진다.
+  // 하루 한 번은 주임원사의 일과다. 값이 붙는 것은 **또 오는 것**이다.
+  //
+  // 그리고 **평판에는 코드 효과가 있어야 한다.** 설계는 오래도록 「평판이 낮으면 지침
+  // 이행률·상담 수용도가 떨어져 모든 레버가 무뎌진다」고 말해 왔는데, 코드에는 그 구현이
+  // 한 줄도 없었다 — 평판이 가는 곳은 프롬프트의 밴드 한 줄(complianceOf·honestyOf)뿐이라
+  // **판정이 없는 자리에서는 평판이 아무 일도 안 했다.** 그 틈이 밸런스를 통째로 뒤집었다:
+  // 하루 세 번씩 개입하는 플레이가 평판 0·행복 0으로 완주율 75%를 찍었다(실측). 값을 다 치르고
+  // 아무 벌도 안 받은 것이다.
+  // bite는 평판 밴드 다섯에 대응하는 **개입의 실효 계수**다. 씹히는 주임원사의 점검은
+  // 헛걸음이 되고(미리 치운다), 그의 면담은 안 통한다(듣는 시늉만 한다).
+  rep: { perIntervention: -1, quietDay: +1, freePerDay: 1, bite: [0.25, 0.55, 0.8, 1, 1] },
 
   // 전우애 — 부대의 완충재. 갈등이 사건·사고로 번지는 것을 흡수한다.
   // 빡센 부대일수록 높다(같이 굴렀으니까). 편한 부대일수록 낮다 — 서로 남이다.
@@ -123,12 +164,32 @@ export const TUNING = {
     // 플레이를 해도 최저 멘탈이 0으로 갔다). 6으로 내리면 전우애가 이 눈금을 갈라 놓는다 —
     // 끈끈한 부대는 평범한 분위기(5)만 돼도 사람이 알아서 회복되고, 서로 남인 부대는
     // 7 이상이라야 회복된다. 그래서 **얕은 부대에서는 면담이 유일한 회복 통로**가 된다.
-    driftHappyHigh: 6, driftHappyLow: 3,    // 부대가 밝으면 +1, 어두우면 −1 (전우애가 이 눈금을 민다)
+    // recoverAt은 **회복이 켜지는 눈금**이다. 예전 이름은 driftHappyHigh였는데, 그 상수를
+    // 읽는 코드가 어디에도 없었다 — 회복이 mentalDrift에서 mentalPass로 옮겨 가면서 게이트가
+    // 「행복 ≥ 시작값」으로 하드코딩됐고, 상수만 이름을 달고 남았다(절제 감도 0.000).
+    // 이름을 역할에 맞추고 mentalPass가 실제로 이걸 읽게 했다.
+    recoverAt: 5, driftHappyLow: 3,         // 부대가 이 이상이면 회복이 켜진다 / 이 이하면 −1
     driftConflictHigh: 7,                   // 눌린 부대는 추가로 −1 (여기도 전우애가 민다)
     startComradePer: 0.2,                   // 전우애 1당 전입 멘탈 굴림의 중심이 이만큼 오른다
     incidentHit: -1,                  // 사건에 연루되면
     escalationHit: -1,                // 그 사건이 사고가 되면 추가로
     counsel: +1,                      // 면담(상담) 한 번에
+    // 하락에도 **인원이 있다.** 사유 하나당 이만큼이 그날 밤에 무너진다 — 누가 무너질지는
+    // 모른다(무작위다). 예전에는 하락이 **전원**이었고, 그게 이 경제를 혼자 부수고 있었다:
+    // 분위기가 하루 나빠지면 16점이 나가는데 회복은 하루 1~2.5명이라 **하루의 하락이 열흘치
+    // 회복**이었다. 실측(공군 100일): 행복이 3에 닿은 사흘 만에 멘탈 총합이 84 → 37로 반토막
+    // 났고, 그 뒤로는 무엇을 해도 안 돌아왔다.
+    // 「분위기가 나쁘면 다 같이 나빠진다」는 말은 맞지만, **같은 밤에 열여섯이 동시에
+    // 무너지지는 않는다.** 무너지는 것은 그날 하필 그 사람이다. 그게 이 게임이 하려던
+    // 「한 명씩 조용히」이기도 하다.
+    fallPer: 2,
+    // 그리고 **하한 하나.** 전우애가 아무리 얕아도 하루 한 명은 저절로 돌아온다.
+    // 없이 재 봤더니 얕은 부대(전우애 2)는 정원이 0.5명/일인데 사건 연루가 하루 1~2명씩
+    // 꽂혀서, 100일이면 열여섯 명 전원이 멘탈 0에 눌러앉았다(실측: 공군은 30일차에 전원 0,
+    // 남은 70일을 거기서 보냈다). 그러면 「멘탈 2 이하는 큰 사고의 문」이라던 예외적 위험이
+    // **상시 켜진 기본값**이 되고(위험이 열린 날 93/100), 완주율이 0%가 된다.
+    // 얕은 부대의 페널티는 회복이 **느린 것**이지 없는 것이 아니다 — 시간은 어디서나 약이다.
+    recoverMin: 1,
     dangerAt: 2,                      // 이 이하로 떨어진 병사가 있으면 큰 사고 전용 위험이 열린다
     // 위험 눈금 1칸당. 0.02에서 0.006으로 내렸다 — 이 위험은 **슬롯마다** 굴러서,
     // 한 명이 바닥나면 하루 아홉 번 굴린 것이 중대 사건 0.5건/일이 됐다. 그러면 얕은 부대는
@@ -237,6 +298,8 @@ const REP_GRADES = {
 const repIdx = rep => BAND_LABELS.indexOf(band(rep));
 export const honestyOf = rep => REP_GRADES.honesty[repIdx(rep)];
 export const complianceOf = rep => REP_GRADES.compliance[repIdx(rep)];
+/** 지금 평판에서 개입 하나가 실제로 먹히는 정도 (0~1). 「모든 레버가 무뎌진다」의 기계판이다. */
+export const repBite = rep => TUNING.rep.bite[repIdx(rep)];
 
 // ── 날짜 규칙 — 현실 날짜 그대로 기입한다 ─────────────────
 // 부임일 = 플레이 시작한 현실의 오늘 − 100일. 게임 1턴 = 달력 1일.
@@ -670,12 +733,15 @@ export function syncGaraList(active, target, { banned = [], rng = Math.random } 
  *     지능 낮은 부대가 재판급에 손대면 그게 그 부대의 사망 원인이 되는 이유다.
  * id를 안 주면 옛 계산 그대로다 — 등급도 난이도도 모르는 일반 굴림.
  */
-export function spotChance(intel, id = null) {
+export function spotChance(intel, id = null, rep = null) {
   const G = TUNING.gara;
   const g = id ? GARA_BY_ID[id] : null;
   const hide = g ? (G.tierHide[g.tier] ?? 0) : 0;
   const clumsy = g && g.need > intel ? G.overreach : 0;
-  return Math.max(G.spotFloor, Math.min(G.spotCeil, G.spotBase - intel * G.spotIntelPer + hide + clumsy));
+  const raw = Math.max(G.spotFloor, Math.min(G.spotCeil, G.spotBase - intel * G.spotIntelPer + hide + clumsy));
+  // 평판이 낮으면 **오기 전에 안다.** 주임원사가 또 돈다는 소문이 먼저 도니까,
+  // 문을 열었을 때는 이미 치워져 있다. rep을 안 주면 옛 계산 그대로다.
+  return rep == null ? raw : raw * repBite(rep);
 }
 
 /**
@@ -721,11 +787,11 @@ export const garaOverreach = (active, intel) => active.filter(id => (GARA_BY_ID[
  * 그래서 명부는 두 방향으로 틀릴 수 있다. 낡아서 틀리고(안 가 본 자리는 그날의 사실이 남는다),
  * 못 봐서 빈다(지능 높은 부대는 절반쯤 숨긴다). 그게 이 게임에 남은 마지막 안개다.
  */
-export function inspectGara({ active, known = [], placeKey, slotKey = null, intel, on, rng = Math.random }) {
+export function inspectGara({ active, known = [], placeKey, slotKey = null, intel, rep = null, on, rng = Math.random }) {
   // 자리와 시간이 **둘 다** 맞는 것만 눈에 들어온다. 같은 생활관이라도 점호 때가 아니면
   // 대리 점호는 거기 없다 — 멎어서가 아니라 지금이 그 시간이 아니라서다.
   const here = garaAt(active, placeKey, slotKey);
-  const spotted = here.filter(id => rng() < spotChance(intel, id));
+  const spotted = here.filter(id => rng() < spotChance(intel, id, rep));
   // 명부 정리 — 「들어가 봤으니 안다」는 **볼 수 있었던 것에만** 성립한다.
   // 이 자리 것이라도 지금 시간대에 안 도는 것은 있는지 없는지 알 수가 없으므로 그대로 둔다.
   // 이 한 줄이 없으면 아무 때나 들이닥치는 것만으로 명부가 저절로 정리돼서, 시간을 맞추는
@@ -954,18 +1020,21 @@ export function comradeEffect(comrade) {
 }
 
 /**
- * overreach·heat는 **가라 목록이 있을 때만** 들어온다.
- *   overreach — 이 부대가 감당 못 하는 관행의 개수(garaOverreach). 주면 `max(0, 가라 − 지능)`
- *               자리를 대신한다 — 그 항은 목록이 없던 시절의 근사치였고, 이제 실물이 있다.
- *               두 개를 같이 세면 같은 것을 두 번 세는 것이라 대체다.
+ * overreach·heat는 **가라 목록이 있을 때만** 들어온다. 지금은 엔진이 언제나 준다.
+ *   overreach — 이 부대가 감당 못 하는 관행의 개수(garaOverreach). 「개수가 머리보다 많으면
+ *               어설프다」(`max(0, 가라 − 지능)`)를 대체한 항이다 — 그건 목록이 없던 시절의
+ *               근사치였고, 이제 어느 관행이 어떻게 어설픈지를 표가 안다.
+ *               **그 옛 항(roll.dumbSloppyPer)은 지웠다.** 엔진이 언제나 overreach를 넘기게 된
+ *               뒤로 한 번도 안 읽혔는데 튜닝표에는 남아 있었다(절제 감도 0.000) — 밸런싱할 때
+ *               만지면 아무 일도 안 일어나는 수치가 표에 앉아 있는 것이 제일 나쁘다.
  *   heat      — 돌고 있는 것들의 등급 무게 합(garaWeight). 재판급은 개수 하나라도
  *               그 자체로 폭탄이라, 개수만 보는 눈금이 못 잡는 위험을 이 항이 든다.
- * 둘 다 안 주면(테스트·옛 호출) 예전 수식이 한 글자도 안 바뀐 채 그대로 나온다.
+ * 둘 다 안 주면(테스트·옛 호출) 그 항이 0인 것과 같다.
  */
-export function incidentRisk({ gara, conflict, minMental = 10, overreach = null, heat = 0 }, { intel, macho, difficulty, comrade }) {
+export function incidentRisk({ gara, conflict, minMental = 10, overreach = 0, heat = 0 }, { intel, macho, difficulty, comrade }) {
   const R = TUNING.roll, M = TUNING.mental, G = TUNING.gara;
   const C = comradeEffect(comrade);
-  const clumsy = overreach == null ? Math.max(0, gara - intel) * R.dumbSloppyPer : overreach * G.overreachRisk;
+  const clumsy = overreach * G.overreachRisk;
   const small = Math.max(0,
     R.base
     + macho * R.machoPer
@@ -1079,6 +1148,37 @@ export function rollMental(character, rng = Math.random, comrade = TUNING.comrad
  * 하루 마감의 멘탈 드리프트 — 부대 분위기가 전원을 같은 방향으로 쓸어간다.
  * 개인차는 여기가 아니라 사건 연루(−)와 상담(+)이 만든다.
  */
+/**
+ * 오늘 분위기가 사람을 미는 **사유의 수** (0·1·2). 전우애가 두 눈금을 다 민다.
+ * 사유가 몇이냐가 그날 밤 무너지는 인원을 정한다 — 깊이가 아니라 넓이로 온다.
+ */
+export function mentalReasons(params, comrade = TUNING.comrade.neutral) {
+  const M = TUNING.mental;
+  const bond = Math.max(0, comrade - TUNING.comrade.neutral) * TUNING.comrade.mentalPer;
+  let n = 0;
+  if (params.happy <= M.driftHappyLow - bond) n += 1;
+  if (params.conflict >= M.driftConflictHigh + bond) n += 1;
+  return n;
+}
+
+/**
+ * 오늘 밤 무너지는 인원. **사유의 수만이 아니라 깊이도 본다.**
+ *
+ * 사유 하나당 fallPer명이고, 거기에 **문턱을 얼마나 지나쳤는가**가 더해진다.
+ * 깊이가 없으면 「행복 3」과 「행복 0」이 같은 부대가 된다 — 그리고 실측에서 정확히 그게
+ * 문제였다: 하루 세 번씩 개입해 행복을 0으로 태운 플레이가 멘탈 6.8을 유지하면서 완주율
+ * 1위를 찍었다(가라를 0으로 눌러 놓으면 사고 롤이 죽으니까). 부대를 쥐어짜는 것이 최적이면
+ * 이 게임은 「사고 날 것만 잡되 너무는 안 잡는」 이야기가 아니게 된다.
+ * 바닥까지 눌린 부대에서는 사람이 **더 빨리** 무너져야 한다.
+ */
+export function mentalFall(params, comrade = TUNING.comrade.neutral) {
+  const M = TUNING.mental;
+  const bond = Math.max(0, comrade - TUNING.comrade.neutral) * TUNING.comrade.mentalPer;
+  const deep = Math.max(0, (M.driftHappyLow - bond) - params.happy)
+    + Math.max(0, params.conflict - (M.driftConflictHigh + bond));
+  return mentalReasons(params, comrade) * M.fallPer + Math.round(deep);
+}
+
 export function mentalDrift(mental, params, comrade = TUNING.comrade.neutral) {
   const M = TUNING.mental;
   // 전우애가 세 눈금을 전부 민다. 끈끈한 부대(전우애 10)는 행복 1 이하라야 사람이 무너지고
@@ -1110,8 +1210,11 @@ export function mentalDrift(mental, params, comrade = TUNING.comrade.neutral) {
  * 그러면 그 부대는 평판이 허락하는 하루 한 번의 면담으로 정확히 본전을 치는 게임이 된다 —
  * 여유가 한 칸도 없어서 사고가 한 번 나면 그대로 나선이다(실측: 완주율 0%).
  */
-export function recoverCount(comrade, rng = Math.random) {
-  const n = Math.max(0, (comrade ?? TUNING.comrade.neutral) * TUNING.comrade.recoverPer);
+export function recoverCount(comrade, rng = Math.random, { warm = true } = {}) {
+  const C = TUNING.comrade, M = TUNING.mental;
+  // 하한은 언제나 붙는다 — **시간은 어디서나 약이다.** 그 위로 전우애 몫이 얹히는데,
+  // 그건 부대가 평소 이상일 때만이다(warm): 서로 챙기는 것은 여유가 있을 때 하는 일이다.
+  const n = warm ? Math.max(M.recoverMin, (comrade ?? C.neutral) * C.recoverPer) : M.recoverMin;
   return Math.floor(n) + (rng() < n % 1 ? 1 : 0);
 }
 
@@ -1124,9 +1227,23 @@ export function recoverCount(comrade, rng = Math.random) {
  */
 export function mentalPass(soldiers, params, comrade = TUNING.comrade.neutral, rng = Math.random) {
   const M = TUNING.mental;
-  const out = soldiers.map(s => mentalDrift(s.mental ?? M.default, params, comrade));
-  if (params.happy < TUNING.start.happy) return out;
-  const n = recoverCount(comrade, rng);
+  const out = soldiers.map(s => s.mental ?? M.default);
+  // 하락 — 사유 하나당 fallPer명이 그날 밤에 무너진다. **누구인지는 모른다.**
+  // 아직 남아 있는 사람 중에서 뽑는다: 이미 바닥난 사람을 다시 뽑아 봐야 아무 일도 안 난다.
+  const fall = mentalFall(params, comrade);
+  if (fall > 0) {
+    const pool = out.map((m, i) => [m, i]).filter(([m]) => m > SCALE.min).map(([, i]) => i);
+    for (let k = 0; k < fall && pool.length; k++) {
+      const at = Math.floor(rng() * pool.length);
+      out[pool[at]] = clamp(out[pool[at]] - 1);
+      pool.splice(at, 1);
+    }
+  }
+  // 회복 게이트를 **전부 아니면 전무**로 두면 안 된다. 예전에는 「행복 ≥ 5」에서만 회복이
+  // 켜졌는데, 100일을 굴려 보면 부대의 실제 평소는 행복 3~4다 — 즉 이 게임이 사는 자리에서
+  // 회복이 꺼져 있었다. 그래서 하락(전원)만 남고, 열여섯 명이 전부 멘탈 0에 눌러앉았다.
+  // 이제 하한만큼은 언제나 돌아오고, 부대가 평소 이상일 때 전우애 몫이 얹힌다.
+  const n = recoverCount(comrade, rng, { warm: params.happy >= M.recoverAt });
   if (!n) return out;
   // 제일 힘든 놈부터. 이미 평상 상태인 사람은 회복할 것이 없다.
   const order = out.map((m, i) => [m, i]).filter(([m]) => m < M.start.base).sort((a, b) => a[0] - b[0]);
@@ -1136,9 +1253,30 @@ export function mentalPass(soldiers, params, comrade = TUNING.comrade.neutral, r
 
 /** 면담(상담) 한 번의 회복. */
 export const counselMental = mental => clamp(mental + TUNING.mental.counsel);
-/** 사건 연루 한 번의 타격. escalated면 더 깎인다. */
-export const incidentMental = (mental, escalated) =>
-  clamp(mental + TUNING.mental.incidentHit + (escalated ? TUNING.mental.escalationHit : 0));
+/**
+ * 그 면담이 **먹혔는가.** 평판이 정한다 — 씹히는 주임원사 앞에서는 듣는 시늉만 한다.
+ * 안 먹혀도 개입 값(평판)은 이미 치렀다: 불려간 것 자체가 소문이라서다.
+ */
+export const counselTakes = (rep, rng = Math.random) => rng() < repBite(rep);
+/**
+ * 사건 연루 한 번의 타격. **잔사건에 이름이 오르는 것은 군생활이지 상처가 아니다.**
+ *
+ * 예전에는 사건이면 무조건 −1이었다. 재 보니 그것 하나가 멘탈 경제를 통째로 무너뜨리고
+ * 있었다(100일 실측): 해병은 사건 95건에 연루 연인원 142명 — 부대 전체 멘탈 총량이 96점인데
+ * **타격만 142점**이었다. 분위기 하락 54점을 더하면 196점이 나가고, 회복 정원은 아무리 좋아야
+ * 하루 2.5명이다. 그래서 어느 플레이를 해도 50일이면 열여섯 명 전원이 0에 눌러앉았고,
+ * 「멘탈 2 이하는 큰 사고의 문」이라던 예외적 위험이 100일 중 65~93일 열려 있는 기본값이 됐다.
+ *
+ * 하루에 한 번씩 뭔가 있는 것이 군대다. 족구하다 발목이 접질린 자리에 이름이 있었다고
+ * 사람이 상하지는 않는다. 남는 것은 **중대 사건에 연루된 것**과 **그 사건이 사고가 된 것**이다.
+ * 그래서 escalationHit도 여기서 처음으로 제 일을 한다 — 예전에는 이미 바닥난 사람에게
+ * 한 칸 더 얹는 항이라 절제해도 게임이 안 움직였다(감도 0.001).
+ */
+export const incidentMental = (mental, escalated, tier = 'major') => {
+  const M = TUNING.mental;
+  const d = (tier === 'major' ? M.incidentHit : 0) + (escalated ? M.escalationHit : 0);
+  return clamp(mental + d);
+};
 
 /** 명부에서 제일 낮은 멘탈 — 큰 사고 위험의 입력이다. 빈 명부면 안전값. */
 export const minMentalOf = roster =>
@@ -1205,9 +1343,15 @@ export function capDay(params, dawn) {
   return out;
 }
 
-/** 개입 하나(면담·점검·공지)의 평판 비용. 순수 코드 — 개입 횟수가 곧 평판이다. */
-export function applyIntervention(params) {
-  return { ...params, rep: clamp(params.rep + TUNING.rep.perIntervention) };
+/**
+ * 개입 하나(면담·점검·공지)의 평판 비용. 순수 코드 — 개입 횟수가 곧 평판이다.
+ * `nth`는 **오늘 몇 번째 개입인가**(1부터)다. 하루 첫 몇 번(TUNING.rep.freePerDay)은 안 깎인다:
+ * 주임원사가 하루에 한 번 뭘 하는 것은 일과지 소문이 아니다. 값이 붙는 것은 **또 오는 것**이다.
+ * nth를 안 주면 옛 호출 그대로 언제나 −1이다.
+ */
+export function applyIntervention(params, nth = Infinity) {
+  const free = nth <= (TUNING.rep.freePerDay || 0);
+  return { ...params, rep: clamp(params.rep + (free ? 0 : TUNING.rep.perIntervention)) };
 }
 
 /**
@@ -1223,7 +1367,36 @@ export function applyIntervention(params) {
  * +1 회복」과 같은 자리다: 방치한 부대는 나빠지는 게 아니라 평범해진다. 이게 없으면
  * 어느 방향이든 한 번 밀린 값이 벽까지 가서 눌러앉는다(행복↓ → 갈등↑ → 행복↓의 되먹임).
  */
-export function applyDrift(params, difficulty, { interventions = 0, baseline = difficulty } = {}) {
+/**
+ * 오늘 각 축이 **사유로 움직였는가**를 세는 카운터. 사유 없이 흐른 날이 쌓여야 제자리로 돌아온다.
+ * 순수 함수다 — 엔진이 새 값을 받아 캠페인 상태에 눕힌다.
+ *
+ *   touched — 오늘 판정·개입·검열이 그 축을 실제로 움직였는가 (엔진이 새벽 대비로 안다)
+ *   calm    — 지금까지 이어진 「사유 없는 날」 수
+ * 움직였으면 0으로 리셋하고, 아니면 하나 올린다. restDays에 닿으면 applyDrift가 회복을
+ * 붙이고 여기서 다시 0이 된다. 그래서 축마다 「며칠 조용해야 돌아오는가」가 다를 수 있다.
+ */
+export function nextCalm(calm = {}, touched = {}) {
+  const out = {};
+  for (const k of ['gara', 'happy', 'conflict']) {
+    const need = TUNING.drift.restDays[k] ?? 1;
+    const n = touched[k] ? 0 : (calm[k] ?? 0) + 1;
+    out[k] = n >= need ? 0 : n;    // 회복이 붙는 날은 카운터도 같이 0으로
+  }
+  return out;
+}
+
+/**
+ * 이 축이 오늘 제자리로 한 칸 돌아오는가. 조용한 날이 restDays만큼 쌓였을 때다 —
+ * 다만 **제자리에서 restFar 이상 벌어져 있으면 기다리지 않는다.** 멀수록 세게 당기는 스프링이다.
+ */
+const restsToday = (key, params, calm = {}, touched = {}) => {
+  if (touched[key]) return false;
+  const far = Math.abs(params[key] - TUNING.start[key]) >= TUNING.drift.restFar;
+  return far || ((calm[key] ?? 0) + 1) >= (TUNING.drift.restDays[key] ?? 1);
+};
+
+export function applyDrift(params, difficulty, { interventions = 0, baseline = difficulty, calm = {}, touched = {} } = {}) {
   const D = TUNING.drift;
   const load = difficulty - baseline;   // 오늘이 이 부대의 평소보다 얼마나 힘든가
   let dHappy = 0, dConflict = 0;
@@ -1236,9 +1409,20 @@ export function applyDrift(params, difficulty, { interventions = 0, baseline = d
   // 갈등 −1이 붙어서 부임 열흘이면 갈등이 0에 붙고 여름 내내 거기 눌러앉았다(실측).
   // 그러면 갈등 축이 통째로 죽고, 큰 사고의 문이 영영 안 열린다.
   if (load >= D.hardOver) { if (params.conflict > TUNING.start.conflict) dConflict -= 1; }
-  else if (load <= -D.easyUnder) { if (params.happy < TUNING.start.happy) dHappy += 1; }
-  if (params.conflict >= D.conflictHigh) dHappy -= 1;  // 눌린 부대는 어둡다
-  if (params.happy <= D.happyLow) dConflict += 1;      // 불행하면 싸운다
+  // 평소보다 편한 날(주말·비수기)은 **제자리 위로도** 숨통이 트인다. 예전에는 「행복이 평소
+  // 미만일 때만」이라는 단서가 붙어 있었는데, 그러면 제자리 회복이 이미 하는 일과 완전히
+  // 겹쳐서 이 가지가 결과를 한 번도 못 바꿨다 — 그리고 **행복의 천장이 시작값 5에 못 박혔다.**
+  // 심판이 행복을 up으로 안 찍는 축이라, 달력이 올려 주지 않으면 올려 주는 것이 아무것도 없다.
+  // 단서를 뗀다: 주말은 주말이라서 낫고, 그 낫다가 5를 넘어갈 수 있어야 환송회도 열린다.
+  else if (load <= -D.easyUnder) dHappy += 1;
+  // 파라미터끼리 얽히는 항 셋. **전부 제 눈금까지만 민다** — 이게 없으면 둘이 서로를 먹여
+  // 살리는 걸쇠가 된다: 갈등 7이 행복을 3으로 내리고, 행복 3이 갈등을 8로 올리고, 그 갈등이
+  // 다시 행복을… 실측(바늘을 풀어 준 직후): 두 부대 모두 행복 0 · 갈등 9.3에 눌러앉았고
+  // 제자리 회복은 사유가 있는 날에는 아예 안 붙어서 손쓸 자리가 없었다.
+  // 불행이 갈등을 **키우기는** 해도 만점까지 미는 것은 불행이 아니라 사건이다. 그래서 상한을 둔다:
+  // 얽힘은 상대를 제 눈금(경계)까지만 데려가고, 그 너머는 사건과 개입의 몫이다.
+  if (params.conflict >= D.conflictHigh && params.happy > D.happyLow) dHappy -= 1;   // 눌린 부대는 어둡다
+  if (params.happy <= D.happyLow && params.conflict < D.conflictHigh) dConflict += 1; // 불행하면 싸운다
   if (params.happy >= D.happyHigh) dConflict -= 1;     // 행복하면 덜 싸운다
 
   // 아무것도 안 민 축은 제자리로 — 부임 첫날의 부대가 이 부대의 「평소」다.
@@ -1249,15 +1433,18 @@ export function applyDrift(params, difficulty, { interventions = 0, baseline = d
   // 그 대신 무사고 100일이 원래 드문 일이 된다(무개입 완주율 8~17%). 후자를 골랐다:
   // 이 게임의 실패는 「매일 조금씩 나빠지다 어느 날 무너지는 것」이 아니라
   // 「대체로 굴러가다 한 번 크게 터지는 것」이다.
-  if (dHappy === 0) dHappy = Math.sign(TUNING.start.happy - params.happy);
-  if (dConflict === 0) dConflict = Math.sign(TUNING.start.conflict - params.conflict);
+  // **회복은 그 축이 오늘 조용했을 때만.** 매일 붙이면 판정이 민 한 칸을 그날 저녁에 정확히
+  // 도로 당겨서 바늘이 언다(§3.1-h의 실측). 행복은 restDays 1이라 예전과 같고, 가라·갈등은
+  // 이틀이 걸린다 — 그 이틀이 이 게임에서 바늘이 실제로 움직이는 폭이다.
+  if (dHappy === 0 && restsToday('happy', params, calm, touched)) dHappy = Math.sign(TUNING.start.happy - params.happy);
+  if (dConflict === 0 && restsToday('conflict', params, calm, touched)) dConflict = Math.sign(TUNING.start.conflict - params.conflict);
 
   // 가라도 제자리로 돌아온다. **여기가 마지막으로 뚫려 있던 구멍이었다** — 가라만 드리프트
   // 항이 하나도 없어서, 판정이 up 쪽으로 조금만 기울어도 천장까지 걸어 올라갔고(실측:
   // 100%가 그랬다) 거기 붙으면 나머지 축까지 끌고 갔다(가라 ≥7 → 행복 매일 +1 → 갈등 0).
   // 대신 이 축은 **유지에 비용이 드는 축**이 된다: 점검으로 내려 놓은 가라는 그냥 두면
   // 도로 올라온다. 관행은 원래 그렇다 — 한 번 잡는 게 아니라 계속 잡는 것이다.
-  const dGara = Math.sign(TUNING.start.gara - params.gara);
+  const dGara = restsToday('gara', params, calm, touched) ? Math.sign(TUNING.start.gara - params.gara) : 0;
 
   const step = v => Math.max(-1, Math.min(1, v));
   return {

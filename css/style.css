@@ -1177,6 +1177,16 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .day-entry.inspect { background: var(--dlg-lit); border-left: 4px solid #8a6d1a; }
 /* 검열 — 기록 안에서도 이 줄들은 다른 사람이 쓴 것처럼 보여야 한다.
    부대의 목소리(브리핑·소견)와 달리 검열관은 밖에서 온 눈이라, 잉크를 차갑게 쓴다. */
+.iv-cost {
+  font-size: var(--fs-xs); padding: var(--s1) var(--s2); margin-bottom: var(--s2);
+  border-left: 3px solid var(--dlg-edge); background: var(--dlg-lit); color: var(--ink-mid);
+}
+.iv-cost .free { color: var(--ok); }
+.iv-cost .cost { color: var(--stamp-deep); }
+
+/* 안 통한 면담 — 평판을 태우고 아무것도 못 얻은 자리. 눈에 띄어야 배운다. */
+.iv-heal.miss { color: var(--stamp-deep); }
+
 .day-entry.censor {
   background: #eceef0; border-left: 4px solid #2b3138; color: #23282e;
   font-family: var(--font-mono); font-size: var(--fs-sm);

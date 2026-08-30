@@ -49,10 +49,10 @@
 import * as P from './prompts.js';
 import {
   band, honestyOf, complianceOf, initialParams, applyDirections, applyIntervention,
-  applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
+  applyDrift, nextCalm, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalPass, counselMental, incidentMental,
-  minMentalOf, applyInspection, applyCensor, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
+  minMentalOf, counselTakes, applyInspection, applyCensor, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
   GARA_BY_ID, GARA_TIERS, garaCap, garaAt, garaWeight, garaOverreach, garaTierOf,
   syncGaraList, inspectGara,
   censorOn, censorAhead, censorSweep, censorReport, custodyFor,
@@ -127,6 +127,9 @@ export class Engine {
       //   known  — 확인 명부 [{id, on}]. 들이닥쳐서 잡은 것만 오른다. 확인한 그날의 사실이다
       //   seen   — 장소별 마지막 확인 날짜. 명부가 얼마나 낡았는지의 근거
       gara: { active: [], known: [], seen: {}, seenAt: {} },
+      // 축마다 이어진 「사유 없는 날」 수. 제자리 회복이 이 카운터를 본다 —
+      // 매일 당기면 판정이 민 한 칸이 그날 저녁에 도로 돌아와서 바늘이 언다(params.js의 restDays).
+      calm: { gara: 0, happy: 0, conflict: 0 },
       // 검열 내역 — 당한 것의 기록. 무엇이 걸렸고 무엇이 터졌는가.
       // 걸린 관행은 그 자리에서 멎으므로 이 목록은 **가라 명부와 달리 안 낡는다** — 지나간 일이다.
       censors: [],
@@ -148,6 +151,7 @@ export class Engine {
     g.known = (g.known || []).filter(k => GARA_BY_ID[k?.id]);
     g.seen ||= {};
     g.seenAt ||= {};
+    s.calm = { gara: 0, happy: 0, conflict: 0, ...(s.calm || {}) };
     // 옛 저장분에는 시간대·등급이 없던 가라가 있을 수 있다 — 표에서 사라진 id는 여기서 떨어진다.
     s.censors = (s.censors || []).map(c => ({
       ...c,
@@ -221,6 +225,7 @@ export class Engine {
       },
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
       params: { ...s.params },
+      calm: { ...s.calm },
     };
   }
 
@@ -493,10 +498,17 @@ export class Engine {
       present.forEach((man, i) => { man.mental = after[i]; });
       this.roster.save();
 
-      s.params = applyDrift(s.params, effDiff, {
+      // 오늘 이 축이 **사유로** 움직였는가 — 판정·개입·검열이 민 것이 전부 여기 잡힌다.
+      // 새벽 대비 차이 하나로 안다: 무엇이 밀었는지는 알 필요가 없고, 밀렸는지만 알면 된다.
+      const touched = Object.fromEntries(['gara', 'happy', 'conflict'].map(k => [k, s.params[k] !== dawn[k]]));
+      const driftOpts = {
         interventions: this.interventionsToday,
         baseline: this.unit.difficulty,   // 「오늘이 평소보다 힘든가」는 이 부대 기준이다
-      });
+        calm: s.calm, touched,
+      };
+      const calmNext = nextCalm(s.calm, touched);
+      s.params = applyDrift(s.params, effDiff, driftOpts);
+      s.calm = calmNext;
       // 드리프트도 가라를 민다 — 밀었으면 목록이 따라와야 한다. 이 한 줄이 없으면 개입 없는
       // 날마다 「게이지의 개수」와 「실제 목록」이 벌어지고, 그 틈만큼 검열도 급습도 헛돈다.
       this.#syncGara();
@@ -619,7 +631,7 @@ export class Engine {
     // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.
     const stamped = categoryFor(event, escalated);
     // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
-    for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated);
+    for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated, tier);
     this.roster.save();
     // 사고가 사람을 데려간다 — 탈영은 사라지고, 부상·자해는 실려 간다. 유형만 보고 코드가 정한다.
     const absences = escalated ? this.#takeAway(involved, stamped?.id) : [];
@@ -768,8 +780,9 @@ export class Engine {
    * 오늘의 개입 횟수는 하루 마감의 「조용한 날 회복」과 장부가 같이 본다.
    */
   #charge() {
-    this.state.params = applyIntervention(this.state.params);
     this.interventionsToday += 1;
+    // 오늘 몇 번째 개입인가를 넘긴다 — 첫 몇 번은 평판을 안 깎는다(TUNING.rep.freePerDay).
+    this.state.params = applyIntervention(this.state.params, this.interventionsToday);
   }
 
 
@@ -805,10 +818,13 @@ export class Engine {
     thread.push({ role: 'assistant', content: first });
     // 들어준 것이 통했다 — 대화가 실제로 성립한 뒤에만 회복이 붙는다 (호출이 죽으면 없다).
     const before = soldier.mental ?? TUNING.mental.default;
-    soldier.mental = counselMental(before);
+    // 들어준 것이 **먹혔는가**는 평판이 정한다. 씹히는 주임원사 앞에서는 듣는 시늉만 한다 —
+    // 그래도 불려간 것 자체는 소문이라 평판은 이미 치렀다(#charge는 위에서 끝났다).
+    const took = counselTakes(this.state.params.rep, this.rng);
+    if (took) soldier.mental = counselMental(before);
     this.roster.save();
     return {
-      soldier, reply: first,
+      soldier, reply: first, took,
       mental: { before, after: soldier.mental },
       ask: async (q) => {   // 왕복 — 배급도 회복도 안 늘어난다. 스레드는 이 면담 안에서만 산다
         thread.push({ role: 'user', content: P.interviewFollowup(q) });
@@ -847,7 +863,7 @@ export class Engine {
     // 무엇이 걸리고 무엇이 숨는가 — 전부 코드다. 호출보다 먼저 끝난다.
     const res = inspectGara({
       active: s.gara.active, known: s.gara.known, placeKey, slotKey: slot?.key || null,
-      intel: this.unit.intel.score, on: s.date, rng: this.garaRng,
+      intel: this.unit.intel.score, rep: s.params.rep, on: s.date, rng: this.garaRng,
     });
     s.gara.known = res.known;
     // 「이 자리를 언제 봤는가」다. 시간까지 적어 두는 이유는, 낮에 본 생활관과 점호 때 본
