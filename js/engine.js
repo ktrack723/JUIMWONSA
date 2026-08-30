@@ -16,6 +16,9 @@
 // 일과 중 주임원사가 할 수 있는 일은 셋 — 면담(I-1)·불시점검(I-2)·공지(N).
 // 전부 평판 −1. 어떤 LLM 판정도 평판을 못 움직인다 — 개입 횟수가 곧 평판이다.
 //
+// 100일을 찍으면 하루가 아니라 임기가 끝난다 — 그 밤이 환송회(F)다. 부임당 한 콜이고,
+// 거하게 차려지느냐 아무도 없느냐는 **행복도가 코드로** 정한다 (farewell 메서드).
+//
 // 캐시 설계 (기획서 §7):
 //   · D·E-1·E-2는 같은 스레드를 공유한다 — system 동일, messages에 쌓인다.
 //   · 스레드는 하루가 끝나면 닫고, 다음 날은 어제의 코드 요약으로 시작한다.
@@ -51,6 +54,7 @@ import {
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
   minMentalOf, applyInspection, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
   GARA_BY_ID, garaCap, garaAt, syncGaraList, inspectGara,
+  farewellTone, pickSendoff, PARAM_KEYS,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -121,6 +125,7 @@ export class Engine {
       yesterday: '',      // 어제의 코드 요약 (⬛ → D의 입력)
       accidents: [],      // [{date, desc}] — 기록
       promoted: false,
+      farewell: null,     // 마지막 밤. 한 번 치르면 여기 눕고, 다시 열어도 같은 밤이다
     };
   }
 
@@ -170,10 +175,14 @@ export class Engine {
     return {
       unitId: s.unitId,
       date: s.date, day: s.day, weekday: weekdayOf(s.date),
+      // day는 「마감한 날 수」고, dayNo는 **지금 date가 부임 며칠째인가**다. 화면이 쓰는 건
+      // 언제나 뒤쪽이다 — 첫날에 「부임 0일차」라고 쓰면 달력과 한 칸 어긋난다.
+      dayNo: s.day + 1,
       streak: s.streak, goal: TUNING.goal,
       reviewDate: reviewDate(s.date, s.streak),
       accidents: s.accidents.length,
       promoted: s.promoted,
+      farewell: s.farewell ? { ...s.farewell } : null,
       // 병력은 **오늘 부대에 있는 인원**이다. 입원·이탈은 명부에 남아도 병력이 아니다.
       roster: this.roster.present.length,
       away: this.roster.absent.map(x => ({ name: x.name, serial: x.serial, ...x.away })),
@@ -339,6 +348,9 @@ export class Engine {
     const effDiff = effectiveDifficulty(this.unit.difficulty, date);
     const slots = slotsFor(date);
     const incidents = [];   // 오늘의 사건 기록 (코드 요약용)
+    // 새벽의 바늘. 하루가 끝나면 여기와 비교해 「오늘 무엇이 얼마나 움직였나」를 만든다 —
+    // 개입·판정·드리프트가 각자 조용히 미는 값이라, 이 차이 말고는 화면이 알 길이 없다.
+    const dawn = { ...s.params };
 
     try {
       // 병영 소음이 아직 없으면 여기서 한 번 채운다 (부임 첫날 한 콜).
@@ -412,14 +424,36 @@ export class Engine {
       for (const man of this.roster.present) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
       this.roster.save();
 
-      s.params = applyDrift(s.params, effDiff, { interventions: this.interventionsToday });
+      s.params = applyDrift(s.params, effDiff, {
+        interventions: this.interventionsToday,
+        baseline: this.unit.difficulty,   // 「오늘이 평소보다 힘든가」는 이 부대 기준이다
+      });
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
       s.day += 1;
       if (isPromoted(s.streak)) s.promoted = true;
-      await this.h.dayEnd?.(this.snapshot());
-      return this.snapshot();
+
+      // 오늘의 장부 — 화면이 마감에 「무슨 일이 있었고 바늘이 어디로 갔는지」를 쓴다.
+      const ledger = {
+        date,
+        incidents: incidents.length,
+        accidents: incidents.filter(i => i.escalated).length,
+        interventions: this.interventionsToday,
+        moved: PARAM_KEYS.reduce((acc, k) => {
+          const d = s.params[k] - dawn[k];
+          if (d) acc[k] = d;
+          return acc;
+        }, {}),
+        arrivals: arrivals.map(a => a.name),
+        departures: departures.map(d => d.name),
+        returns: returns.map(r => r.name),
+        // 오늘 사고가 데려간 인원 — 카운터가 0으로 돌아간 것과 별개로 부대가 실제로 빈다.
+        taken: incidents.flatMap(i => i.absences || []).map(a => a.soldier.name),
+      };
+      const snap = { ...this.snapshot(), today: ledger };
+      await this.h.dayEnd?.(snap);
+      return snap;
     } finally {
       this.running = false;
       this.thread = [];   // 100일치 원문을 끌고 다니지 않는다 — 내일은 코드 요약으로 시작한다
@@ -553,6 +587,17 @@ export class Engine {
   // ── 일과 중 개입 셋 — 전부 평판 −1. 개입 횟수가 곧 평판이다 ──
 
   /**
+   * 개입 하나의 값을 치른다. 셋이 전부 같은 값이라 여기 한 자리에 둔다 —
+   * 넷째 레버가 생겨도 이걸 안 부르면 공짜 개입이 되어 규칙이 깨진다.
+   * 오늘의 개입 횟수는 하루 마감의 「조용한 날 회복」과 장부가 같이 본다.
+   */
+  #charge() {
+    this.state.params = applyIntervention(this.state.params);
+    this.interventionsToday += 1;
+  }
+
+
+  /**
    * I-1. 면담 — 상담이다. 병사를 불러 이야기를 들어주고, 그 자리가 **멘탈을 +1 회복**시킨다.
    * 파라미터가 계기판에 다 떠 있는 게임에서 면담의 일은 정보 캐기가 아니라 사람 붙잡기다:
    * 계기판의 멘탈 낮은 놈을 골라 부르는 것이 곧 큰 사고(자해·탈영) 예방이다.
@@ -567,8 +612,7 @@ export class Engine {
       const kind = ABSENCE_KINDS[soldier.away.kind];
       throw new Error(`${soldier.name}은(는) 지금 부대에 없다 — ${kind?.label || '부재'}, 복귀 예정 ${soldier.away.until}`);
     }
-    this.state.params = applyIntervention(this.state.params);
-    this.interventionsToday += 1;
+    this.#charge();
 
     // 병사의 체감 밴드 — 부대 지표가 아니라 자기 주변이다. 한 칸 오차의 사견이 낀다.
     // 제 마음(spirit)만은 오차 없이 제 것이다 — dressed()가 그 병사의 멘탈 밴드를 싣는다.
@@ -620,8 +664,7 @@ export class Engine {
     const place = PLACES[placeKey];
     if (!place) throw new Error(`대응표에 없는 장소: ${placeKey}`);
     const s = this.state;
-    s.params = applyIntervention(s.params);
-    this.interventionsToday += 1;
+    this.#charge();
 
     // 무엇이 걸리고 무엇이 숨는가 — 전부 코드다. 호출보다 먼저 끝난다.
     const res = inspectGara({
@@ -673,8 +716,7 @@ export class Engine {
     const t = String(text || '').trim();
     if (!t) throw new Error('빈 공지는 게시할 수 없다');
     const s = this.state;
-    s.params = applyIntervention(s.params);
-    this.interventionsToday += 1;
+    this.#charge();
 
     let out;
     try {
@@ -712,5 +754,54 @@ export class Engine {
   removeNotice(index) {
     this.state.notices.splice(index, 1);
     this.#syncGara();
+  }
+
+  // ── F. 환송회 — 마지막 밤. 100일을 찍은 그날의 끝에 딱 한 콜 ──
+
+  /**
+   * 진급이 통과된 날 밤. 원사 진급은 이 부대를 뜬다는 뜻이라 마지막 씬이 여기서 열린다.
+   *
+   * **무엇이 열리는지는 행복도 하나가 정한다** (params.js의 farewellTone) — 무사고 기록도
+   * 평판도 아니다. 기록은 주임원사가 가져가는 것이고 밥상은 병사들이 차리는 것이라서다.
+   * 높으면 거하게 차려 놓고 앞에 나와 인사하고, 낮으면 식당에 아무도 없다.
+   * 누가 입을 여는지도 코드가 고른다 — 사건 연루자 선정의 정확한 반대편이다(잘 버틴 순).
+   *
+   * 결과는 캠페인 상태에 눕는다. 화면을 다시 열어도 같은 밤이고, 콜은 다시 안 나간다.
+   */
+  async farewell() {
+    const s = this.state;
+    if (s.farewell) return s.farewell;
+    const tone = farewellTone(s.params.happy);
+    const speakers = pickSendoff(this.roster.soldiers, tone);
+
+    const out = await this.#gen({
+      label: '환송회',
+      system: P.farewellSystem(this.unit),
+      messages: [{ role: 'user', content: P.farewellUser({
+        tone,
+        morale: band(s.params.happy),
+        clean: s.accidents.length === 0,
+        speakers: this.dressedAll(speakers),
+      }) }],
+      schema: P.FAREWELL_SCHEMA, maxTokens: 4000,
+    });
+
+    // 이름은 코드가 고른 그 몇 명 밖으로 안 나간다 — 없는 병사가 인사하고 가면
+    // 마지막 장면이 명부에 대해 거짓말을 한다. 아무도 안 온 밤은 대사 자체가 없다.
+    const allowed = new Map(speakers.map(x => [x.name, x]));
+    const lines = tone === 'none' ? [] : (Array.isArray(out?.lines) ? out.lines : [])
+      .map(l => ({ name: String(l?.name || '').trim(), text: String(l?.text || '').trim() }))
+      .filter(l => l.text && allowed.has(l.name))
+      .map(l => ({ ...l, serial: allowed.get(l.name).serial }));
+
+    s.farewell = {
+      tone,
+      scene: String(out?.scene || '').trim(),
+      lines,
+      closing: String(out?.closing || '').trim(),
+      speakers: speakers.map(x => x.serial),
+    };
+    await this.h.farewell?.({ ...s.farewell });
+    return s.farewell;
   }
 }

@@ -202,11 +202,40 @@ test('가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
   assert.equal(PM.applyDrift({ ...base, gara: 2 }, 5, { interventions: 1 }).happy, 4);
 });
 
-test('난이도가 높으면 행복도 갈등도 내려간다 — 힘들면 싸울 기력도 없다', () => {
+test('힘든 날은 그 부대의 평소 대비다 — 절대 눈금이 아니다', () => {
   const base = { gara: 5, happy: 5, conflict: 5, rep: 5 };
-  const out = PM.applyDrift(base, 9, { interventions: 1 });
-  assert.equal(out.happy, 4);
-  assert.equal(out.conflict, 4);
+  // 난이도 9라도 그게 이 부대의 평소면 힘든 날이 아니다. 평소보다 한 칸 높아야 힘든 날이다.
+  assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 9 }).conflict, 4,
+    '제자리 회복이 갈등을 5→4로 당겨야 한다');
+  assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 8 }).conflict, 4, '힘든 날인데 갈등이 안 내렸다');
+  // 힘든 날은 **갈등만** 민다 — 난이도가 행복을 깎는 길은 달력이 아니라 사고 롤이다
+  assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 8 }).happy, 5,
+    '달력이 행복을 직접 깎았다 — 사고 롤과 이중 과금이다');
+  // 평소보다 편한 날(주말)은 숨통이 트인다
+  assert.equal(PM.applyDrift({ ...base, happy: 3 }, 1, { interventions: 1, baseline: 8 }).happy, 4);
+});
+
+test('빡센 부대라고 행복이 매일 깎이지 않는다 — 되돌릴 레버가 없는 단조 감소는 게임이 아니다', () => {
+  // 난이도 8로 저작된 부대의 평일 100일. 예전에는 이레 만에 행복 0에 붙어 다시는 안 올라왔다.
+  let p = PM.initialParams();
+  for (let d = 0; d < 100; d++) p = PM.applyDrift(p, 8, { interventions: 0, baseline: 8 });
+  assert.ok(p.happy >= 4, `방치한 부대의 행복이 ${p.happy}까지 내려갔다`);
+  assert.ok(p.conflict <= 5, `방치한 부대의 갈등이 ${p.conflict}까지 올라갔다`);
+});
+
+test('아무것도 안 민 날은 제자리로 한 칸 돌아온다 — 평판의 조용한 날 회복과 같은 자리다', () => {
+  const calm = { gara: 5, happy: 5, conflict: 3, rep: 5 };
+  const still = PM.applyDrift(calm, 5, { interventions: 1, baseline: 5 });
+  assert.equal(still.happy, PM.TUNING.start.happy, '제자리에 있는 값이 움직였다');
+  assert.equal(still.conflict, PM.TUNING.start.conflict);
+  // 밀린 값은 제자리 쪽으로 한 칸씩 (한 번에 벽까지 가지 않는다)
+  assert.equal(PM.applyDrift({ ...calm, happy: 0 }, 5, { interventions: 1, baseline: 5 }).happy, 1);
+  assert.equal(PM.applyDrift({ ...calm, happy: 10 }, 5, { interventions: 1, baseline: 5 }).happy, 9);
+});
+
+test('baseline을 안 주면 오늘이 곧 평소다 — 옛 호출이 힘든 날로 오독되지 않는다', () => {
+  const base = { gara: 5, happy: 5, conflict: 5, rep: 5 };
+  assert.deepEqual(PM.applyDrift(base, 9, { interventions: 1 }), PM.applyDrift(base, 9, { interventions: 1, baseline: 9 }));
 });
 
 test('행복이 바닥이면 갈등이 오르고, 행복이 높으면 갈등이 내린다', () => {
@@ -217,8 +246,8 @@ test('행복이 바닥이면 갈등이 오르고, 행복이 높으면 갈등이 
 });
 
 test('드리프트는 하루 최대 ±1칸이다 — 겹쳐도 한 걸음', () => {
-  // 가라 2(행복↓) + 난이도 9(행복↓) + 갈등 8(행복↓) = 사유 셋이라도 −1
-  const out = PM.applyDrift({ gara: 2, happy: 5, conflict: 8, rep: 5 }, 9, { interventions: 1 });
+  // 가라 2(행복↓) + 갈등 8(행복↓) = 사유 둘이라도 −1
+  const out = PM.applyDrift({ gara: 2, happy: 5, conflict: 8, rep: 5 }, 9, { interventions: 1, baseline: 8 });
   assert.equal(out.happy, 4);
 });
 
@@ -375,6 +404,52 @@ test('멘탈이 여는 문은 전우애와 무관하다 — 한 사람이 무너
     PM.incidentRisk({ gara: 5, conflict: 0, minMental: 1 }, { intel: 5, macho: 5, difficulty: 5, comrade }).big;
   assert.ok(at(10) > 0, '전우애가 멘탈 위험까지 막아 버렸다');
   assert.equal(at(10), at(1), '멘탈 위험이 전우애를 탄다');
+});
+
+// ── 마지막 씬 — 환송회는 행복도가 연다 ──────────────────
+test('행복도가 마지막 밤을 가른다 — 높으면 환송회, 낮으면 아무도 없다', () => {
+  assert.equal(PM.farewellTone(10), 'grand');
+  assert.equal(PM.farewellTone(PM.TUNING.farewell.grand), 'grand', '문턱 자리가 환송회로 안 떨어졌다');
+  assert.equal(PM.farewellTone(PM.TUNING.farewell.grand - 1), 'thin');
+  assert.equal(PM.farewellTone(PM.TUNING.farewell.empty), 'none', '문턱 자리가 빈 방으로 안 떨어졌다');
+  assert.equal(PM.farewellTone(0), 'none');
+  // 눈금 전 구간이 아는 갈래로만 떨어진다 — 화면이 모르는 결이 나오면 씬이 안 열린다
+  for (let v = 0; v <= 10; v++) assert.ok(PM.FAREWELL_TONES.includes(PM.farewellTone(v)));
+});
+
+test('갈래는 행복도만 본다 — 무사고 기록도 평판도 마지막 밤을 못 산다', () => {
+  // farewellTone은 행복도 한 값만 받는다. 다른 파라미터가 낄 자리가 시그니처에 없다.
+  assert.equal(PM.farewellTone.length, 1);
+  assert.equal(PM.farewellTone(9), PM.farewellTone(9));
+});
+
+test('아무도 안 온 밤에는 입을 여는 놈이 0이다', () => {
+  const men = Array.from({ length: 5 }, (_, i) => ({ name: `병${i}`, mental: 8 - i, joined: '2026-01-01' }));
+  assert.deepEqual(PM.pickSendoff(men, 'none'), []);
+  assert.equal(PM.pickSendoff(men, 'thin').length, PM.TUNING.farewell.speakers.thin);
+  assert.equal(PM.pickSendoff(men, 'grand').length, PM.TUNING.farewell.speakers.grand);
+});
+
+test('인사는 잘 버틴 놈들이 한다 — 사건 연루자 선정의 정확한 반대편이다', () => {
+  const men = [
+    { name: '무너진놈', mental: 1, joined: '2026-01-01' },
+    { name: '버틴놈', mental: 9, joined: '2026-03-01' },
+    { name: '중간놈', mental: 5, joined: '2026-02-01' },
+  ];
+  assert.deepEqual(PM.pickSendoff(men, 'grand').map(m => m.name), ['버틴놈', '중간놈', '무너진놈']);
+  assert.deepEqual(PM.pickSendoff(men, 'thin').map(m => m.name), ['버틴놈']);
+  // 정원보다 적어도 안 죽는다 (전역이 겹쳐 명부가 빈 경우)
+  assert.deepEqual(PM.pickSendoff([], 'grand'), []);
+});
+
+test('멘탈이 같으면 짬 순이다 — 굴리지 않는다', () => {
+  const men = [
+    { name: '후임', mental: 6, joined: '2026-05-01' },
+    { name: '고참', mental: 6, joined: '2025-11-01' },
+  ];
+  assert.deepEqual(PM.pickSendoff(men, 'thin').map(m => m.name), ['고참']);
+  // 두 번 불러도 같다 — 마지막 밤은 굴리는 자리가 아니다
+  assert.deepEqual(PM.pickSendoff(men, 'grand'), PM.pickSendoff(men, 'grand'));
 });
 
 // ══════════════════════════════════════════════════════════

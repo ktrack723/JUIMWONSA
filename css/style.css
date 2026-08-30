@@ -48,6 +48,7 @@
   --ok:         #2f5230;   /* 승인 올리브 */
   --warn:       #6d5417;   /* 주의 오커 */
   --alert:      #7a2020;
+  --gold:       #9a7b1f;   /* 진급 금색 — 이 색이 나오는 자리는 마지막 밤 하나뿐이다 */
 
   /* 등급 */
   --easy:       #2f5230;
@@ -1044,6 +1045,9 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 
 .notice-list { list-style: none; font-size: var(--fs-sm); }
 .notice-list li { padding: 3px 0; border-bottom: 1px dashed var(--ink-soft); display: flex; justify-content: space-between; gap: var(--s2); align-items: center; }
+/* 지침 원문이 길면 flex가 버튼을 짓눌러 「철/회」로 세로로 접힌다 — 버튼은 안 줄인다. */
+.notice-list li .btn95 { flex: 0 0 auto; white-space: nowrap; }
+
 .notice-list .nt-body { min-width: 0; }
 .notice-list .nt-bans {
   display: block; margin-top: 2px; font-family: var(--font-mono);
@@ -1097,6 +1101,19 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .gara-seen .gs.never { border-style: dashed; border-color: var(--stamp); color: var(--stamp-deep); background: #f6e6e4; }
 
 .day-window { min-height: 340px; max-height: 56vh; overflow-y: auto; padding: var(--s3); }
+
+/* ── 하루의 머리 ──────────────────────────────────────────
+   어제 저녁점호와 오늘 아침 브리핑 사이의 유일한 경계다. 기록만 읽어도
+   어디부터가 오늘인지, 부임 며칠째인지, 무사고 며칠째인지가 보여야 한다. */
+.day-mark {
+  display: flex; justify-content: space-between; gap: var(--s2);
+  margin: var(--s3) 0 var(--s2);
+  padding: 3px var(--s2);
+  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 500;
+  color: var(--dlg); background: var(--ink-mid);
+  border-radius: 2px;
+}
+.day-mark:first-child { margin-top: 0; }
 .day-entry { white-space: pre-wrap; margin-bottom: var(--s3); padding: var(--s2) var(--s3); font-size: var(--fs-md); }
 .day-entry.briefing { background: var(--dlg-lit); border-left: 4px solid var(--file); }
 .day-entry.slot { color: var(--ink-mid); font-size: var(--fs-sm); padding: 2px var(--s3); }
@@ -1105,6 +1122,24 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .day-entry.inspect { background: var(--dlg-lit); border-left: 4px solid #8a6d1a; }
 .day-entry.stamp { font-family: var(--font-mono); font-weight: 700; }
 .day-entry.sys { color: var(--ink-soft); font-size: var(--fs-sm); }
+
+/* ── 마지막 밤 — 환송회 ────────────────────────────────────
+   결(거하게/조촐하게/아무도 없음)은 행복도가 정하고, 여기는 그 밤의 옷만 입힌다.
+   진급 서류의 금색을 쓴다 — 이 게임에서 금색이 나오는 자리는 여기 하나뿐이다. */
+.day-entry.farewell {
+  background: #fbf6e6; border-left: 4px solid var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(154,123,31,.18);
+}
+.day-entry.sendoff {
+  background: var(--dlg-lit); border-left: 4px solid var(--file);
+  margin-left: var(--s3);
+}
+.day-entry.closing {
+  font-family: var(--font-mono); font-size: var(--fs-sm);
+  color: var(--ink-mid); text-align: center;
+  border-top: 1px solid var(--paper-rule); border-bottom: 1px solid var(--paper-rule);
+  padding: var(--s3);
+}
 
 /* ── 사고 유형 딱지 — 그림 한 장 + 갈래·이름 ────────────────
    유형은 코드가 정한 열둘(params.js)이고 파일은 assets/incidents/<id>.svg다.
@@ -1132,6 +1167,13 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .cat-discipline .cat-art { border-color: var(--stamp); box-shadow: 0 0 0 2px rgba(143,34,38,.20); }
 .cat-personnel .cat-art { border-color: var(--file); box-shadow: 0 0 0 2px rgba(31,63,107,.20); }
 .day-entry .entry-body { white-space: pre-wrap; }
+
+/* 지침을 쓰기 직전에 뜨는 한 줄 — 「지금 내 말이 먹히는가」. */
+.standing-line {
+  margin: var(--s2) 0; padding: var(--s2) var(--s3);
+  font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 500;
+  background: var(--dlg-dim); border-left: 3px solid var(--file);
+}
 
 .intervene-tabs { display: flex; gap: var(--s2); margin: var(--s2) 0; }
 .iv-body { padding: var(--s2) 0; }

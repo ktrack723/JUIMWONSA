@@ -21,6 +21,15 @@ class FakeLLM {
     this.calls = [];
     this.judgeQueue = [];    // 확전 판정 스크립트
     this.noticeVerdict = { gara: 'down', happy: 'down', conflict: 'same', reaction: '또 뭘 금지한대' };
+    // 환송회 — 기본 응답에 **명부에 없는 이름**을 하나 섞어 둔다. 걸러지는지가 계약이다.
+    this.farewellOut = {
+      scene: '환송회장면',
+      lines: [
+        { name: '기존5', text: '고생하셨습니다.' },
+        { name: '없는놈', text: '저도 인사드립니다.' },
+      ],
+      closing: '위병소를 나선다',
+    };
   }
   async call(req) {
     // messages 배열은 엔진이 계속 밀어 넣는 살아 있는 참조다 — 호출 시점의 모습을 얼려 둔다.
@@ -35,6 +44,7 @@ class FakeLLM {
     if (l.startsWith('면담')) return '병사의 대답';
     if (l.startsWith('불시점검')) return '점검소견텍스트';
     if (l.startsWith('공지 판정')) return this.noticeVerdict;
+    if (l.startsWith('환송회')) return this.farewellOut;
     throw new Error(`모르는 호출: ${l}`);
   }
   labels() { return this.calls.map(c => c.label); }
@@ -362,6 +372,69 @@ test('개입한 날은 평판 회복이 없다 — 개입은 일과 중에 일�
   assert.equal(state.params.rep, TUNING.start.rep - 1, '개입한 날인데 조용한 날 회복이 붙었다');
 });
 
+// ── 하루의 장부 — 화면이 「오늘 무슨 일이 있었나」를 쓸 재료 ──
+test('마감 스냅샷이 오늘의 장부를 싣는다 — 사건·개입·움직인 바늘', async () => {
+  const { engine, events } = fixture({
+    rng: seqRng([0.999, 0.999, 0.999, 0.999, 0.0001, 0]),   // 첫 슬롯에서 사건 하나
+  });
+  engine._directive = null;
+  const snap = await engine.runDay();
+  const t = snap.today;
+  assert.ok(t, '장부가 안 실렸다');
+  assert.equal(t.date, '2026-05-18', '장부는 오늘 날짜로 찍힌다 — 마감 시점의 내일이 아니다');
+  assert.equal(t.incidents, 1);
+  assert.equal(t.accidents, 0);
+  assert.equal(t.interventions, 0);
+  assert.equal(t.moved.rep, +1, '조용한 날 평판 회복이 장부에 안 잡혔다');
+  // 손잡이가 받는 것과 돌려주는 것이 같아야 화면과 저장분이 안 갈린다
+  assert.deepEqual(events.find(e => e[0] === 'dayEnd')[1].today, t);
+});
+
+test('장부의 「움직인 바늘」이 개입·판정·드리프트를 전부 합쳐서 센다', async () => {
+  const { engine, state } = fixture();
+  const dawn = { ...state.params };
+  // 개입은 **일과 중에** 일어난다 — 하루가 열리기 전에 부르면 그 하루의 장부가 아니다.
+  engine.h.slot = async ({ index }) => { if (index === 0) await engine.inspect('barracks'); };  // 가라 −1 · 행복 −1 · 평판 −1
+  const snap = await engine.runDay();
+  const t = snap.today;
+  assert.equal(t.interventions, 1);
+  assert.equal(t.moved.gara, state.params.gara - dawn.gara);
+  assert.equal(t.moved.happy, state.params.happy - dawn.happy);
+  assert.ok(t.moved.rep < 0, '개입한 날인데 평판이 안 깎였다');
+  // 안 움직인 축은 아예 안 실린다 — 화면이 「바늘은 그대로다」를 쓸 수 있어야 한다
+  for (const [k, v] of Object.entries(t.moved)) assert.notEqual(v, 0, `${k}가 0인 채로 실렸다`);
+});
+
+test('dayNo는 지금 date가 부임 며칠째인가다 — 첫날은 0일차가 아니라 1일차다', async () => {
+  const { engine } = fixture();
+  assert.equal(engine.snapshot().dayNo, 1, '부임 첫날이 0일차로 찍힌다');
+  const snap = await engine.runDay();
+  assert.equal(snap.day, 1, 'day는 마감한 날 수 그대로다');
+  assert.equal(snap.dayNo, 2, '달력이 내일로 갔는데 부임일차가 안 따라갔다');
+  assert.equal(snap.date, '2026-05-19');
+});
+
+// ── 드리프트 — 부대의 평소치가 하루 마감에 실린다 ────────
+test('하루 마감은 이 부대의 평소 난이도를 같이 넘긴다 — 빡센 부대의 매일이 힘든 날이 되지 않게', async () => {
+  // 난이도 8로 저작된 부대를 무개입으로 30일 굴린다. 예전에는 이레 만에 행복이 0에 붙었다.
+  const hard = { ...unit, difficulty: 8 };
+  const llm = new FakeLLM();
+  const roster = new Roster(hard, { storage: memStorage() });
+  for (let i = 0; i < 16; i++) {
+    roster.enlist({ name: `기존${i}`, sheet: 's', job: hard.jobs[i % 4], grade: 'B', character: '중', joined: '2026-05-01' });
+  }
+  const ambient = new AmbientPool(hard, { storage: memStorage() });
+  ambient.fill([{ slot: 'reveille', text: '또 아침이네' }]);
+  const engine = new Engine(llm, {
+    unit: hard, roster, ambient, state: Engine.newCampaign(hard, '2026-08-26'),
+    rng: () => 0.999,   // 사건 없음 — 순수 드리프트만 본다
+    handlers: { incident: () => null },
+  });
+  for (let d = 0; d < 30; d++) await engine.runDay();
+  assert.ok(engine.state.params.happy >= 4, `무개입 30일에 행복이 ${engine.state.params.happy}까지 내려갔다`);
+  assert.ok(roster.soldiers.every(m => m.mental >= 4), '방치만 했는데 전원 멘탈이 무너졌다');
+});
+
 // ── 진급 ────────────────────────────────────────────────
 test('무사고 100일이면 진급이다', async () => {
   const { engine, state } = fixture();
@@ -369,6 +442,78 @@ test('무사고 100일이면 진급이다', async () => {
   const snap = await engine.runDay();
   assert.equal(snap.streak, 100);
   assert.ok(snap.promoted, '100일을 찍었는데 진급이 안 됐다');
+});
+
+// ── F. 환송회 — 마지막 밤. 행복도가 연다 ────────────────
+test('행복한 부대는 환송회를 차린다 — 병사들이 나와서 인사한다', async () => {
+  const { llm, engine, state, roster } = fixture();
+  state.params.happy = 9;
+  roster.soldiers.forEach((m, i) => { m.mental = i === 5 ? 10 : 3; });   // 기존5가 제일 잘 버텼다
+  const out = await engine.farewell();
+
+  assert.equal(out.tone, 'grand');
+  assert.deepEqual(llm.labels(), ['환송회'], '마지막 밤은 한 콜이다');
+  assert.equal(out.speakers.length, TUNING.farewell.speakers.grand);
+  assert.equal(out.scene, '환송회장면');
+  assert.equal(out.closing, '위병소를 나선다');
+  // 프롬프트에는 결과 사기 밴드까지만 간다 — 숫자는 못 나간다
+  const user = JSON.stringify(llm.byLabel('환송회')[0].messages);
+  assert.ok(user.includes('grand'), '코드가 정한 결이 안 실렸다');
+  assert.ok(user.includes('very-high'), '사기 밴드가 안 실렸다');
+  assert.ok(!/\bhappy\b.{0,4}9/.test(user), '행복도 수치가 샜다');
+});
+
+test('명부에 없는 놈은 인사할 수 없다 — 마지막 장면이 명부에 대해 거짓말하지 않는다', async () => {
+  const { engine, state, roster } = fixture();
+  state.params.happy = 9;
+  roster.soldiers.forEach((m, i) => { m.mental = i === 5 ? 10 : 3; });
+  const out = await engine.farewell();
+  assert.deepEqual(out.lines.map(l => l.name), ['기존5'], '없는 병사가 인사하고 갔다');
+  // 군번이 붙어야 화면이 그날의 계급을 찍을 수 있다
+  assert.equal(out.lines[0].serial, roster.soldiers[5].serial);
+});
+
+test('불행한 부대의 마지막 밤에는 아무도 없다 — 모형이 대사를 써 보내도 안 실린다', async () => {
+  const { engine, state } = fixture();
+  state.params.happy = 1;
+  const out = await engine.farewell();
+  assert.equal(out.tone, 'none');
+  assert.deepEqual(out.speakers, [], '아무도 없는 밤에 사람이 섰다');
+  assert.deepEqual(out.lines, [], '아무도 없는데 인사가 들렸다');
+  assert.equal(out.scene, '환송회장면', '빈 방도 장면은 있다');
+});
+
+test('중간이면 몇 명만 남는다 — 거하지도, 아무도 없지도 않다', async () => {
+  const { engine, state, roster } = fixture();
+  state.params.happy = 5;
+  roster.soldiers.forEach((m, i) => { m.mental = i === 5 ? 10 : 3; });
+  const out = await engine.farewell();
+  assert.equal(out.tone, 'thin');
+  assert.equal(out.speakers.length, TUNING.farewell.speakers.thin);
+  assert.deepEqual(out.lines.map(l => l.name), ['기존5']);
+});
+
+test('마지막 밤은 한 번뿐이다 — 다시 열어도 같은 밤이고 콜은 안 나간다', async () => {
+  const { llm, engine, state } = fixture();
+  state.params.happy = 9;
+  const first = await engine.farewell();
+  llm.farewellOut = { scene: '다른장면', lines: [], closing: '다른마무리' };
+  const second = await engine.farewell();
+  assert.deepEqual(second, first, '두 번째로 연 밤이 달라졌다');
+  assert.equal(llm.byLabel('환송회').length, 1, '콜이 한 번 더 나갔다');
+  // 저장분에도 눕는다 — 화면을 새로 열어도 그 밤 그대로다
+  assert.deepEqual(state.farewell, first);
+  assert.deepEqual(engine.snapshot().farewell, first);
+});
+
+test('환송회는 파라미터도 카운터도 안 민다 — 끝난 자리에는 되돌릴 것이 없다', async () => {
+  const { engine, state } = fixture();
+  state.params.happy = 9;
+  const before = { ...state.params };
+  const streak = state.streak;
+  await engine.farewell();
+  assert.deepEqual(state.params, before, '마지막 밤이 파라미터를 밀었다');
+  assert.equal(state.streak, streak);
 });
 
 // ── A. 병영 소음 — 부임 때 한 콜, 그 뒤로는 공짜 ────────

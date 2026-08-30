@@ -163,7 +163,8 @@
               <label>들이닥칠 장소 <select id="inspect-where"></select></label>
               <p class="dim small"><b>가라 내역을 사는 유일한 창구</b>다. 그 자리에서 돌던 관행이
                 적발되면 명부에 오르고, 적발된 것부터 그 자리에서 멎는다(<b>가라 −1</b>) —
-                대신 분위기는 가라앉는다(<b>행복 −1</b>). 전부 걸리지는 않는다: <b>머리 좋은 부대일수록 잘 숨긴다.</b></p>
+                대신 분위기는 가라앉는다(<b>행복 −1</b>). 전부 걸리지는 않는다: <b>머리 좋은 부대일수록 잘 숨긴다.</b><br>
+                장소 이름 옆에 적힌 것은 그 자리에 무엇이 돌고 있고 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
               <div class="radio-btns">
                 <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1 · 평판 −1)</button>
               </div>
@@ -186,6 +187,7 @@
           <div id="incident-panel" class="panel95 radio-panel hidden" data-title="❗ 사건 발생 · 대응 지침">
             <p class="radio-note"><b>사건은 아직 사고가 아니다.</b> 지침을 내리면 그대로 현장에 꽂힌다 — 채점되지 않는다.
               무시할 수도 있다. 그 경우 「개입 없음」으로 결과가 굴러간다. <b>확전으로 판정될 때만 사고다.</b></p>
+            <p id="incident-standing" class="standing-line"></p>
             <textarea id="incident-input" rows="3" placeholder="예: 둘 다 떼어놔라. 선임은 내 방으로, 후임은 의무대부터."></textarea>
             <div class="radio-btns">
               <button id="btn-incident-send" class="btn95 danger" type="button">지침 하달</button>
@@ -204,6 +206,15 @@
           <!-- 진급 -->
           <div id="promo-panel" class="panel95 radio-panel hidden" data-title="진급 심사 결과">
             <p id="promo-text" class="radio-note"></p>
+          </div>
+
+          <!-- 환송회 — 마지막 밤. 거하게 차려지느냐 아무도 없느냐는 행복도가 정한다 -->
+          <div id="farewell-panel" class="panel95 radio-panel hidden" data-title="전출 신고 · 마지막 밤">
+            <p id="farewell-text" class="radio-note"></p>
+            <div class="radio-btns">
+              <button id="btn-farewell-retry" class="btn95 hidden" type="button">회선 재시도 — 마지막 밤을 다시 연다</button>
+              <button id="btn-farewell-end" class="btn95 big hidden" type="button">부임지 선택으로 ▶</button>
+            </div>
           </div>
         </div>
       </div>

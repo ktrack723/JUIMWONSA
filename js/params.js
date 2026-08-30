@@ -9,6 +9,7 @@
 //   · 사고 유형 열둘과 유형별 그림 자리 (사건이 확전하면 유형이 넘어가는 표까지)
 //   · 부재 규칙 (어느 유형의 사고가 병사를 며칠 빼내는가 — 탈영은 사라지고 부상은 입원한다)
 //   · 날짜 규칙 (부임일 = 오늘 − 100일 · 계절 · 주말)
+//   · 마지막 씬의 갈래 (행복도가 환송회를 여는가, 아무도 없는가 — 그리고 누가 입을 여는가)
 //   · 파라미터 → 5단계 밴드 변환 (수치는 프롬프트에 절대 안 나간다)
 //
 // 눈금은 연애조작단 규칙 그대로 — **0~10, 한 걸음 1칸.** 화면의 숫자가 곧
@@ -48,9 +49,22 @@ export const TUNING = {
   },
 
   // 일일 드리프트 — 하루 마감에 적용. 각 파라미터 하루 최대 ±1칸.
+  //
+  // 「힘든 날」은 절대 눈금이 아니라 **그 부대의 평소 대비**다. 예전에는 난이도 8 이상을
+  // 힘든 날로 봤는데, 난이도가 그만큼 높게 저작된 부대에서는 「오늘 유난히 힘든 날」이
+  // 매일이 된다 — 그 부대에 그건 「유난히」가 아니라 「평소」다. 그래서 행복이 매일 −1씩
+  // 단조 감소하고, 일주일이면 0에 붙고, 열흘이면 전원 멘탈이 0이 됐다. 되돌릴 레버는
+  // 게임에 없었다(면담은 개인 멘탈만, 점검은 행복을 더 깎는다). 부대 데이터와 이 표가
+  // 어긋나 있었던 것이다 — 눈금을 상대치로 바꿔서 어느 난이도로 저작하든 성립하게 만든다.
+  //
+  // 난이도가 행복을 깎는 길은 달력이 아니라 **사고 롤**이다 (roll.hardSloppyPer):
+  // 힘든 일을 대충 하면 다치고, 사건이 나고, 그 판정이 행복을 민다. 여기서 또 깎으면
+  // 이중 과금이다. 달력이 하는 일은 둘로 줄였다 — 힘든 날은 싸울 기력이 없어 갈등이
+  // 내려가고(원래 주석 그대로다), 평소보다 편한 날(주말·비수기)은 숨통이 트인다.
   drift: {
     garaHigh: 7, garaLow: 3,      // 가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
-    hardDay: 8,                   // 난이도 이 이상이면 행복↓·갈등↓ (힘들면 싸울 기력도 없다)
+    hardOver: 1,                  // 평소보다 이만큼 힘든 날 — 싸울 기력도 없다 (갈등↓)
+    easyUnder: 1,                 // 평소보다 이만큼 편한 날 — 숨통이 트인다 (행복↑)
     happyLow: 3, happyHigh: 8,    // 행복↓ → 갈등↑, 행복↑ → 갈등↓
     conflictHigh: 7,              // 갈등↑ → 행복↓
   },
@@ -100,6 +114,12 @@ export const TUNING = {
   // 불시점검(군기 점검)의 효과 — 순수 코드다. 들이닥치면 일은 각이 잡히고(가라↓)
   // 분위기는 가라앉는다(행복↓). LLM은 점검 소견(장면)만 쓴다.
   inspect: { gara: -1, happy: -1 },
+
+  // 환송회 — 100일을 찍고 부대를 뜨는 마지막 밤. 병사들이 나오느냐 마느냐는
+  // **행복도 하나**가 정한다. 눈금은 밴드 경계 그대로다(high는 7부터, low는 3까지) —
+  // 계기판에서 「높다/낮다」로 읽히는 자리가 곧 씬이 갈리는 자리여야 한다.
+  // speakers는 그 자리에서 입을 여는 인원. 아무도 안 나온 밤은 당연히 0이다.
+  farewell: { grand: 7, empty: 3, speakers: { grand: 4, thin: 1, none: 0 } },
 
   // 가라 내역 — 「가라 4」가 실제로 무엇 넷인가. 적발 확률은 부대 지능이 정한다:
   // 머리 좋은 부대일수록 잘 숨긴다. 공군의 병사간 룰이 이미 그렇게 적혀 있다
@@ -706,18 +726,33 @@ export function applyIntervention(params) {
 
 /**
  * 하루 마감 드리프트. 파라미터끼리 얽히는 공식 전부 — §4의 표 그대로다.
- * 각 파라미터 하루 최대 ±1칸. difficulty는 계절 보정을 거친 값이다.
+ * 각 파라미터 하루 최대 ±1칸.
+ *
+ * difficulty는 계절·주말 보정을 거친 **오늘의** 실효 난이도고, baseline은 **그 부대의
+ * 평소치**다(부대 프롬프트가 정한 static 값). 둘의 차이가 「오늘이 평소보다 힘든가」다 —
+ * 절대 눈금으로 보면 빡센 부대는 매일이 힘든 날이 되어 행복이 단조 감소한다(TUNING.drift 주석).
+ * baseline을 안 주면 오늘이 곧 평소다 — 힘들지도 편하지도 않은 날로 떨어진다.
+ *
+ * 아무 사유도 안 걸린 날은 **제자리로 한 칸 돌아온다.** 평판의 「개입 없는 조용한 날은
+ * +1 회복」과 같은 자리다: 방치한 부대는 나빠지는 게 아니라 평범해진다. 이게 없으면
+ * 어느 방향이든 한 번 밀린 값이 벽까지 가서 눌러앉는다(행복↓ → 갈등↑ → 행복↓의 되먹임).
  */
-export function applyDrift(params, difficulty, { interventions = 0 } = {}) {
+export function applyDrift(params, difficulty, { interventions = 0, baseline = difficulty } = {}) {
   const D = TUNING.drift;
+  const load = difficulty - baseline;   // 오늘이 이 부대의 평소보다 얼마나 힘든가
   let dHappy = 0, dConflict = 0;
 
   if (params.gara >= D.garaHigh) dHappy += 1;          // 편하니까
   if (params.gara <= D.garaLow) dHappy -= 1;           // FM대로 굴리면 힘들다
-  if (difficulty >= D.hardDay) { dHappy -= 1; dConflict -= 1; }  // 힘들면 싸울 기력도 없다
+  if (load >= D.hardOver) dConflict -= 1;              // 힘들면 싸울 기력도 없다
+  else if (load <= -D.easyUnder) dHappy += 1;          // 평소보다 편한 날 — 숨통이 트인다
   if (params.conflict >= D.conflictHigh) dHappy -= 1;  // 눌린 부대는 어둡다
   if (params.happy <= D.happyLow) dConflict += 1;      // 불행하면 싸운다
   if (params.happy >= D.happyHigh) dConflict -= 1;     // 행복하면 덜 싸운다
+
+  // 아무것도 안 민 축은 제자리로 — 부임 첫날의 부대가 이 부대의 「평소」다.
+  if (dHappy === 0) dHappy = Math.sign(TUNING.start.happy - params.happy);
+  if (dConflict === 0) dConflict = Math.sign(TUNING.start.conflict - params.conflict);
 
   const step = v => Math.max(-1, Math.min(1, v));
   return {
@@ -737,6 +772,42 @@ export function endOfDayStreak(streak, accidentToday) {
 }
 
 export const isPromoted = streak => streak >= TUNING.goal;
+
+// ── 마지막 씬 — 환송회 ────────────────────────────────────
+// 100일을 찍으면 원사 진급이고, 진급은 이 부대를 뜬다는 뜻이다. 그 마지막 밤이
+// 어떤 모습이냐를 정하는 것은 무사고 기록도 평판도 아니라 **행복도**다:
+// 기록은 주임원사가 가져가는 것이고, 밥상은 병사들이 차리는 것이라서다.
+export const FAREWELL_TONES = ['grand', 'thin', 'none'];
+
+/**
+ * 마지막 씬의 결. 행복도 하나가 정한다 — LLM은 이 갈래를 못 고른다.
+ *   grand — 거하게 차린다. 병사들이 앞에 나와 인사한다
+ *   thin  — 몇 명만 어정쩡하게 남는다
+ *   none  — 아무도 없다. 위병소까지 혼자 걸어 나간다
+ */
+export function farewellTone(happy) {
+  const h = clamp(happy);
+  if (h >= TUNING.farewell.grand) return 'grand';
+  if (h <= TUNING.farewell.empty) return 'none';
+  return 'thin';
+}
+
+/** 그 자리에서 입을 여는 인원. 결마다 다르고, 아무도 없는 밤은 0이다. */
+export const sendoffSize = tone => TUNING.farewell.speakers[tone] || 0;
+
+/**
+ * 환송회에서 입을 여는 놈들 — **잘 버틴 순**(멘탈 내림차순)이고, 같으면 짬 순이다.
+ * 사건 연루자 선정(pickInvolved)의 정확한 반대편이다: 사고는 무너진 놈들에게서 나고,
+ * 인사는 버틴 놈들이 한다. 난수를 안 쓴다 — 마지막 밤은 굴리는 자리가 아니다.
+ */
+export function pickSendoff(roster, tone) {
+  const n = sendoffSize(tone);
+  if (!n) return [];
+  const m = s => s.mental ?? TUNING.mental.default;
+  return roster.slice()
+    .sort((a, b) => m(b) - m(a) || String(a.joined).localeCompare(String(b.joined)))
+    .slice(0, n);
+}
 
 /** 게이지 하나를 화면에 그릴 때 쓰는 값 (평판 등 노출용). */
 export function gauge(value, max = SCALE.max) {

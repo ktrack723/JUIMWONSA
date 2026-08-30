@@ -1,6 +1,6 @@
 // prompts.js — 이 게임이 LLM에게 보내는 프롬프트 전부. 「프롬프트 하이어아키」 구조도 그대로다.
 //
-// 블록은 일곱이다. 이 밖의 프롬프트는 없다.
+// 블록은 여덟이다. 이 밖의 프롬프트는 없다.
 //
 //   U.   부대 프롬프트 — 호출이 아니라 재료. 모든 생성 호출의 system 접두사.
 //        ①문화 ②규정 ③병사간 룰 ④지능 서술 ⑤마초 서술 — ④⑤의 수치는 여기 없다.
@@ -14,6 +14,8 @@
 //   I-2. 불시점검 — 장소 + 그 장소가 드러내는 파라미터의 밴드 + **적발된 가라만** (놓친 것은 안 준다)
 //   N.   공지 판정 — 공지 원문 + 관행 static 대장 → 방향 셋 + 금지 목록 + 익명 반응 한 줄
 //        (반응은 화면에서 끝난다. 대장은 「존재하는 종류」이지 「지금 도는 것」이 아니다)
+//   F.   환송회 — 마지막 밤. 결(거하게/조촐하게/아무도 없음)은 **행복도가 코드로** 정하고,
+//        LLM은 그 자리와 인사말만 쓴다 (🟧 once, 부임당 한 번)
 //
 // system 접두사는 부임 내내 바이트 동일하다 — [WORLD][UNIT][ROLE] 순서로 조립하고,
 // 가변 데이터(밴드·명부·지침 목록)는 절대 system에 넣지 않는다. 전부 user 메시지로.
@@ -443,6 +445,95 @@ ${KO}`;
 export const noticeSystem = unit => sys(unit, N_ROLE);
 
 export const noticeUser = text => `[THE NOTICE, VERBATIM]\n"""\n${(text || '').trim()}\n"""\n\nJudge it and return the one line.`;
+
+// ── F. 환송회 — 마지막 씬. 부임당 한 콜, 그것도 마지막 밤에만 ──
+// 이 게임에서 유일하게 **끝을 쓰는** 블록이다. 100일을 찍으면 원사 진급이고,
+// 진급은 이 부대를 뜬다는 뜻이라 그날 밤이 마지막 밤이 된다.
+//
+// **무엇이 열리는지는 코드가 정한다** — 행복도 하나가 결(tone)을 뽑고(params.js의
+// farewellTone), 누가 나와서 입을 여는지도 코드가 고른다(pickSendoff). LLM이 하는 일은
+// 정해진 그 자리를 쓰는 것뿐이다: 거하게 차린 밥상이냐, 몇 명 남은 자리냐, 빈 식당이냐.
+// 모형에게 갈래를 맡기면 마지막 씬이 「모형이 후하게 봐주는 결말」로 표류한다.
+//
+// 파라미터는 여기서도 밴드까지고, 사고 누계는 숫자로 안 나간다 — 깨졌느냐 아니냐뿐이다.
+// 이 블록은 아무것도 안 민다: 게임이 끝난 자리라 되돌아갈 파라미터가 없다.
+export const FAREWELL_SCHEMA = {
+  type: 'object',
+  properties: {
+    scene: {
+      type: 'string',
+      description: 'Korean. 4-8 sentences: the last night as he walks into it. What the room looks like, what was laid out or was not, who is standing where. Physical and specific; no summary of the hundred days',
+    },
+    lines: {
+      type: 'array',
+      description: 'What the listed men say to his face, one entry per man, in the order they were listed. Empty array when nobody came',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Exactly one of the names listed in the request, copied character for character. Never invent a name' },
+          text: { type: 'string', description: 'Korean. 1-3 spoken sentences from that man to the sergeant major. A short action in parentheses is allowed' },
+        },
+        required: ['name', 'text'],
+        additionalProperties: false,
+      },
+    },
+    closing: {
+      type: 'string',
+      description: 'Korean. One or two sentences: what he sees or hears on his way out of the gate. The last line of the game — end it, do not open anything',
+    },
+  },
+  required: ['scene', 'lines', 'closing'],
+  additionalProperties: false,
+};
+
+const F_ROLE = `[ROLE — THE SEND-OFF]
+The run is over and the promotion went through. The sergeant major is leaving this unit
+tonight. You write that last night and nothing past it.
+
+[THE SHAPE IS ALREADY DECIDED — you write it, you do not vote on it]
+· grand — the men actually put something together: the mess hall rearranged, food and
+  drink scrounged and laid out, someone assigned to the lights, the whole unit in it.
+  This unit throws it in this unit's way, with its own jargon and its own music. Loud,
+  clumsy, genuinely warm. They came because these hundred days were survivable.
+· thin — a couple of men waited around because somebody had to. Nothing was prepared.
+  Short, awkward, over quickly, and not unkind.
+· none — nobody came. Write the empty room: the lights, what is still on the tables from
+  dinner, the sound of the place with nobody in it, what is audible from the barracks
+  that nobody left. **No dialogue at all** — the lines array must be empty. Do not
+  soften it, do not have one man appear late, do not let him be thanked from a window.
+  Nobody sends off a sergeant major the soldiers spent a hundred days enduring.
+
+[WHO SPEAKS]
+Only the men listed speak, each exactly once, in the order given, using the name given.
+Nobody else has a line — not an officer, not an unnamed soldier, not the player.
+
+[THANKS, IF IT IS SAID AT ALL]
+When these men thank him, they thank him for something specific that a conscript would
+actually notice: a night he was called into that office, a work detail called off, a
+punishment that did not come, being asked how he was by someone who could not order him
+to be fine. Never a speech, never a summary of his career, never a list of virtues.
+Gratitude here arrives sideways — through a joke, a bitten-off sentence, a salute held a
+beat too long — and it is more moving for it. A man who is genuinely grateful in this
+army sounds like a man who is embarrassed.
+
+[WHAT YOU NEVER SAY]
+No day counts, no readings, no numbers, no game mechanics. Nobody knows this was a game.
+${KO}`;
+
+export const farewellSystem = unit => sys(unit, F_ROLE);
+
+export function farewellUser({ tone, morale, clean, speakers = [] }) {
+  return `[THE LAST NIGHT — the run is done and he is leaving this unit]
+[SHAPE OF THE SEND-OFF — decided by the machine. Write this one] ${tone}
+[MORALE READING — a word for you only. Never repeat it, never number it] ${label(morale)}
+[THE RECORD] ${clean
+    ? 'the counter never once went back to zero while he held the post'
+    : 'the counter went back to zero more than once along the way, and he got here anyway'}
+[WHO SPEAKS — in this order, once each, by these names. Nobody else has a line]
+${speakers.length ? speakers.map(soldierSheet).join('\n\n') : '(nobody — write the empty room, and leave the lines empty)'}
+
+Write the last night.`;
+}
 
 // ── A. 병영 소음 — 부임 때 한 번, 100일 내내 재사용 ────────
 // 스프라이트가 통근하며 흘리는 한 줄짜리 대사 풀이다. **부임 시 한 콜**로 통째로 받아
