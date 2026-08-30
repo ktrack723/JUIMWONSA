@@ -1043,8 +1043,23 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 
 .notice-list { list-style: none; font-size: var(--fs-sm); }
 .notice-list li { padding: 3px 0; border-bottom: 1px dashed var(--ink-soft); display: flex; justify-content: space-between; gap: var(--s2); align-items: center; }
+/* 지침 원문이 길면 flex가 버튼을 짓눌러 「철/회」로 세로로 접힌다 — 버튼은 안 줄인다. */
+.notice-list li .btn95 { flex: 0 0 auto; white-space: nowrap; }
 
 .day-window { min-height: 340px; max-height: 56vh; overflow-y: auto; padding: var(--s3); }
+
+/* ── 하루의 머리 ──────────────────────────────────────────
+   어제 저녁점호와 오늘 아침 브리핑 사이의 유일한 경계다. 기록만 읽어도
+   어디부터가 오늘인지, 부임 며칠째인지, 무사고 며칠째인지가 보여야 한다. */
+.day-mark {
+  display: flex; justify-content: space-between; gap: var(--s2);
+  margin: var(--s3) 0 var(--s2);
+  padding: 3px var(--s2);
+  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 500;
+  color: var(--dlg); background: var(--ink-mid);
+  border-radius: 2px;
+}
+.day-mark:first-child { margin-top: 0; }
 .day-entry { white-space: pre-wrap; margin-bottom: var(--s3); padding: var(--s2) var(--s3); font-size: var(--fs-md); }
 .day-entry.briefing { background: var(--dlg-lit); border-left: 4px solid var(--file); }
 .day-entry.slot { color: var(--ink-mid); font-size: var(--fs-sm); padding: 2px var(--s3); }
@@ -1098,6 +1113,13 @@ label { display: block; font-weight: 500; font-size: var(--fs-sm); margin-bottom
 .cat-discipline .cat-art { border-color: var(--stamp); box-shadow: 0 0 0 2px rgba(143,34,38,.20); }
 .cat-personnel .cat-art { border-color: var(--file); box-shadow: 0 0 0 2px rgba(31,63,107,.20); }
 .day-entry .entry-body { white-space: pre-wrap; }
+
+/* 지침을 쓰기 직전에 뜨는 한 줄 — 「지금 내 말이 먹히는가」. */
+.standing-line {
+  margin: var(--s2) 0; padding: var(--s2) var(--s3);
+  font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 500;
+  background: var(--dlg-dim); border-left: 3px solid var(--file);
+}
 
 .intervene-tabs { display: flex; gap: var(--s2); margin: var(--s2) 0; }
 .iv-body { padding: var(--s2) 0; }

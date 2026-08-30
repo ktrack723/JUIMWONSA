@@ -48,9 +48,22 @@ export const TUNING = {
   },
 
   // 일일 드리프트 — 하루 마감에 적용. 각 파라미터 하루 최대 ±1칸.
+  //
+  // 「힘든 날」은 절대 눈금이 아니라 **그 부대의 평소 대비**다. 예전에는 난이도 8 이상을
+  // 힘든 날로 봤는데, 난이도가 그만큼 높게 저작된 부대에서는 「오늘 유난히 힘든 날」이
+  // 매일이 된다 — 그 부대에 그건 「유난히」가 아니라 「평소」다. 그래서 행복이 매일 −1씩
+  // 단조 감소하고, 일주일이면 0에 붙고, 열흘이면 전원 멘탈이 0이 됐다. 되돌릴 레버는
+  // 게임에 없었다(면담은 개인 멘탈만, 점검은 행복을 더 깎는다). 부대 데이터와 이 표가
+  // 어긋나 있었던 것이다 — 눈금을 상대치로 바꿔서 어느 난이도로 저작하든 성립하게 만든다.
+  //
+  // 난이도가 행복을 깎는 길은 달력이 아니라 **사고 롤**이다 (roll.hardSloppyPer):
+  // 힘든 일을 대충 하면 다치고, 사건이 나고, 그 판정이 행복을 민다. 여기서 또 깎으면
+  // 이중 과금이다. 달력이 하는 일은 둘로 줄였다 — 힘든 날은 싸울 기력이 없어 갈등이
+  // 내려가고(원래 주석 그대로다), 평소보다 편한 날(주말·비수기)은 숨통이 트인다.
   drift: {
     garaHigh: 7, garaLow: 3,      // 가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
-    hardDay: 8,                   // 난이도 이 이상이면 행복↓·갈등↓ (힘들면 싸울 기력도 없다)
+    hardOver: 1,                  // 평소보다 이만큼 힘든 날 — 싸울 기력도 없다 (갈등↓)
+    easyUnder: 1,                 // 평소보다 이만큼 편한 날 — 숨통이 트인다 (행복↑)
     happyLow: 3, happyHigh: 8,    // 행복↓ → 갈등↑, 행복↑ → 갈등↓
     conflictHigh: 7,              // 갈등↑ → 행복↓
   },
@@ -487,18 +500,33 @@ export function applyIntervention(params) {
 
 /**
  * 하루 마감 드리프트. 파라미터끼리 얽히는 공식 전부 — §4의 표 그대로다.
- * 각 파라미터 하루 최대 ±1칸. difficulty는 계절 보정을 거친 값이다.
+ * 각 파라미터 하루 최대 ±1칸.
+ *
+ * difficulty는 계절·주말 보정을 거친 **오늘의** 실효 난이도고, baseline은 **그 부대의
+ * 평소치**다(부대 프롬프트가 정한 static 값). 둘의 차이가 「오늘이 평소보다 힘든가」다 —
+ * 절대 눈금으로 보면 빡센 부대는 매일이 힘든 날이 되어 행복이 단조 감소한다(TUNING.drift 주석).
+ * baseline을 안 주면 오늘이 곧 평소다 — 힘들지도 편하지도 않은 날로 떨어진다.
+ *
+ * 아무 사유도 안 걸린 날은 **제자리로 한 칸 돌아온다.** 평판의 「개입 없는 조용한 날은
+ * +1 회복」과 같은 자리다: 방치한 부대는 나빠지는 게 아니라 평범해진다. 이게 없으면
+ * 어느 방향이든 한 번 밀린 값이 벽까지 가서 눌러앉는다(행복↓ → 갈등↑ → 행복↓의 되먹임).
  */
-export function applyDrift(params, difficulty, { interventions = 0 } = {}) {
+export function applyDrift(params, difficulty, { interventions = 0, baseline = difficulty } = {}) {
   const D = TUNING.drift;
+  const load = difficulty - baseline;   // 오늘이 이 부대의 평소보다 얼마나 힘든가
   let dHappy = 0, dConflict = 0;
 
   if (params.gara >= D.garaHigh) dHappy += 1;          // 편하니까
   if (params.gara <= D.garaLow) dHappy -= 1;           // FM대로 굴리면 힘들다
-  if (difficulty >= D.hardDay) { dHappy -= 1; dConflict -= 1; }  // 힘들면 싸울 기력도 없다
+  if (load >= D.hardOver) dConflict -= 1;              // 힘들면 싸울 기력도 없다
+  else if (load <= -D.easyUnder) dHappy += 1;          // 평소보다 편한 날 — 숨통이 트인다
   if (params.conflict >= D.conflictHigh) dHappy -= 1;  // 눌린 부대는 어둡다
   if (params.happy <= D.happyLow) dConflict += 1;      // 불행하면 싸운다
   if (params.happy >= D.happyHigh) dConflict -= 1;     // 행복하면 덜 싸운다
+
+  // 아무것도 안 민 축은 제자리로 — 부임 첫날의 부대가 이 부대의 「평소」다.
+  if (dHappy === 0) dHappy = Math.sign(TUNING.start.happy - params.happy);
+  if (dConflict === 0) dConflict = Math.sign(TUNING.start.conflict - params.conflict);
 
   const step = v => Math.max(-1, Math.min(1, v));
   return {

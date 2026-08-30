@@ -202,11 +202,40 @@ test('가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
   assert.equal(PM.applyDrift({ ...base, gara: 2 }, 5, { interventions: 1 }).happy, 4);
 });
 
-test('난이도가 높으면 행복도 갈등도 내려간다 — 힘들면 싸울 기력도 없다', () => {
+test('힘든 날은 그 부대의 평소 대비다 — 절대 눈금이 아니다', () => {
   const base = { gara: 5, happy: 5, conflict: 5, rep: 5 };
-  const out = PM.applyDrift(base, 9, { interventions: 1 });
-  assert.equal(out.happy, 4);
-  assert.equal(out.conflict, 4);
+  // 난이도 9라도 그게 이 부대의 평소면 힘든 날이 아니다. 평소보다 한 칸 높아야 힘든 날이다.
+  assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 9 }).conflict, 4,
+    '제자리 회복이 갈등을 5→4로 당겨야 한다');
+  assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 8 }).conflict, 4, '힘든 날인데 갈등이 안 내렸다');
+  // 힘든 날은 **갈등만** 민다 — 난이도가 행복을 깎는 길은 달력이 아니라 사고 롤이다
+  assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 8 }).happy, 5,
+    '달력이 행복을 직접 깎았다 — 사고 롤과 이중 과금이다');
+  // 평소보다 편한 날(주말)은 숨통이 트인다
+  assert.equal(PM.applyDrift({ ...base, happy: 3 }, 1, { interventions: 1, baseline: 8 }).happy, 4);
+});
+
+test('빡센 부대라고 행복이 매일 깎이지 않는다 — 되돌릴 레버가 없는 단조 감소는 게임이 아니다', () => {
+  // 난이도 8로 저작된 부대의 평일 100일. 예전에는 이레 만에 행복 0에 붙어 다시는 안 올라왔다.
+  let p = PM.initialParams();
+  for (let d = 0; d < 100; d++) p = PM.applyDrift(p, 8, { interventions: 0, baseline: 8 });
+  assert.ok(p.happy >= 4, `방치한 부대의 행복이 ${p.happy}까지 내려갔다`);
+  assert.ok(p.conflict <= 5, `방치한 부대의 갈등이 ${p.conflict}까지 올라갔다`);
+});
+
+test('아무것도 안 민 날은 제자리로 한 칸 돌아온다 — 평판의 조용한 날 회복과 같은 자리다', () => {
+  const calm = { gara: 5, happy: 5, conflict: 3, rep: 5 };
+  const still = PM.applyDrift(calm, 5, { interventions: 1, baseline: 5 });
+  assert.equal(still.happy, PM.TUNING.start.happy, '제자리에 있는 값이 움직였다');
+  assert.equal(still.conflict, PM.TUNING.start.conflict);
+  // 밀린 값은 제자리 쪽으로 한 칸씩 (한 번에 벽까지 가지 않는다)
+  assert.equal(PM.applyDrift({ ...calm, happy: 0 }, 5, { interventions: 1, baseline: 5 }).happy, 1);
+  assert.equal(PM.applyDrift({ ...calm, happy: 10 }, 5, { interventions: 1, baseline: 5 }).happy, 9);
+});
+
+test('baseline을 안 주면 오늘이 곧 평소다 — 옛 호출이 힘든 날로 오독되지 않는다', () => {
+  const base = { gara: 5, happy: 5, conflict: 5, rep: 5 };
+  assert.deepEqual(PM.applyDrift(base, 9, { interventions: 1 }), PM.applyDrift(base, 9, { interventions: 1, baseline: 9 }));
 });
 
 test('행복이 바닥이면 갈등이 오르고, 행복이 높으면 갈등이 내린다', () => {
@@ -217,8 +246,8 @@ test('행복이 바닥이면 갈등이 오르고, 행복이 높으면 갈등이 
 });
 
 test('드리프트는 하루 최대 ±1칸이다 — 겹쳐도 한 걸음', () => {
-  // 가라 2(행복↓) + 난이도 9(행복↓) + 갈등 8(행복↓) = 사유 셋이라도 −1
-  const out = PM.applyDrift({ gara: 2, happy: 5, conflict: 8, rep: 5 }, 9, { interventions: 1 });
+  // 가라 2(행복↓) + 갈등 8(행복↓) = 사유 둘이라도 −1
+  const out = PM.applyDrift({ gara: 2, happy: 5, conflict: 8, rep: 5 }, 9, { interventions: 1, baseline: 8 });
   assert.equal(out.happy, 4);
 });
 

@@ -147,7 +147,8 @@
             <div id="iv-inspect" class="iv-body hidden">
               <label>들이닥칠 장소 <select id="inspect-where"></select></label>
               <p class="dim small">들이닥치면 일은 각이 잡히고(<b>가라 −1</b>) 분위기는 가라앉는다(<b>행복 −1</b>).
-                소견은 장소마다 다르게 나온다 — 생활관은 갈등을, 작업장은 가라를 보여준다.</p>
+                <b>효과는 어디를 골라도 같다.</b> 갈리는 것은 소견이다 — 장소 이름 옆에 적힌 것이
+                그 장소가 드러내는 파라미터고, 소견은 그것만 보여준다.</p>
               <div class="radio-btns">
                 <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1 · 평판 −1)</button>
               </div>
@@ -168,6 +169,7 @@
           <div id="incident-panel" class="panel95 radio-panel hidden" data-title="❗ 사건 발생 · 대응 지침">
             <p class="radio-note"><b>사건은 아직 사고가 아니다.</b> 지침을 내리면 그대로 현장에 꽂힌다 — 채점되지 않는다.
               무시할 수도 있다. 그 경우 「개입 없음」으로 결과가 굴러간다. <b>확전으로 판정될 때만 사고다.</b></p>
+            <p id="incident-standing" class="standing-line"></p>
             <textarea id="incident-input" rows="3" placeholder="예: 둘 다 떼어놔라. 선임은 내 방으로, 후임은 의무대부터."></textarea>
             <div class="radio-btns">
               <button id="btn-incident-send" class="btn95 danger" type="button">지침 하달</button>

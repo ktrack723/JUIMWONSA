@@ -13,7 +13,7 @@ import { LlmClient, RefusalError, normalizeUsage } from './llm.js';
 import { Engine } from './engine.js';
 import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
-import { PLACES, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING } from './params.js';
+import { PLACES, PARAM_LABELS, BAND_LABELS, band, slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, TUNING } from './params.js';
 import { AmbientPool } from './ambient.js';
 import { Stage } from './sprites.js';
 import { sfx, toggleBgm, unlockAudio } from './audio.js';
@@ -55,6 +55,29 @@ function errMsg(e) {
   if (e instanceof RefusalError) return '연산 모형이 본 내용의 처리를 거부했다. 표현을 바꿔 재시도하라.';
   return `통신 사고 — ${e.message}`;
 }
+
+/** 패널 하나 여닫기. `hidden` 토글이 화면 곳곳에 흩어져 있던 것을 한 자리로 모은다. */
+const panel = (sel, open) => $(sel).classList.toggle('hidden', !open);
+
+/**
+ * 회선을 타는 일 하나를 감싼다 — 로딩 표시 · 실패 시 토스트 · 결과 반환.
+ * 개입 셋과 마지막 밤이 전부 같은 모양이었다: withLoading + try/catch + toast(errMsg).
+ * 실패는 null로 떨어진다. 부르는 쪽은 성공했을 때 할 일만 쓴다.
+ */
+async function attempt(label, fn, { onError = null } = {}) {
+  try {
+    return await withLoading(label, fn);
+  } catch (e) {
+    toast(errMsg(e));
+    onError?.(e);
+    return null;
+  }
+}
+
+/** 지금 화면이 살고 있는 날짜. 계급 표기가 전부 이걸 본다 — 날이 가면 계급이 오른다. */
+const today = () => state.engine.state.date;
+/** 병사 하나의 호칭 — 「1324기 일병 추판석」. 기수·계급은 그날 날짜로 계산된다. */
+const who = soldier => `${rankLine(state.unit, soldier, today())} ${soldier.name}`;
 
 // ── LLM 콘솔 ────────────────────────────────────────────
 llm.onLog((entry, usage) => {
@@ -152,14 +175,14 @@ async function startCampaign(unitId, savedState) {
   renderRoster();
   renderNotices();
   $('#day-window').innerHTML = '';
-  $('#dayend-panel').classList.add('hidden');
+  panel('#dayend-panel', false);
   runOneDay();
 }
 
 // ── 상황판 · 계기판 ─────────────────────────────────────
 function renderHud() {
   const s = state.engine.snapshot();
-  $('#hud-date').textContent = `${s.date} (${s.weekday}) · 부임 ${s.day}일차`;
+  $('#hud-date').textContent = `${s.date} (${s.weekday}) · 부임 ${s.dayNo}일차`;
   $('#hud-streak').textContent = `${s.streak}일 / ${s.goal}일`;
   $('#hud-review').textContent = s.reviewDate;
   $('#hud-accidents').textContent = `${s.accidents}건`;
@@ -374,16 +397,56 @@ function categoryBadge(cat, note = '') {
   return box;
 }
 
+/**
+ * 동향 기록에 하루의 머리를 박는다. 이게 없으면 어제 저녁점호와 오늘 아침 브리핑이
+ * 한 줄로 이어 붙어서, 스크롤해 올라간 유저가 어디부터가 오늘인지 못 가른다.
+ * 날짜·부임 며칠째·무사고 며칠째를 같이 적는다 — 상황판을 안 봐도 기록만으로 읽힌다.
+ */
+function dayMark(snap) {
+  const win = $('#day-window');
+  const el = document.createElement('div');
+  el.className = 'day-mark';
+  el.innerHTML = `<span>${escapeHtml(snap.date)} (${escapeHtml(snap.weekday)})</span>`
+    + `<span>부임 ${snap.dayNo}일차 · 무사고 ${snap.streak}일</span>`;
+  win.appendChild(el);
+  win.scrollTop = win.scrollHeight;
+}
+
+// 오늘 바늘이 어디로 갔는지 한 줄로. 개입도 판정도 드리프트도 조용히 미는 값이라,
+// 이 줄이 없으면 유저는 **왜** 행복도가 떨어졌는지 100일 내내 못 배운다.
+const MOVE_ORDER = ['gara', 'happy', 'conflict', 'rep'];
+function movedLine(moved) {
+  const parts = MOVE_ORDER.filter(k => moved[k]).map(k => `${PARAM_LABELS[k]} ${moved[k] > 0 ? '+' : '−'}${Math.abs(moved[k])}`);
+  return parts.length ? parts.join(' · ') : '바늘은 그대로다';
+}
+
+/**
+ * 평판이 지금 무슨 뜻인가 — 「내 지침이 먹히기는 하는가」.
+ * 밴드는 params.js가 계산하고(complianceOf), 그 밴드를 프롬프트는 영어로 받는다.
+ * 화면에 뜰 한국어는 화면 몫이라 여기 산다. 눈금 다섯이 밴드 다섯과 짝이다.
+ */
+const STANDING_KO = [
+  '씹힌다 — 대놓고 안 듣는다',
+  '마지못해 듣는다',
+  '절반쯤 먹힌다',
+  '대체로 먹힌다',
+  '글자 그대로 이행된다',
+];
+const standingNow = () => {
+  const rep = state.engine.state.params.rep;
+  return `${STANDING_KO[BAND_LABELS.indexOf(band(rep))]} (평판 ${rep}/10)`;
+};
+
 // ── 엔진 손잡이 — 하루의 전부가 여기로 들어온다 ─────────
 function makeHandlers() {
   return {
     briefing: async ({ date, briefing, arrivals, departures }) => {
       renderHud(); renderRoster(); renderTimeline(-1);
       stageTo(slotsFor(date)[0], []);
+      dayMark(state.engine.snapshot());
       await addEntry('briefing', `[아침 브리핑 · ${date}]\n${briefing}`);
-      const st = x => rankLine(state.unit, x, date);
-      for (const d of departures || []) await addEntry('sys', `${st(d)} ${d.name} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
-      for (const a of arrivals || []) await addEntry('sys', `${st(a)} ${a.name} 전입 신고 — ${a.job}, 군번 ${a.serial}.`, { typed: false });
+      for (const d of departures || []) await addEntry('sys', `${who(d)} 전역 신고. 위병소 밖은 그의 소관이 아니다.`, { typed: false });
+      for (const a of arrivals || []) await addEntry('sys', `${who(a)} 전입 신고 — ${a.job}, 군번 ${a.serial}.`, { typed: false });
     },
     slot: async ({ index, slot, line, chatter }) => {
       renderTimeline(index);
@@ -420,23 +483,30 @@ function makeHandlers() {
       renderHud(); renderTimeline(9); renderNotices();
       saveCampaign();
       if (snap.promoted) return await showPromotion(snap);
+      const t = snap.today || { incidents: 0, accidents: 0, interventions: 0, moved: {} };
+      // 「조용한 날」은 평판이 회복되는 날의 이름이다 — 개입까지 없어야 조용한 날이다.
+      const events = t.incidents
+        ? `사건 ${t.incidents}건 — ${t.accidents ? `그중 <b>사고 ${t.accidents}건</b>` : '전부 사고 전에 멈췄다'}.`
+        : t.interventions ? '사건 없음.' : '사건 없음. <b>조용한 날</b>이라 평판이 회복된다.';
       $('#dayend-text').innerHTML =
         `저녁점호 이상 무. <b>무사고 ${snap.streak}일차</b>로 하루를 닫는다.<br>` +
+        `${events} 개입 ${t.interventions}회.<br>` +
+        `<b>오늘 움직인 바늘:</b> ${escapeHtml(movedLine(t.moved))}<br>` +
         `다음 날: ${escapeHtml(snap.date)} (${escapeHtml(weekdayOf(snap.date))}) · 진급 심사일 ${escapeHtml(snap.reviewDate)}`;
-      $('#dayend-panel').classList.remove('hidden');
+      panel('#dayend-panel', true);
     },
   };
 }
 
 async function runOneDay() {
-  $('#dayend-panel').classList.add('hidden');
+  panel('#dayend-panel', false);
   try {
     await state.engine.runDay();
   } catch (e) {
     toast(`${errMsg(e)} — 브리핑부터 다시 연다.`);
     $('#dayend-text').textContent = '회선이 끊겨 하루가 열리지 못했다. 다시 시도하라.';
     $('#btn-next-day').textContent = '재시도 — 아침점호 ▶';
-    $('#dayend-panel').classList.remove('hidden');
+    panel('#dayend-panel', true);
     return;
   }
   $('#btn-next-day').textContent = '다음 날 아침점호 ▶';
@@ -449,7 +519,7 @@ async function showPromotion(snap) {
     (acc ? `그동안 사고 ${acc}건을 딛고 온 길이다. 병사들은 아무도 축하한다는 말을 안 했지만, 오늘 배식줄이 이상하게 조용했다.`
       : `부임 후 단 한 건도 터뜨리지 않았다. 완벽한 100일 — 심사장에서 아무도 그 말을 믿지 않았다.`) +
     `<br>진급은 이 부대를 뜬다는 뜻이다. <b>오늘이 마지막 밤이다.</b>`;
-  $('#promo-panel').classList.remove('hidden');
+  panel('#promo-panel', true);
   sfx.fanfare();
   await runFarewell();
 }
@@ -482,21 +552,16 @@ const FAREWELL_SCENES = {
 };
 
 async function runFarewell() {
-  const panel = $('#farewell-panel'), retry = $('#btn-farewell-retry'), end = $('#btn-farewell-end');
-  panel.classList.add('hidden');
-  retry.classList.add('hidden');
-  end.classList.add('hidden');
+  for (const sel of ['#farewell-panel', '#btn-farewell-retry', '#btn-farewell-end']) panel(sel, false);
 
-  let out;
-  try {
-    out = await withLoading('마지막 밤 — 부대로 돌아가는 중', () => state.engine.farewell());
-  } catch (e) {
-    toast(errMsg(e));
-    $('#farewell-text').textContent = '회선이 끊겨 마지막 밤이 열리지 못했다. 다시 시도하라.';
-    retry.classList.remove('hidden');
-    panel.classList.remove('hidden');
-    return;
-  }
+  const out = await attempt('마지막 밤 — 부대로 돌아가는 중', () => state.engine.farewell(), {
+    onError: () => {
+      $('#farewell-text').textContent = '회선이 끊겨 마지막 밤이 열리지 못했다. 다시 시도하라.';
+      panel('#btn-farewell-retry', true);
+      panel('#farewell-panel', true);
+    },
+  });
+  if (!out) return;
   saveCampaign();
 
   const sc = FAREWELL_SCENES[out.tone] || FAREWELL_SCENES.thin;
@@ -508,29 +573,33 @@ async function runFarewell() {
   // 입을 여는 놈은 코드가 고른 그 몇 명뿐이다 — 엔진이 명부 밖 이름을 이미 걸러 놓았다.
   for (const l of out.lines) {
     const man = state.roster.bySerial(l.serial);
-    const who = man ? `${rankLine(state.unit, man, state.engine.state.date)} ${man.name}` : l.name;
-    await addEntry('sendoff', `${who}: ${l.text}`);
+    await addEntry('sendoff', `${man ? who(man) : l.name}: ${l.text}`);
   }
   if (out.closing) await addEntry('closing', out.closing);
 
   $('#farewell-text').innerHTML = `<b>${escapeHtml(sc.note)}</b><br>` +
     `${escapeHtml(state.unit.name)} 근무 끝. 무사고 ${TUNING.goal}일 · 사고 누계 ${state.engine.snapshot().accidents}건.`;
-  end.classList.remove('hidden');
-  panel.classList.remove('hidden');
+  panel('#btn-farewell-end', true);
+  panel('#farewell-panel', true);
   // 게임의 마지막 버튼이다 — 접혀 있는 자리에서 끝나지 않게 화면으로 끌어온다.
-  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  $('#farewell-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ── 사건 대응 입력 ──────────────────────────────────────
 function askDirective() {
   return new Promise(resolve => {
-    const panel = $('#incident-panel');
     const input = $('#incident-input');
     input.value = '';
-    panel.classList.remove('hidden');
+    // 지침을 쓰기 **전에** 그 지침이 먹힐지를 알려준다. 평판은 계기판에 떠 있지만
+    // 숫자 5가 「현장에서 절반쯤 먹힌다」라는 뜻인 줄은 화면이 말해 줘야 안다 —
+    // 이 한 줄이 없으면 유저는 말이 안 서는 줄도 모르고 지침을 쓴다.
+    $('#incident-standing').textContent = `지금 당신의 말: ${standingNow()}`;
+    panel('#incident-panel', true);
+    // 사건이 열리면 손이 갈 자리가 화면 밖에 있으면 안 된다 — 입력칸을 끌어온다.
+    $('#incident-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     input.focus();
     const done = v => {
-      panel.classList.add('hidden');
+      panel('#incident-panel', false);
       sendBtn.removeEventListener('click', onSend);
       skipBtn.removeEventListener('click', onSkip);
       resolve(v);
@@ -548,20 +617,18 @@ function holdGate() {
   if (!state.holdWanted) return Promise.resolve();
   state.holdWanted = false;
   $('#btn-hold').classList.remove('armed');
-  $('#intervene-panel').classList.remove('hidden');
+  panel('#intervene-panel', true);
   showIvTab('interview');
   return new Promise(resolve => { state.holdRelease = resolve; });
 }
 function releaseHold() {
-  $('#intervene-panel').classList.add('hidden');
+  panel('#intervene-panel', false);
   closeInterview();
   const f = state.holdRelease; state.holdRelease = null;
   if (f) f();
 }
 function showIvTab(tab) {
-  for (const t of ['interview', 'inspect', 'notice']) {
-    $(`#iv-${t}`).classList.toggle('hidden', t !== tab);
-  }
+  for (const t of ['interview', 'inspect', 'notice']) panel(`#iv-${t}`, t === tab);
   $$('.iv-tab').forEach(b => b.classList.toggle('danger', b.dataset.tab === tab));
 }
 
@@ -569,7 +636,7 @@ function showIvTab(tab) {
 function closeInterview() {
   state.interviewHandle = null;
   $('#interview-log').innerHTML = '';
-  $('#interview-more').classList.add('hidden');
+  panel('#interview-more', false);
   $('#btn-interview-send').disabled = false;
 }
 
@@ -578,19 +645,15 @@ async function doInterview() {
   const q = $('#interview-q').value.trim();
   if (!serial || !q) return toast('병사와 질문을 정하라.');
   $('#btn-interview-send').disabled = true;
-  try {
-    const h = await withLoading('병사 호출 중', () => state.engine.interview(serial, q));
-    state.interviewHandle = h;
-    const who = `${rankLine(state.unit, h.soldier, state.engine.state.date)} ${h.soldier.name}`;
-    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who)}: ${escapeHtml(h.reply)}</p>`
-      + `<p class="iv-heal">멘탈 ${h.mental.before} → <b>${h.mental.after}</b> — 들어준 만큼은 남는다</p>`;
-    $('#interview-more').classList.remove('hidden');
-    renderHud(); renderRoster();
-    saveCampaign();
-  } catch (e) {
-    toast(errMsg(e));
-    $('#btn-interview-send').disabled = false;
-  }
+  const h = await attempt('병사 호출 중', () => state.engine.interview(serial, q),
+    { onError: () => { $('#btn-interview-send').disabled = false; } });
+  if (!h) return;
+  state.interviewHandle = h;
+  $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who(h.soldier))}: ${escapeHtml(h.reply)}</p>`
+    + `<p class="iv-heal">멘탈 ${h.mental.before} → <b>${h.mental.after}</b> — 들어준 만큼은 남는다</p>`;
+  panel('#interview-more', true);
+  renderHud(); renderRoster();
+  saveCampaign();
 }
 
 async function doInterviewMore() {
@@ -598,35 +661,31 @@ async function doInterviewMore() {
   const q = $('#interview-q2').value.trim();
   if (!h || !q) return;
   $('#interview-q2').value = '';
-  try {
-    const out = await withLoading('면담 중', () => h.ask(q));
-    const who = `${rankLine(state.unit, h.soldier, state.engine.state.date)} ${h.soldier.name}`;
-    $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who)}: ${escapeHtml(out)}</p>`;
-  } catch (e) { toast(errMsg(e)); }
+  const out = await attempt('면담 중', () => h.ask(q));
+  if (out == null) return;
+  $('#interview-log').innerHTML += `<p class="iv-q">나: ${escapeHtml(q)}</p><p class="iv-a">${escapeHtml(who(h.soldier))}: ${escapeHtml(out)}</p>`;
 }
 
 async function doInspect() {
   const key = $('#inspect-where').value;
-  try {
-    const out = await withLoading('군기 점검 중', () => state.engine.inspect(key));
-    await addEntry('inspect', `🔦 군기 점검 · ${out.place}\n${out.findings}`, { typed: false });
-    renderHud();
-    saveCampaign();
-    toast('각 잡혔다 — 가라 −1 · 행복 −1 · 평판 −1');
-  } catch (e) { toast(errMsg(e)); }
+  const out = await attempt('군기 점검 중', () => state.engine.inspect(key));
+  if (!out) return;
+  await addEntry('inspect', `🔦 군기 점검 · ${out.place}\n${out.findings}`, { typed: false });
+  renderHud();
+  saveCampaign();
+  toast('각 잡혔다 — 가라 −1 · 행복 −1 · 평판 −1');
 }
 
 async function doNotice() {
   const text = $('#notice-input').value.trim();
   if (!text) return toast('빈 공지는 게시할 수 없다.');
-  try {
-    const out = await withLoading('공지 게시 중', () => state.engine.postNotice(text));
-    $('#notice-input').value = '';
-    renderNotices();
-    renderHud();
-    saveCampaign();
-    await addEntry('sys', `📢 공지 게시. 어디선가 한마디 — "${out.reaction}"`, { typed: false });
-  } catch (e) { toast(errMsg(e)); }
+  const out = await attempt('공지 게시 중', () => state.engine.postNotice(text));
+  if (!out) return;
+  $('#notice-input').value = '';
+  renderNotices();
+  renderHud();
+  saveCampaign();
+  await addEntry('sys', `📢 공지 게시. 어디선가 한마디 — "${out.reaction}"`, { typed: false });
 }
 
 // ── 배선 ────────────────────────────────────────────────
@@ -658,14 +717,19 @@ function wire() {
   $('#btn-interview-send').addEventListener('click', doInterview);
   $('#btn-interview-more').addEventListener('click', doInterviewMore);
   $('#btn-interview-close').addEventListener('click', () => { closeInterview(); $('#interview-q').value = ''; });
-  $('#inspect-where').innerHTML = Object.entries(PLACES).map(([k, p]) => `<option value="${k}">${escapeHtml(p.label)}</option>`).join('');
+  // 장소마다 드러나는 것이 다르다 — 대응표가 코드에 있는데 화면에 없으면
+  // 유저는 여덟 개 중 무엇을 골라야 하는지 알 길이 없다. 표를 그대로 옵션에 싣는다.
+  // 조사는 안 붙인다: 「가라가」와 「평판이」를 가르려면 받침을 봐야 하는데,
+  // 그 규칙을 이 한 줄 때문에 들여올 값은 안 된다.
+  $('#inspect-where').innerHTML = Object.entries(PLACES).map(([k, p]) =>
+    `<option value="${k}">${escapeHtml(p.label)} — ${escapeHtml(p.reveals.map(r => PARAM_LABELS[r]).join(' · '))}</option>`).join('');
   $('#btn-inspect-go').addEventListener('click', doInspect);
   $('#btn-notice-post').addEventListener('click', doNotice);
   $('#btn-next-day').addEventListener('click', () => { sfx.click(); runOneDay(); });
   $('#btn-farewell-retry').addEventListener('click', () => { sfx.click(); runFarewell(); });
   $('#btn-farewell-end').addEventListener('click', () => {
     sfx.click();
-    $('#farewell-panel').classList.add('hidden');
+    panel('#farewell-panel', false);
     renderUnits();
     show('unit');
   });

@@ -50,7 +50,7 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
-  minMentalOf, applyInspection, categoryFor, farewellTone, pickSendoff, PLACES, TUNING,
+  minMentalOf, applyInspection, categoryFor, farewellTone, pickSendoff, PARAM_KEYS, PLACES, TUNING,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
 import { AmbientPool } from './ambient.js';
@@ -131,6 +131,9 @@ export class Engine {
     return {
       unitId: s.unitId,
       date: s.date, day: s.day, weekday: weekdayOf(s.date),
+      // day는 「마감한 날 수」고, dayNo는 **지금 date가 부임 며칠째인가**다. 화면이 쓰는 건
+      // 언제나 뒤쪽이다 — 첫날에 「부임 0일차」라고 쓰면 달력과 한 칸 어긋난다.
+      dayNo: s.day + 1,
       streak: s.streak, goal: TUNING.goal,
       reviewDate: reviewDate(s.date, s.streak),
       accidents: s.accidents.length,
@@ -290,6 +293,9 @@ export class Engine {
     const effDiff = effectiveDifficulty(this.unit.difficulty, date);
     const slots = slotsFor(date);
     const incidents = [];   // 오늘의 사건 기록 (코드 요약용)
+    // 새벽의 바늘. 하루가 끝나면 여기와 비교해 「오늘 무엇이 얼마나 움직였나」를 만든다 —
+    // 개입·판정·드리프트가 각자 조용히 미는 값이라, 이 차이 말고는 화면이 알 길이 없다.
+    const dawn = { ...s.params };
 
     try {
       // 병영 소음이 아직 없으면 여기서 한 번 채운다 (부임 첫날 한 콜).
@@ -356,14 +362,33 @@ export class Engine {
       for (const man of this.roster.soldiers) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
       this.roster.save();
 
-      s.params = applyDrift(s.params, effDiff, { interventions: this.interventionsToday });
+      s.params = applyDrift(s.params, effDiff, {
+        interventions: this.interventionsToday,
+        baseline: this.unit.difficulty,   // 「오늘이 평소보다 힘든가」는 이 부대 기준이다
+      });
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures);
       s.date = dateAdd(date, 1);
       s.day += 1;
       if (isPromoted(s.streak)) s.promoted = true;
-      await this.h.dayEnd?.(this.snapshot());
-      return this.snapshot();
+
+      // 오늘의 장부 — 화면이 마감에 「무슨 일이 있었고 바늘이 어디로 갔는지」를 쓴다.
+      const ledger = {
+        date,
+        incidents: incidents.length,
+        accidents: incidents.filter(i => i.escalated).length,
+        interventions: this.interventionsToday,
+        moved: PARAM_KEYS.reduce((acc, k) => {
+          const d = s.params[k] - dawn[k];
+          if (d) acc[k] = d;
+          return acc;
+        }, {}),
+        arrivals: arrivals.map(a => a.name),
+        departures: departures.map(d => d.name),
+      };
+      const snap = { ...this.snapshot(), today: ledger };
+      await this.h.dayEnd?.(snap);
+      return snap;
     } finally {
       this.running = false;
       this.thread = [];   // 100일치 원문을 끌고 다니지 않는다 — 내일은 코드 요약으로 시작한다
@@ -461,6 +486,17 @@ export class Engine {
   // ── 일과 중 개입 셋 — 전부 평판 −1. 개입 횟수가 곧 평판이다 ──
 
   /**
+   * 개입 하나의 값을 치른다. 셋이 전부 같은 값이라 여기 한 자리에 둔다 —
+   * 넷째 레버가 생겨도 이걸 안 부르면 공짜 개입이 되어 규칙이 깨진다.
+   * 오늘의 개입 횟수는 하루 마감의 「조용한 날 회복」과 장부가 같이 본다.
+   */
+  #charge() {
+    this.state.params = applyIntervention(this.state.params);
+    this.interventionsToday += 1;
+  }
+
+
+  /**
    * I-1. 면담 — 상담이다. 병사를 불러 이야기를 들어주고, 그 자리가 **멘탈을 +1 회복**시킨다.
    * 파라미터가 계기판에 다 떠 있는 게임에서 면담의 일은 정보 캐기가 아니라 사람 붙잡기다:
    * 계기판의 멘탈 낮은 놈을 골라 부르는 것이 곧 큰 사고(자해·탈영) 예방이다.
@@ -470,8 +506,7 @@ export class Engine {
   async interview(serial, question) {
     const soldier = this.roster.bySerial(serial);
     if (!soldier) throw new Error(`명부에 없는 군번: ${serial}`);
-    this.state.params = applyIntervention(this.state.params);
-    this.interventionsToday += 1;
+    this.#charge();
 
     // 병사의 체감 밴드 — 부대 지표가 아니라 자기 주변이다. 한 칸 오차의 사견이 낀다.
     // 제 마음(spirit)만은 오차 없이 제 것이다 — dressed()가 그 병사의 멘탈 밴드를 싣는다.
@@ -511,8 +546,7 @@ export class Engine {
   async inspect(placeKey) {
     const place = PLACES[placeKey];
     if (!place) throw new Error(`대응표에 없는 장소: ${placeKey}`);
-    this.state.params = applyIntervention(this.state.params);
-    this.interventionsToday += 1;
+    this.#charge();
 
     const NAMES = { gara: 'corner-cutting', happy: 'morale', conflict: 'friction-and-abuse' };
     const readings = Object.fromEntries(place.reveals.map(k => [NAMES[k], band(this.state.params[k])]));
@@ -534,8 +568,7 @@ export class Engine {
   async postNotice(text) {
     const t = String(text || '').trim();
     if (!t) throw new Error('빈 공지는 게시할 수 없다');
-    this.state.params = applyIntervention(this.state.params);
-    this.interventionsToday += 1;
+    this.#charge();
     this.state.notices.push(t);
 
     let out;
