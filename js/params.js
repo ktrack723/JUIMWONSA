@@ -38,11 +38,14 @@ export const TUNING = {
   roll: {
     base: 0.015,          // 아무 일 없어도 군대는 군대다
     machoPer: 0.006,      // 마초 1당
-    hardSloppyPer: 0.03,  // 힘든 일을 대충 하면 다친다 — max(0, 가라+난이도−10) 1당
+    hardSloppyPer: 0.015, // 힘든 일을 대충 하면 다친다 — max(0, 가라+난이도−10) 1당.
+                          // 0.03이던 것을 반으로 내렸다: 난이도 8 부대가 하루 0.89건이라
+                          // 하루가 7.5콜이 되고 플레이어가 매일 지침을 쓰는 게임이 됐다(실측).
     dumbSloppyPer: 0.02,  // 대충할 머리가 안 됨 — max(0, 가라−지능) 1당
     suppressAt: 5,        // 갈등이 이 이상이면 잔사고가 줄어든다 (군기가 눌러 놓는다)
     suppress: 0.02,       // 억제분
     big: { open: 8, per: 0.02 },  // 8을 넘기면 큰 사고 전용 위험이 열린다
+    pullPer: 0.22,        // 성향 1당 그 성향이 당기는 씨앗의 무게 (params.pullWeight)
     slotMult: {           // 슬롯 성격 보정 — 일과 슬롯이 제일 위험하고 수면은 조용하다
       work: 1.5, meal: 0.8, rest: 1.0, rollcall: 0.7, sleep: 0.4,
     },
@@ -79,7 +82,21 @@ export const TUNING = {
     neutral: 5,
     openPer: 0.4,     // 전우애 1당 큰사고 문턱(갈등)이 이만큼 움직인다
     bigPer: 0.08,     // 전우애 1당 초과분 가중이 이만큼 (낮을수록 크게 번진다)
-    smallPer: 0.004,  // 전우애 1당 작은사건 위험 (낮을수록 잦다)
+    smallPer: 0.005,  // 전우애 1당 작은사건 위험 (낮을수록 잦다). 0.004에서 조금 올렸다 —
+                      // 서로 남인 부대에서 작은 마찰이 그대로 사건이 되는 것이 이 축의 값인데,
+                      // 그 값이 너무 작아서 편한 부대가 그냥 편하기만 했다(실측: 열엿새 중
+                      // 열엿새가 사건 없는 날 → 방치가 최적 전략).
+    // 전우애는 **부대 분위기로부터 개인을 지키는 방패**이기도 하다. 문턱을 이만큼 민다:
+    // 끈끈한 부대는 분위기가 어지간히 나빠도 사람이 안 무너지고, 조금만 좋아져도 회복한다.
+    // 서로 남인 부대는 반대다 — 그게 「틀어지면 아무도 안 말린다」의 기계판이다.
+    mentalPer: 0.4,
+    // 회복은 **하루에 몇 명인가**로 갈린다. 눈금(문턱)으로 가르면 어느 쪽이든 깨진다:
+    // 문턱을 낮추면 열여섯 명이 전부 매일 회복해 큰 사고의 문이 통째로 닫히고(실측: 여드레
+    // 만에 전원 만점), 높이면 회복이 0이 되어 멘탈이 갉이기만 하는 한 방향 자원이 된다.
+    // 하락은 분위기라서 전원에게 붙지만, 회복은 **누가 누구를 챙기느냐**라서 인원이 있다.
+    // 끈끈한 부대는 하루 둘이 돌아오고, 중간은 하나, 서로 남인 부대는 **아무도 안 돌아온다** —
+    // 그 부대에서 사람을 돌려놓는 길은 주임원사의 면담 하나뿐이다. 그게 그 부대의 게임이다.
+    recoverPer: 0.25,
   },
 
   // 계절 보정 — 여름 혹서기·겨울 제설이 일과 난이도에 +1. 주말은 일과 없음.
@@ -101,13 +118,23 @@ export const TUNING = {
   mental: {
     start: { base: 6, jitter: 2 },    // 전입 시 base ± jitter에서 굴린다
     charPenalty: { '최악': -2, '하': -1 },  // 인성 하위는 낮게 시작한다 — 버티는 힘도 인성이다
-    driftHappyHigh: 8, driftHappyLow: 3,    // 부대가 밝으면 +1, 어두우면 −1
-    driftConflictHigh: 7,                   // 눌린 부대는 추가로 −1
+    // 회복 눈금을 8에서 6으로 내렸다. 8은 **부임 상태(행복 5)에서 닿지 않는 자리**라,
+    // 두 부대 모두 「멘탈이 갉이기만 하고 회복은 없는」 죽은 구간에 앉아 있었다(실측: 어느
+    // 플레이를 해도 최저 멘탈이 0으로 갔다). 6으로 내리면 전우애가 이 눈금을 갈라 놓는다 —
+    // 끈끈한 부대는 평범한 분위기(5)만 돼도 사람이 알아서 회복되고, 서로 남인 부대는
+    // 7 이상이라야 회복된다. 그래서 **얕은 부대에서는 면담이 유일한 회복 통로**가 된다.
+    driftHappyHigh: 6, driftHappyLow: 3,    // 부대가 밝으면 +1, 어두우면 −1 (전우애가 이 눈금을 민다)
+    driftConflictHigh: 7,                   // 눌린 부대는 추가로 −1 (여기도 전우애가 민다)
+    startComradePer: 0.2,                   // 전우애 1당 전입 멘탈 굴림의 중심이 이만큼 오른다
     incidentHit: -1,                  // 사건에 연루되면
     escalationHit: -1,                // 그 사건이 사고가 되면 추가로
     counsel: +1,                      // 면담(상담) 한 번에
     dangerAt: 2,                      // 이 이하로 떨어진 병사가 있으면 큰 사고 전용 위험이 열린다
-    dangerPer: 0.02,                  // 위험 눈금 1칸당
+    // 위험 눈금 1칸당. 0.02에서 0.006으로 내렸다 — 이 위험은 **슬롯마다** 굴러서,
+    // 한 명이 바닥나면 하루 아홉 번 굴린 것이 중대 사건 0.5건/일이 됐다. 그러면 얕은 부대는
+    // 「한 명이 무너짐 → 사건 폭증 → 더 무너짐」의 뒤집을 수 없는 나선에 들어간다(실측:
+    // 어떤 플레이를 해도 완주율 0%). 한 사람이 무너지는 것은 하루에 아홉 번 물을 일이 아니다.
+    dangerPer: 0.006,
     default: 6,                       // 멘탈 없는 옛 저장분을 읽을 때
   },
 
@@ -510,7 +537,7 @@ export function absenceFor(categoryId, rng = Math.random) {
 // 항목마다의 근거는 docs/research.md §14.
 export const EVENT_POOL = [
   // 부상·안전사고 — 제일 흔한 자리
-  { id: 'sports-injury', tier: 'minor', cat: 'injury', kinds: ['rest'], place: 'worksite', involved: 2, weight: 3, desc: '족구·축구 중 부상 정황' },
+  { id: 'sports-injury', tier: 'minor', cat: 'injury', kinds: ['rest'], place: 'worksite', involved: 2, weight: 3, pull: 'macho', desc: '족구·축구 중 부상 정황' },
   { id: 'work-accident', tier: 'minor', cat: 'injury', kinds: ['work'], place: 'worksite', involved: 1, weight: 3, desc: '작업 중 안전사고 직전 상황' },
   { id: 'mess-burn', tier: 'minor', cat: 'injury', kinds: ['meal'], place: 'messhall', involved: 1, weight: 2, desc: '취사장 화상·배식 사고 정황' },
   // 차량·중장비
@@ -521,7 +548,7 @@ export const EVENT_POOL = [
   { id: 'kitchen-gas', tier: 'minor', cat: 'blast', kinds: ['meal'], place: 'messhall', involved: 1, weight: 1, desc: '취사장 가스·튀김유 과열 — 연기가 올라온다' },
   // 총기·탄약
   { id: 'ammo-count', tier: 'minor', cat: 'firearm', kinds: ['work', 'rollcall'], place: 'armory', involved: 1, weight: 1, desc: '탄약 수불부와 실물 수량이 안 맞는다' },
-  { id: 'muzzle-play', tier: 'minor', cat: 'firearm', kinds: ['work', 'rest'], place: 'armory', involved: 2, weight: 1, desc: '총기 수입 중 장난 — 총구가 사람을 향했다' },
+  { id: 'muzzle-play', tier: 'minor', cat: 'firearm', kinds: ['work', 'rest'], place: 'armory', involved: 2, weight: 1, pull: 'macho', desc: '총기 수입 중 장난 — 총구가 사람을 향했다' },
   // 경계·근무 실패
   { id: 'post-empty', tier: 'minor', cat: 'guard', kinds: ['rollcall', 'sleep'], place: 'guardpost', involved: 1, weight: 2, desc: '근무자가 초소에 없다 — 교대 기록도 비었다' },
   { id: 'perimeter-gap', tier: 'minor', cat: 'guard', kinds: ['work', 'rollcall'], place: 'guardpost', involved: 1, weight: 1, desc: '외곽 순찰 기록에 공백 — 철조망 쪽에 흔적이 있다' },
@@ -538,6 +565,19 @@ export const EVENT_POOL = [
   { id: 'leave-overdue', tier: 'minor', cat: 'absent', kinds: ['rollcall'], place: 'guardpost', involved: 1, weight: 2, desc: '휴가 복귀 시간이 지났는데 연락이 안 된다' },
   // 보급·물자
   { id: 'gear-missing', tier: 'minor', cat: 'supply', kinds: ['work', 'rollcall'], place: 'storage', involved: 1, weight: 2, desc: '보급품·장비 수량 불일치 발견' },
+  // ── 증명하려고 하는 짓 — 아무도 안 시켰다 ──────────────
+  // 마초가 높은 부대에서 사내다움은 증명해야 하는 것이고, 증명은 몸으로 한다.
+  // 유형은 기존 열둘 안에 그대로 떨어진다(부상·보건) — 새 그림이 필요 없다.
+  { id: 'macho-dare', tier: 'minor', cat: 'injury', kinds: ['rest', 'work'], place: 'worksite', involved: 2, weight: 3, pull: 'macho', desc: '내기가 붙었다 — 아무도 안 시킨 짓을 하고 있다' },
+  { id: 'cold-plunge', tier: 'minor', cat: 'health', kinds: ['rest'], place: 'guardpost', involved: 2, weight: 2, pull: 'macho', desc: '한겨울에 웃통을 벗고 있다. 말리는 놈이 없다' },
+  { id: 'hide-injury', tier: 'minor', cat: 'injury', kinds: ['work', 'rollcall'], place: 'barracks', involved: 1, weight: 3, pull: 'macho', desc: '다친 걸 숨기고 있다 — 의무대 가는 걸 지는 걸로 안다' },
+  { id: 'bare-hands', tier: 'minor', cat: 'injury', kinds: ['work'], place: 'storage', involved: 2, weight: 2, pull: 'macho', desc: '장비를 맨손으로 든다. 보호구는 옆에 놓여 있다' },
+  // ── 조용해지는 것 — 소리가 안 나서 늦게 안다 ────────────
+  // 전우애가 얕은 부대에서 사람은 큰 소리가 아니라 조용히 무너진다.
+  { id: 'quiet-one', tier: 'minor', cat: 'abuse', becomes: 'selfharm', kinds: ['meal', 'rest'], place: 'messhall', involved: 1, weight: 3, pull: 'lonely', desc: '한 명이 며칠째 아무하고도 말을 안 한다' },
+  { id: 'chat-room', tier: 'minor', cat: 'abuse', kinds: ['rest', 'sleep'], place: 'barracks', involved: 2, weight: 3, pull: 'lonely', desc: '단체방이 하나 더 파였다 — 한 명만 빼고' },
+  { id: 'no-sleep', tier: 'minor', cat: 'health', becomes: 'selfharm', kinds: ['sleep', 'rollcall'], place: 'barracks', involved: 1, weight: 2, pull: 'lonely', desc: '며칠째 잠을 안 잔 놈이 있다. 사지방 불이 새벽까지 켜져 있다' },
+  { id: 'polite-cut', tier: 'minor', cat: 'abuse', kinds: ['work', 'meal'], place: 'office', involved: 2, weight: 2, pull: 'lonely', desc: '정중한 말로 한 사람을 잘라냈다 — 아무도 목소리를 안 높였다' },
   // 보건·환자
   { id: 'food-illness', tier: 'minor', cat: 'health', kinds: ['meal'], place: 'messhall', involved: 2, weight: 2, desc: '같은 식탁에서 여럿이 복통을 호소한다' },
   { id: 'heat-casualty', tier: 'minor', cat: 'health', kinds: ['work'], place: 'worksite', involved: 1, weight: 2, desc: '작업 중 한 명의 얼굴이 하얗다 — 온열·한랭 손상 정황' },
@@ -546,10 +586,10 @@ export const EVENT_POOL = [
   { id: 'civil-damage', tier: 'minor', cat: 'outside', kinds: ['work'], place: 'worksite', involved: 2, weight: 1, desc: '작업 중 민간 담장·차량을 건드렸다는 민원' },
 
   // ── 큰 사건 — 갈등이 8을 넘겨야 열린다 ──
-  { id: 'desertion-sign', tier: 'major', cat: 'absent', kinds: ['rollcall', 'work'], place: 'barracks', involved: 1, weight: 2, desc: '탈영 의심 — 관물대가 비어 있다' },
-  { id: 'selfharm-sign', tier: 'major', cat: 'selfharm', kinds: ['rest', 'sleep'], place: 'barracks', involved: 1, weight: 2, desc: '자해 정황 — 혼자 있으려는 병사' },
-  { id: 'group-abuse', tier: 'major', cat: 'abuse', kinds: ['rest', 'sleep', 'meal'], place: 'barracks', involved: 2, weight: 2, desc: '집단 따돌림·구타 정황이 드러남' },
-  { id: 'unauthorized-drill', tier: 'major', cat: 'abuse', kinds: ['work', 'rest'], place: 'worksite', involved: 2, weight: 1, desc: '규정 밖 얼차려 — 완전군장으로 세워 놨다' },
+  { id: 'desertion-sign', tier: 'major', cat: 'absent', kinds: ['rollcall', 'work'], place: 'barracks', involved: 1, weight: 2, pull: 'lonely', desc: '탈영 의심 — 관물대가 비어 있다' },
+  { id: 'selfharm-sign', tier: 'major', cat: 'selfharm', kinds: ['rest', 'sleep'], place: 'barracks', involved: 1, weight: 2, pull: 'lonely', desc: '자해 정황 — 혼자 있으려는 병사' },
+  { id: 'group-abuse', tier: 'major', cat: 'abuse', kinds: ['rest', 'sleep', 'meal'], place: 'barracks', involved: 2, weight: 2, pull: 'lonely', desc: '집단 따돌림·구타 정황이 드러남' },
+  { id: 'unauthorized-drill', tier: 'major', cat: 'abuse', kinds: ['work', 'rest'], place: 'worksite', involved: 2, weight: 1, pull: 'macho', desc: '규정 밖 얼차려 — 완전군장으로 세워 놨다' },
   { id: 'weapon-taken', tier: 'major', cat: 'firearm', kinds: ['work', 'rollcall', 'sleep'], place: 'armory', involved: 1, weight: 1, desc: '총기·실탄 무단 반출 정황 — 수불부만 멀쩡하다' },
 ];
 
@@ -609,10 +649,27 @@ export function rollSlot(params, unitStats, slotKind, rng = Math.random) {
  * 롤이 성공한 슬롯의 사건 후보 뽑기. 풀 밖 창작은 없다.
  * 무게 추첨이다 — 족구 부상이 탄약고 흡연보다 흔해야 한다.
  */
-export function pickEvent(tier, slotKind, rng = Math.random) {
+/**
+ * 씨앗 하나의 당김. `pull`은 **부대 성향의 이름**이지 부대 id가 아니다 —
+ * 성향 수치를 보는 가중이라 셋째 군을 넣어도 이 함수는 그대로다.
+ *   macho  — 사내다움을 증명하려는 짓. 마초가 높을수록 자주 난다
+ *   lonely — 아무도 안 들어가서 커지는 일. **전우애가 낮을수록** 자주 난다
+ * 성향을 안 주면(테스트·기본값) 전부 중립이라 무게가 그대로다.
+ */
+export function pullWeight(event, traits = {}) {
+  const w = event.weight ?? 1;
+  if (!event.pull) return w;
+  const N = TUNING.comrade.neutral, per = TUNING.roll.pullPer;
+  const gap = event.pull === 'lonely'
+    ? N - (traits.comrade ?? N)
+    : (traits[event.pull] ?? N) - N;
+  return Math.max(0.1, w * (1 + gap * per));
+}
+
+export function pickEvent(tier, slotKind, rng = Math.random, traits = {}) {
   const pool = EVENT_POOL.filter(e => e.tier === tier && e.kinds.includes(slotKind));
   const any = pool.length ? pool : EVENT_POOL.filter(e => e.tier === tier);
-  return any[weightedPick(any.map(e => e.weight ?? 1), rng)];
+  return any[weightedPick(any.map(e => pullWeight(e, traits)), rng)];
 }
 
 // ── 등급 추첨 — 코드가 굴린다. LLM은 굴려진 등급에 맞는 인물을 쓸 뿐이다 ──
@@ -659,23 +716,73 @@ export function pickInvolved(roster, n, rng = Math.random) {
 
 // ── 멘탈 — 병사별 저장 상태. 굴림·드리프트·상담 전부 코드다 ──
 /** 전입 시 멘탈 굴림. 인성 하위는 낮게 시작한다. */
-export function rollMental(character, rng = Math.random) {
+export function rollMental(character, rng = Math.random, comrade = TUNING.comrade.neutral) {
   const M = TUNING.mental;
   const jitter = Math.floor(rng() * (M.start.jitter * 2 + 1)) - M.start.jitter;
-  return clamp(M.start.base + jitter + (M.charPenalty[character] || 0));
+  // 끈끈한 부대는 신병도 덜 흔들린다 — 서로 남인 부대에서는 처음부터 혼자다.
+  // 이게 없으면 마초가 높은 부대(인성 하위가 두껍다)는 부임 첫날에 멘탈 2 이하를
+  // 안고 시작할 확률이 절반을 넘었다(실측 52%). 큰 사고의 문이 플레이 전에 열려 있었다.
+  const bond = (comrade - TUNING.comrade.neutral) * M.startComradePer;
+  return clamp(Math.round(M.start.base + bond) + jitter + (M.charPenalty[character] || 0));
 }
 
 /**
  * 하루 마감의 멘탈 드리프트 — 부대 분위기가 전원을 같은 방향으로 쓸어간다.
  * 개인차는 여기가 아니라 사건 연루(−)와 상담(+)이 만든다.
  */
-export function mentalDrift(mental, params) {
+export function mentalDrift(mental, params, comrade = TUNING.comrade.neutral) {
   const M = TUNING.mental;
+  // 전우애가 세 눈금을 전부 민다. 끈끈한 부대(전우애 10)는 행복 1 이하라야 사람이 무너지고
+  // 행복 6이면 벌써 회복하는데, 서로 남인 부대(전우애 2)는 행복 4에 이미 무너지고
+  // 9는 돼야 회복한다. 같은 분위기가 부대마다 다른 무게로 사람에게 닿는다.
+  // 전우애는 **방패지 저주가 아니다.** 중립 위쪽으로만 문턱을 민다:
+  // 끈끈한 부대는 분위기가 바닥을 쳐야 사람이 무너지고(행복 ≤1), 얕은 부대는 방패가
+  // 없을 뿐 기본 눈금(행복 ≤3) 그대로다.
+  //
+  // 아래로도 밀게 두면 얕은 부대의 문턱이 4.2가 되는데, **사건 한 건이면 그날 행복이
+  // 정확히 4가 된다**(판정은 하루 한 칸까지만 민다). 즉 사건 한 건에 열여섯 명이 전부
+  // −1을 맞고, 그 하락은 하루 마감 드리프트가 행복을 제자리로 되돌려 놓아 계기판에도
+  // 안 보인다. 실측 궤적: 멘탈 합이 83 → 65 → 49 → 30 → 8 → 0으로 계단처럼 떨어졌고,
+  // 매일 면담을 해도 못 막았다(회복 0.5명 대 하락 16명).
+  // 얕은 부대의 페널티는 **회복 인원이 없다는 것**이지 더 잘 무너진다는 것이 아니다.
+  const bond = Math.max(0, comrade - TUNING.comrade.neutral) * TUNING.comrade.mentalPer;
+  // 여기는 **하락만** 본다. 분위기가 나쁘면 전원이 같이 나빠지기 때문이다.
+  // 회복은 인원이 정해져 있어서 개인 함수가 아니라 명부 전체를 보는 mentalPass의 몫이다.
   let d = 0;
-  if (params.happy >= M.driftHappyHigh) d += 1;
-  if (params.happy <= M.driftHappyLow) d -= 1;
-  if (params.conflict >= M.driftConflictHigh) d -= 1;
+  if (params.happy <= M.driftHappyLow - bond) d -= 1;
+  if (params.conflict >= M.driftConflictHigh + bond) d -= 1;
   return clamp(mental + Math.max(-1, Math.min(1, d)));
+}
+
+/**
+ * 부대가 평소 이상일 때 하루에 저절로 돌아오는 인원. 전우애가 정한다.
+ * **소수부는 확률이다** — 전우애 2면 기대값 0.5명, 즉 이틀에 한 명꼴이다.
+ * 정수로 끊으면 얕은 부대의 회복이 통째로 0이 되어 멘탈이 한 방향으로만 흐르고,
+ * 그러면 그 부대는 평판이 허락하는 하루 한 번의 면담으로 정확히 본전을 치는 게임이 된다 —
+ * 여유가 한 칸도 없어서 사고가 한 번 나면 그대로 나선이다(실측: 완주율 0%).
+ */
+export function recoverCount(comrade, rng = Math.random) {
+  const n = Math.max(0, (comrade ?? TUNING.comrade.neutral) * TUNING.comrade.recoverPer);
+  return Math.floor(n) + (rng() < n % 1 ? 1 : 0);
+}
+
+/**
+ * 하루 마감의 멘탈 처리 전부. 명부를 받아 새 멘탈 배열을 돌려준다(원본은 안 건드린다).
+ *   하락 — 분위기가 나쁘면 **전원**이 같이 (mentalDrift)
+ *   회복 — 부대가 평소 이상이면 **제일 힘든 몇 명**만, 평상 상태까지. 인원은 전우애가 정한다
+ * 하락이 전원이고 회복이 몇 명인 비대칭이 이 게임의 멘탈 경제다 — 그래서 얕은 부대에서는
+ * 사람이 쌓이듯 무너지고, 주임원사가 하루 한 명씩 붙잡는 것 말고는 되돌릴 길이 없다.
+ */
+export function mentalPass(soldiers, params, comrade = TUNING.comrade.neutral, rng = Math.random) {
+  const M = TUNING.mental;
+  const out = soldiers.map(s => mentalDrift(s.mental ?? M.default, params, comrade));
+  if (params.happy < TUNING.start.happy) return out;
+  const n = recoverCount(comrade, rng);
+  if (!n) return out;
+  // 제일 힘든 놈부터. 이미 평상 상태인 사람은 회복할 것이 없다.
+  const order = out.map((m, i) => [m, i]).filter(([m]) => m < M.start.base).sort((a, b) => a[0] - b[0]);
+  for (const [, i] of order.slice(0, n)) out[i] = clamp(out[i] + 1);
+  return out;
 }
 
 /** 면담(상담) 한 번의 회복. */
@@ -774,12 +881,27 @@ export function applyDrift(params, difficulty, { interventions = 0, baseline = d
   if (params.happy >= D.happyHigh) dConflict -= 1;     // 행복하면 덜 싸운다
 
   // 아무것도 안 민 축은 제자리로 — 부임 첫날의 부대가 이 부대의 「평소」다.
+  //
+  // 이 회복을 「사건이 없었던 날에만」으로 묶어 봤다가 물렸다. 그러면 사건이 잦은 부대는
+  // 절반의 날에 회복을 못 받고, 판정의 down 편향이 그대로 쌓여 행복 0·갈등 10으로 간다.
+  // 매일 붙이면 반대로 사건 하나가 민 한 칸을 다음 날 정확히 도로 당겨서 잘 안 쌓인다 —
+  // 그 대신 무사고 100일이 원래 드문 일이 된다(무개입 완주율 8~17%). 후자를 골랐다:
+  // 이 게임의 실패는 「매일 조금씩 나빠지다 어느 날 무너지는 것」이 아니라
+  // 「대체로 굴러가다 한 번 크게 터지는 것」이다.
   if (dHappy === 0) dHappy = Math.sign(TUNING.start.happy - params.happy);
   if (dConflict === 0) dConflict = Math.sign(TUNING.start.conflict - params.conflict);
+
+  // 가라도 제자리로 돌아온다. **여기가 마지막으로 뚫려 있던 구멍이었다** — 가라만 드리프트
+  // 항이 하나도 없어서, 판정이 up 쪽으로 조금만 기울어도 천장까지 걸어 올라갔고(실측:
+  // 100%가 그랬다) 거기 붙으면 나머지 축까지 끌고 갔다(가라 ≥7 → 행복 매일 +1 → 갈등 0).
+  // 대신 이 축은 **유지에 비용이 드는 축**이 된다: 점검으로 내려 놓은 가라는 그냥 두면
+  // 도로 올라온다. 관행은 원래 그렇다 — 한 번 잡는 게 아니라 계속 잡는 것이다.
+  const dGara = Math.sign(TUNING.start.gara - params.gara);
 
   const step = v => Math.max(-1, Math.min(1, v));
   return {
     ...params,
+    gara: clamp(params.gara + step(dGara)),
     happy: clamp(params.happy + step(dHappy)),
     conflict: clamp(params.conflict + step(dConflict)),
     rep: clamp(params.rep + (interventions === 0 ? TUNING.rep.quietDay : 0)),

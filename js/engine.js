@@ -51,7 +51,7 @@ import {
   band, honestyOf, complianceOf, initialParams, applyDirections, applyIntervention,
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
-  pickInvolved, rollGrades, rollMental, mentalDrift, counselMental, incidentMental,
+  pickInvolved, rollGrades, rollMental, mentalPass, counselMental, incidentMental,
   minMentalOf, applyInspection, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
   GARA_BY_ID, garaCap, garaAt, syncGaraList, inspectGara,
   farewellTone, pickSendoff, PARAM_KEYS,
@@ -237,7 +237,7 @@ export class Engine {
   /** 전입 명세 하나를 굴린다 — 난수 소비와 군번 채번이 전부 여기서, 호출 전에 끝난다. */
   #recruitSpec(joined, pending = []) {
     const { grade, character } = rollGrades(this.unit, this.rng);
-    const mental = rollMental(character, this.rng);
+    const mental = rollMental(character, this.rng, this.unit.comrade.score);
     // 직무 균형과 동명이인 회피는 아직 명부에 안 오른 병렬 대기분(pending)까지 세어야 한다.
     const waiting = [...this.roster.soldiers, ...pending];
     const job = assignJob(this.unit, waiting, this.rng);
@@ -423,7 +423,10 @@ export class Engine {
       // 병사별 멘탈 드리프트 — 부대 분위기가 전원을 쓸어간다. 파라미터 드리프트보다 먼저,
       // 오늘의(드리프트 전) 분위기로 계산한다.
       // 부재자는 부대 분위기에 안 쓸린다 — 여기에 없으니까. 멘탈은 나간 날 그대로 얼어 있다.
-      for (const man of this.roster.present) man.mental = mentalDrift(man.mental ?? TUNING.mental.default, s.params);
+      // 하락은 전원, 회복은 전우애가 정한 인원만 — 그 비대칭이 멘탈 경제다(params.mentalPass).
+      const present = this.roster.present;
+      const after = mentalPass(present, s.params, this.unit.comrade.score, this.rng);
+      present.forEach((man, i) => { man.mental = after[i]; });
       this.roster.save();
 
       s.params = applyDrift(s.params, effDiff, {
@@ -465,7 +468,11 @@ export class Engine {
   // 사건 하나 — E-1 장면 → 지침 → E-2 결과 → E-3 확전 판정.
   async #runIncident(slot, tier, cause = null) {
     const s = this.state;
-    const event = pickEvent(tier, slot.kind, this.rng);
+    // 씨앗은 풀 안에서 뽑되, **어느 씨앗이 자주 뽑히는가는 부대 성향이 당긴다** —
+    // 마초가 높으면 증명하려고 하는 짓이, 전우애가 얕으면 아무도 안 들어가서 커지는 일이.
+    const event = pickEvent(tier, slot.kind, this.rng, {
+      macho: this.unit.macho.score, comrade: this.unit.comrade.score,
+    });
     // 멘탈이 연 큰 사건은 **무너진 그 놈들**의 사건이다 — 멘탈 낮은 순으로 고른다.
     // 그 밖의 사건은 가중 추첨(등급·멘탈)이다.
     const involved = cause === 'mental'
@@ -504,7 +511,14 @@ export class Engine {
     // E-2. 대응 결과 — 지침 원문이 그대로 실린다. 평판 밴드가 「먹히는 정도」다.
     this.thread.push({
       role: 'user',
-      content: P.outcomeUser({ directive, standing: complianceOf(s.params.rep) }),
+      content: P.outcomeUser({
+        directive, standing: complianceOf(s.params.rep),
+        // 개입이 없을 때 이 사건을 붙잡는 것은 **부대 자신**이고, 그 힘이 전우애다.
+        // 확전 판정(E-3)은 결과 장면만 읽으므로 — 파라미터도 부대 프롬프트도 못 본다 —
+        // 전우애가 게임에 실제로 작용하려면 **장면 자체가 갈려야** 한다. 그 갈림이 여기서 난다:
+        // 끈끈한 부대는 자기들끼리 덮고, 서로 남인 부대는 그냥 번지게 둔다.
+        bond: band(this.unit.comrade.score),
+      }),
     });
     let outcomeScene;
     try {

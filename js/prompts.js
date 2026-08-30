@@ -264,7 +264,7 @@ resolution — nobody has responded yet.`;
 
 // E-2. 대응 결과 — 그 자리에서 내린 지침(유저)이 그대로 실린다. 채점되지 않는다.
 // 평판 밴드가 「지침이 먹히는 정도」로 들어간다 — 낮으면 말이 안 선다.
-export function outcomeUser({ directive, standing }) {
+export function outcomeUser({ directive, standing, bond }) {
   const d = (directive || '').trim();
   return `[RESPONSE ON THE SPOT]
 ${d ? `The sergeant major ran over and gave this instruction, verbatim:
@@ -272,11 +272,17 @@ ${d ? `The sergeant major ran over and gave this instruction, verbatim:
 ${d}
 """` : '(no intervention — he watched it play out and let the day continue)'}
 [HOW MUCH HIS WORD CARRIES RIGHT NOW] ${label(standing)}
+[HOW MUCH THESE MEN CATCH EACH OTHER — a word for you only, never repeat it] ${label(bond)}
 
 Write the outcome scene, 3-6 sentences: what actually happened next. His word carrying
 little means soldiers half-listen, slow-walk or perform compliance; carrying much means
-they snap to it. ${d ? '' : 'Nobody stepped in, so the scene resolves — or worsens — on its own logic. '}End
-the scene on what the situation has become, good or bad — do not judge it.`;
+they snap to it. ${d ? '' : 'Nobody stepped in, so whether this lands anywhere is up to these men alone. '}
+Whatever he did or did not do, **the men around it decide how far it travels.** Where they
+catch each other, someone steps in unasked and it is absorbed on the spot — loudly, badly,
+with a joke nobody finds funny, but absorbed, and by evening it is somebody else's turn to be
+the idiot. Where they do not, nobody is cruel and nobody moves either: the thing is left
+exactly where it fell, everyone steps around it, and it is still there tomorrow and bigger.
+End the scene on what the situation has become, good or bad — do not judge it.`;
 }
 
 // ── E-3. 확전 판정 — 지침을 못 본다 ────────────────────────

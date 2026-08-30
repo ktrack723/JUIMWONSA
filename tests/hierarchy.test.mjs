@@ -26,7 +26,7 @@ const M = {
   sheet: 'SHEET표식', othersheet: 'NEWCOMER표식',   // ⚠ 표식끼리 서로를 품으면 안 된다
   bandGara: 'BANDGARA표식', bandHappy: 'BANDHAPPY표식', bandConf: 'BANDCONF표식', bandDiff: 'BANDDIFF표식',
   feltRoom: 'FELTROOM표식', feltWork: 'FELTWORK표식', spirit: 'SPIRITBAND표식',
-  honesty: 'HONESTY표식', standing: 'STANDING표식',
+  honesty: 'HONESTY표식', standing: 'STANDING표식', bond: 'BONDBAND표식',
   yesterday: 'YESTER표식', notice: 'NOTICE표식', directive: 'DIRECTIVE표식',
   question: 'QUESTION표식', scene: 'SCENE표식', event: 'EVENT표식', place: 'PLACE표식',
 };
@@ -62,8 +62,8 @@ const D = P.daySystem(unit) + '\n' + P.briefingUser({
   arrivals: [other], departures: [], excerpt: [soldier],
 });
 const E1 = P.incidentUser({ slotLabel: 'SLOT표식', place: M.place, tier: 'major', event: M.event, involved: [soldier], notices: [M.notice] });
-const E2 = P.outcomeUser({ directive: M.directive, standing: M.standing });
-const E2none = P.outcomeUser({ directive: null, standing: M.standing });
+const E2 = P.outcomeUser({ directive: M.directive, standing: M.standing, bond: M.bond });
+const E2none = P.outcomeUser({ directive: null, standing: M.standing, bond: M.bond });
 const E3 = P.JUDGE_SYSTEM + '\n' + P.judgeUser({ scene: M.scene, tier: 'major' });
 const I1 = P.interviewSystem(unit) + '\n'
   + P.interviewOpen({ soldier: { ...soldier, spirit: M.spirit }, felt: { room: M.feltRoom, work: M.feltWork }, honesty: M.honesty, question: M.question })
@@ -226,6 +226,15 @@ test('E-2는 지침 원문을 그대로 싣는다 — 채점하지 않는다', (
   assert.ok(has(E2, M.standing), 'E-2에 평판 밴드(먹히는 정도)가 없다');
 });
 
+// 전우애가 게임에 실제로 작용하는 자리는 여기다 — E-3는 결과 장면만 읽으므로,
+// 「부대가 자기들끼리 어디까지 붙잡는가」가 장면에 반영되지 않으면 전우애는 죽은 수치가 된다.
+test('E-2는 전우애를 밴드로 받는다 — 개입이 없을 때 사건을 붙잡는 것은 부대 자신이다', () => {
+  assert.ok(has(E2, M.bond), 'E-2에 전우애 밴드가 없다');
+  assert.ok(has(E2none, M.bond), '개입 없는 갈래에서 전우애가 빠졌다 — 거기가 제일 필요한 자리다');
+  assert.throws(() => P.outcomeUser({ directive: 'x', standing: 'mid', bond: 7 }), '수치 전우애가 통과했다');
+  assert.throws(() => P.outcomeUser({ directive: 'x', standing: 'mid' }), '전우애 없이 장면이 만들어졌다');
+});
+
 test('지침이 없으면 「개입 없음」이 명시된다 — 조용히 채워 넣지 않는다', () => {
   assert.ok(!has(E2none, M.directive));
   assert.ok(/no intervention/.test(E2none), '개입 없음이 명시되지 않는다');
@@ -238,7 +247,7 @@ test('E-3은 지침 원문을 못 본다 — 심판이 읽는 것은 결과 장�
 });
 
 test('E-3은 파라미터를 못 본다 — 밴드조차', () => {
-  for (const k of ['bandGara', 'bandHappy', 'bandConf', 'bandDiff', 'standing']) {
+  for (const k of ['bandGara', 'bandHappy', 'bandConf', 'bandDiff', 'standing', 'bond']) {
     assert.ok(!has(E3, M[k]), `E-3에 ${k}가 새어 들어갔다 — 자기참조 판정이 된다`);
   }
 });
@@ -361,7 +370,7 @@ test('어느 판정 스키마에도 평판이 없다 — 개입 횟수가 곧 �
 test('밴드 자리에 수치가 들어오면 프롬프트가 만들어지기 전에 죽는다', () => {
   assert.throws(() => P.briefingUser({ date: 'd', weekday: 'w', season: 's', slots: [], difficulty: 'mid', bands: { gara: 7, happy: 'mid', conflict: 'mid' }, yesterday: '' }));
   assert.throws(() => P.briefingUser({ date: 'd', weekday: 'w', season: 's', slots: [], difficulty: 'mid', bands: { gara: '7', happy: 'mid', conflict: 'mid' }, yesterday: '' }), '숫자 문자열도 막아야 한다');
-  assert.throws(() => P.outcomeUser({ directive: 'x', standing: 3 }));
+  assert.throws(() => P.outcomeUser({ directive: 'x', standing: 3, bond: 'mid' }));
   assert.throws(() => P.interviewOpen({ soldier, felt: { room: 2, work: 'mid', mood: 'mid' }, honesty: 'candid', question: 'q' }));
   assert.throws(() => P.inspectUser({ place: 'p', readings: { morale: 5 } }));
   assert.throws(() => P.farewellUser({ tone: 'grand', morale: 9, clean: true, speakers: [] }));
@@ -400,8 +409,8 @@ test('전 블록의 지시문에 한글이 한 글자도 없다', () => {
     'D(첫날)': P.briefingUser({ date: 'd', weekday: 'w', season: 's', slots: [], difficulty: 'mid', bands: aBands, yesterday: '' }),
     'E-1': P.incidentUser({ slotLabel: 'work', place: 'yard', tier: 'minor', event: 'a fall', category: 'injury during work', involved: [aSoldier], notices: ['no soccer'] }),
     'E-1(지침없음)': P.incidentUser({ slotLabel: 'work', place: 'yard', tier: 'major', event: 'a fall', involved: [aSoldier] }),
-    'E-2': P.outcomeUser({ directive: 'stop it', standing: 'partial' }),
-    'E-2(개입없음)': P.outcomeUser({ directive: null, standing: 'partial' }),
+    'E-2': P.outcomeUser({ directive: 'stop it', standing: 'partial', bond: 'very-high' }),
+    'E-2(개입없음)': P.outcomeUser({ directive: null, standing: 'partial', bond: 'very-low' }),
     'E-3': P.JUDGE_SYSTEM + P.judgeUser({ scene: 'it ended', tier: 'minor' }),
     'I-1': P.interviewSystem(ascii) + P.interviewOpen({ soldier: aSoldier, felt: { room: 'mid', work: 'mid', mood: 'low' }, honesty: 'guarded', question: 'how is it' }) + P.interviewFollowup('and then'),
     'I-2': P.inspectSystem(ascii) + P.inspectUser({ place: 'yard', readings: { morale: 'low' } }),

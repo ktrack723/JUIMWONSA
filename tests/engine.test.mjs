@@ -162,7 +162,23 @@ test('사건은 E-1·E-2·E-3 세 콜이고, 확전이면 카운터만 0이 된�
   // 병사 데이터와 파라미터는 유지된다 — 리셋되는 것은 카운터뿐이다
   assert.deepEqual(roster.soldiers.map(s => s.sheet), before.sheets, '사고가 병사를 지웠다');
   assert.equal(roster.soldiers.length, 16);
-  assert.equal(state.params.gara, before.params.gara + 1, '판정 방향(가라 up)이 안 먹혔다');
+  // 판정이 가라를 밀었지만 하루가 끝나면 제자리로 한 칸 돌아온다 — 가라도 드리프트를 탄다.
+  // 그래서 관행은 「한 번 잡는 것」이 아니라 「계속 잡는 것」이 된다.
+  assert.equal(state.params.gara, before.params.gara, '판정이 민 가라가 제자리로 안 돌아왔다');
+});
+
+test('판정이 민 가라는 그날 안에서는 살아 있다 — 되돌리는 것은 하루 마감이다', async () => {
+  const seen = [];
+  const { engine, state } = fixture({
+    rng: incidentRng(),
+    judges: [{ outcome: 'contained', gara: 'up', happy: 'same', conflict: 'same' }],
+  });
+  engine._directive = null;
+  const dawn = state.params.gara;
+  engine.h.verdict = async () => { seen.push(state.params.gara); };
+  await engine.runDay();
+  assert.equal(seen[0], dawn + 1, '판정 직후에 가라가 안 올랐다 — 그날의 사고 롤이 이걸 본다');
+  assert.equal(state.params.gara, dawn, '하루가 끝났는데 제자리로 안 돌아왔다');
 });
 
 test('E-3은 지침을 못 보고, 부대 프롬프트도 없다 — 결과 장면만 읽는다', async () => {
@@ -398,9 +414,11 @@ test('장부의 「움직인 바늘」이 개입·판정·드리프트를 전부
   const snap = await engine.runDay();
   const t = snap.today;
   assert.equal(t.interventions, 1);
-  assert.equal(t.moved.gara, state.params.gara - dawn.gara);
-  assert.equal(t.moved.happy, state.params.happy - dawn.happy);
   assert.ok(t.moved.rep < 0, '개입한 날인데 평판이 안 깎였다');
+  // 장부는 **새벽과 마감의 차이**다 — 축마다 실제 이동량과 정확히 같아야 한다
+  for (const k of ['gara', 'happy', 'conflict', 'rep']) {
+    assert.equal(t.moved[k] ?? 0, state.params[k] - dawn[k], `${k} 장부가 실제 이동과 다르다`);
+  }
   // 안 움직인 축은 아예 안 실린다 — 화면이 「바늘은 그대로다」를 쓸 수 있어야 한다
   for (const [k, v] of Object.entries(t.moved)) assert.notEqual(v, 0, `${k}가 0인 채로 실렸다`);
 });

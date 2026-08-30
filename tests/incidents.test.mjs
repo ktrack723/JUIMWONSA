@@ -10,10 +10,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { UNITS } from '../js/units.js';
+import * as PM from '../js/params.js';
 import {
   INCIDENT_CATEGORIES, CATEGORY_KEYS, CATEGORY_CLASSES, EVENT_POOL, PLACES, SLOTS,
   ABSENCE_KINDS, absenceFor, TUNING,
-  categoryFor, artFor, pickEvent,
+  categoryFor, artFor, pickEvent, pullWeight,
 } from '../js/params.js';
 
 const SLOT_KINDS = new Set(SLOTS.flatMap(s => [s.kind, s.weekendKind].filter(Boolean)));
@@ -176,4 +179,24 @@ test('부재 일수는 규칙의 [최소, 최대] 안에서만 굴려진다', ()
       assert.ok(d >= lo && d <= hi, `${cat}: 부재 일수가 범위를 벗어났다 ${d}`);
     }
   }
+});
+
+// ── 씨앗의 당김 — 같은 풀이 부대마다 다르게 뽑힌다 ──────
+test('당김은 부대 id가 아니라 성향 수치를 본다 — 셋째 군이 와도 이 함수는 그대로다', () => {
+  const src = readFileSync(new URL('../js/params.js', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export function pullWeight'), src.indexOf('export function pickEvent'));
+  for (const u of UNITS) assert.ok(!fn.includes(u.id), `당김 함수가 부대 id 「${u.id}」를 안다`);
+  // 성향을 안 주면 무게가 그대로다
+  for (const e of EVENT_POOL) assert.equal(pullWeight(e, {}), e.weight ?? 1);
+});
+
+test('마초가 높은 부대는 증명하려고 하는 짓이, 전우애가 얕은 부대는 조용히 커지는 일이 자주 난다', () => {
+  const macho = EVENT_POOL.find(e => e.pull === 'macho');
+  const lonely = EVENT_POOL.find(e => e.pull === 'lonely');
+  assert.ok(macho && lonely, '두 결의 씨앗이 풀에 있어야 한다');
+  const hard = { macho: 9, comrade: 10 }, soft = { macho: 2, comrade: 2 };
+  assert.ok(pullWeight(macho, hard) > pullWeight(macho, soft), '마초 씨앗이 마초 부대에서 안 당겨진다');
+  assert.ok(pullWeight(lonely, soft) > pullWeight(lonely, hard), '고립 씨앗이 얕은 부대에서 안 당겨진다');
+  // 당김이 붙어도 무게가 0이 되지는 않는다 — 어느 부대에서도 도달 가능해야 한다
+  for (const e of EVENT_POOL) for (const t of [hard, soft]) assert.ok(pullWeight(e, t) > 0);
 });

@@ -290,14 +290,72 @@ test('멘탈 굴림은 0~10 안이고, 인성 하위는 낮게 시작한다', ()
   assert.equal(PM.rollMental('하', fixed), PM.rollMental('중', fixed) - 1);
 });
 
-test('부대 분위기가 멘탈을 쓸어간다 — 밝으면 +1, 어두우면 −1, 눌리면 또 −1', () => {
+test('분위기의 하락은 전원에게 붙는다 — 어두우면 −1, 눌리면 또 −1', () => {
   const base = { gara: 5, rep: 5 };
-  assert.equal(PM.mentalDrift(5, { ...base, happy: 9, conflict: 3 }), 6);
-  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 3 }), 4);
+  const N = PM.TUNING.comrade.neutral;
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 3 }, N), 4);
   // 어둡고 눌리면 사유가 둘이지만 하루 한 걸음이다
-  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 8 }), 4);
-  assert.equal(PM.mentalDrift(5, { ...base, happy: 5, conflict: 5 }), 5, '보통 날에 움직였다');
-  assert.equal(PM.mentalDrift(0, { ...base, happy: 0, conflict: 9 }), 0, '바닥 밑으로 뚫었다');
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 2, conflict: 8 }, N), 4);
+  assert.equal(PM.mentalDrift(5, { ...base, happy: 4, conflict: 5 }, N), 5, '아무 사유도 없는 날에 움직였다');
+  assert.equal(PM.mentalDrift(0, { ...base, happy: 0, conflict: 9 }, N), 0, '바닥 밑으로 뚫었다');
+  // 하락 함수는 회복을 모른다 — 회복은 인원이 정해져 있어서 명부 전체를 보는 자리의 몫이다
+  assert.equal(PM.mentalDrift(3, { ...base, happy: 10, conflict: 0 }, N), 3, '개인 함수가 회복을 했다');
+});
+
+// ── 멘탈 경제 — 하락은 전원, 회복은 몇 명 ────────────────
+test('회복 인원은 전우애가 정한다 — 소수부는 확률이다', () => {
+  const never = () => 0.999, always = () => 0;
+  // 얕은 부대는 기대값 0.5명 — 안 돌아오는 날이 있고 한 명 돌아오는 날이 있다
+  assert.equal(PM.recoverCount(2, never), 0, '얕은 부대에서 매일 사람이 돌아온다');
+  assert.equal(PM.recoverCount(2, always), 1);
+  assert.ok(PM.recoverCount(10, never) > PM.recoverCount(5, never), '끈끈한 부대가 더 안 챙긴다');
+  const men = [1, 2, 3, 6, 6].map(m => ({ mental: m }));
+  const ok = { happy: PM.TUNING.start.happy, conflict: 3 };
+  assert.deepEqual(PM.mentalPass(men, ok, 2, never), [1, 2, 3, 6, 6], '안 돌아오는 날에 회복이 붙었다');
+  // 끈끈한 부대는 **제일 힘든 놈부터** 돌아온다
+  const warm = PM.mentalPass(men, ok, 10, never);
+  assert.equal(warm[0], 2); assert.equal(warm[1], 3);
+  assert.deepEqual(warm.slice(2), [3, 6, 6], '평상 상태인 사람까지 밀어 올렸다');
+});
+
+test('회복은 평상 상태까지만이고, 분위기가 평소 아래면 아예 없다', () => {
+  const men = [2, 5, 6, 8].map(m => ({ mental: m }));
+  const low = { happy: PM.TUNING.start.happy - 1, conflict: 3 };
+  assert.deepEqual(PM.mentalPass(men, low, 10, () => 0), [2, 5, 6, 8], '평소 아래인데 회복이 붙었다');
+  // 평상 상태(6) 위에 있는 사람은 회복 대상이 아니다 — 안 깎인 것이지 회복된 게 아니다
+  const up = PM.mentalPass([{ mental: 8 }, { mental: 9 }], { happy: 10, conflict: 0 }, 10, () => 0);
+  assert.deepEqual(up, [8, 9]);
+});
+
+test('명부 원본은 안 건드린다 — 새 값을 돌려줄 뿐이다', () => {
+  const men = [{ mental: 2 }, { mental: 3 }];
+  PM.mentalPass(men, { happy: 10, conflict: 0 }, 10, () => 0);
+  assert.deepEqual(men.map(m => m.mental), [2, 3]);
+});
+
+// ── 전우애는 방패다 — 같은 분위기가 부대마다 다른 무게로 사람에게 닿는다 ──
+test('전우애는 방패지 저주가 아니다 — 사건 한 건에 열여섯 명이 맞으면 안 된다', () => {
+  const p = h => ({ gara: 5, rep: 5, happy: h, conflict: 3 });
+  const one = PM.TUNING.start.happy - 1;   // 사건 한 건이 그날 만드는 행복 (판정은 하루 한 칸)
+  // 얕은 부대도 **기본 눈금 그대로**다. 여기가 뚫리면 사건 한 건이 전원 −1이 되고,
+  // 그 하락은 마감 드리프트가 행복을 제자리로 되돌려 놓아 계기판에도 안 보인다.
+  for (const c of [0, 2, 5]) {
+    assert.equal(PM.mentalDrift(5, p(one), c), 5, `전우애 ${c}에서 사건 한 건이 전원을 깎았다`);
+    assert.equal(PM.mentalDrift(5, p(PM.TUNING.drift.happyLow), c), 4, `전우애 ${c}에서 기본 눈금이 안 먹었다`);
+  }
+  // 끈끈한 부대는 그 아래로도 버틴다 — 방패는 중립 위쪽으로만 작동한다
+  assert.equal(PM.mentalDrift(5, p(PM.TUNING.drift.happyLow), 10), 5, '끈끈한 부대에 방패가 없다');
+  assert.equal(PM.mentalDrift(5, p(1), 10), 4, '바닥에서도 안 무너지면 방패가 아니라 무적이다');
+});
+
+test('전우애가 높으면 전입 멘탈도 높게 굴린다 — 부임 첫날부터 문이 열려 있지 않게', () => {
+  const roll = (c, r) => PM.rollMental('중', () => r, c);
+  assert.ok(roll(10, 0.5) > roll(2, 0.5), '전우애가 전입 멘탈을 안 민다');
+  // 인성 최악 + 얕은 전우애가 겹쳐도 눈금 밖으로는 안 나간다
+  for (const c of [0, 5, 10]) for (const r of [0, 0.5, 0.99]) {
+    const m = PM.rollMental('최악', () => r, c);
+    assert.ok(m >= 0 && m <= 10, `굴림이 눈금 밖이다: ${m}`);
+  }
 });
 
 test('상담은 +1, 연루는 −1, 사고가 되면 −2다', () => {
