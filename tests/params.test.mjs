@@ -439,57 +439,90 @@ test('점검은 가라 −1 · 행복 −1이고, LLM은 폭을 못 만진다', 
   assert.notEqual(out, p, '원본을 돌려줬다');
 });
 
-// ── 전우애 — 갈등을 흡수하는 부대 완충재 ────────────────
-test('전우애가 높을수록 문턱이 뒤로 밀리고, 낮을수록 앞당겨진다', () => {
-  const open = c => PM.comradeEffect(c).open;
-  assert.equal(open(PM.TUNING.comrade.neutral), PM.TUNING.roll.big.open, '중립이 기준선이 아니다');
-  assert.ok(open(10) > open(5), '끈끈한데 문턱이 안 밀렸다');
-  assert.ok(open(1) < open(5), '서로 남인데 문턱이 그대로다');
-  // 단조 — 전우애가 오르는 동안 문턱이 한 번도 안 내려가야 한다
-  for (let c = 1; c <= 10; c++) assert.ok(open(c) >= open(c - 1), `전우애 ${c}에서 문턱이 거꾸로 갔다`);
+// ── 전우애 — 사건이 아니라 **보고**를 가른다 ──────────────
+// 이 축은 오래도록 「갈등을 흡수하는 완충재」였고, 그러면 끈끈한 부대가 실제로 안전한
+// 부대가 됐다. 사실은 반대다 — 사건은 오히려 많고, 안 올라올 뿐이다.
+test('침묵이 두꺼울수록 보고 확률이 낮다 — 중립은 기준선이고 아래로는 안 민다', () => {
+  const C = PM.TUNING.comrade, N = C.neutral;
+  const at = (comrade, macho) => PM.reportChance('minor', { comrade, macho });
+  assert.equal(at(N, N), C.report.base, '중립이 기준선이 아니다');
+  assert.ok(at(10, 9) < at(N, N), '끈끈하고 마초인데 보고가 안 줄었다');
+  assert.ok(at(2, 2) <= C.report.base, '보고 확률이 기준선을 넘었다');
+  assert.equal(at(2, 2), at(N, N), '중립 아래에서 보고가 더 늘었다 — 이 축은 투명도가 아니다');
+  // 단조 — 전우애가 오르는 동안 보고가 한 번도 안 올라가야 한다
+  for (let c = 1; c <= 10; c++) assert.ok(at(c, 5) <= at(c - 1, 5), `전우애 ${c}에서 보고가 거꾸로 갔다`);
+  // 마초도 같이 민다 — 고자질을 죄로 만드는 것은 마초다
+  assert.ok(at(8, 9) < at(8, 2), '마초가 보고를 안 민다');
 });
 
-test('전우애가 낮을수록 번짐 폭도 크고 잔사건도 잦다', () => {
-  const e = c => PM.comradeEffect(c);
-  assert.ok(e(1).scale > e(5).scale && e(5).scale > e(10).scale, '번짐 배수가 단조가 아니다');
-  assert.ok(e(1).small > 0 && e(10).small < 0, '잔사건 가산의 부호가 뒤집혔다');
-  assert.equal(e(5).scale, 1, '중립 배수가 1이 아니다');
-  assert.equal(e(5).small, 0, '중립에서 잔사건이 움직였다');
-  assert.ok(e(0).scale >= 0, '배수가 음수로 떨어졌다');
+test('큰 사건은 절반만큼만 숨는다 — 사람이 실려 나가면 못 덮는다', () => {
+  const traits = { comrade: 10, macho: 9 };
+  assert.ok(PM.reportChance('major', traits) > PM.reportChance('minor', traits),
+    '큰 사건이 잔사건만큼 숨었다');
+  // 바닥은 있다 — 아무리 눌러도 새어 나온다
+  assert.ok(PM.reportChance('minor', { comrade: 10, macho: 10 }) >= PM.TUNING.comrade.report.min);
+  // 성향을 안 주면 중립이다 (옛 부대 데이터·테스트)
+  assert.equal(PM.reportChance('minor'), PM.TUNING.comrade.report.base);
 });
 
-test('전우애를 안 주면 중립이다 — 옛 부대 데이터가 안 깨진다', () => {
-  assert.deepEqual(PM.comradeEffect(undefined), PM.comradeEffect(PM.TUNING.comrade.neutral));
-  const unit = { intel: 5, macho: 5, difficulty: 5 };
-  const withNeutral = PM.incidentRisk({ gara: 5, conflict: 9 }, { ...unit, comrade: 5 });
-  const without = PM.incidentRisk({ gara: 5, conflict: 9 }, unit);
-  assert.deepEqual(without, withNeutral);
+test('두 부대의 장부가 갈린다 — 해병은 잔사건 셋에 하나, 공군은 열에 아홉', () => {
+  const marine = PM.reportChance('minor', { comrade: 10, macho: 9 });
+  const air = PM.reportChance('minor', { comrade: 2, macho: 2 });
+  assert.ok(marine <= 0.35, `해병 장부가 너무 시끄럽다 (${marine})`);
+  assert.ok(air >= 0.9, `공군이 작은 것을 안 올린다 (${air})`);
 });
 
-test('같은 갈등이라도 전우애가 얕은 부대에서만 큰 사고가 열린다', () => {
-  const at = (comrade, conflict) =>
-    PM.incidentRisk({ gara: 5, conflict }, { intel: 5, macho: 5, difficulty: 5, comrade }).big;
-  // 갈등 8 — 기본 문턱이지만 전우애가 이걸 갈라놓는다
-  assert.equal(at(10, 8), 0, '끈끈한 부대가 갈등 8에서 터졌다');
-  assert.ok(at(2, 8) > 0, '서로 남인 부대가 갈등 8에서 멀쩡하다');
-  // 열린 뒤에도 얕은 쪽이 더 크게 번진다
-  assert.ok(at(2, 10) > at(10, 10), '갈등 10에서 번짐 폭이 안 갈렸다');
+// ── 묻힌 더미 — 위험을 미는 것은 이제 부대 성향이 아니라 안 올린 것의 개수다 ──
+test('묻힌 것이 쌓일수록 문턱이 앞당겨지고 번짐 폭이 커진다', () => {
+  const e = n => PM.buriedEffect(n);
+  assert.equal(e(0).open, PM.TUNING.roll.big.open, '빈 더미가 기준선이 아니다');
+  assert.equal(e(0).scale, 1, '빈 더미의 배수가 1이 아니다');
+  assert.equal(e(0).small, 0, '빈 더미에서 잔사건이 움직였다');
+  assert.ok(e(4).open < e(0).open, '묻었는데 문턱이 안 당겨졌다');
+  assert.ok(e(4).scale > e(0).scale && e(4).small > e(0).small, '더미가 번짐·잔사건을 안 민다');
+  // 단조, 그리고 상한 — 상한이 없으면 100일이 확정 파멸이다
+  for (let n = 1; n <= 12; n++) assert.ok(e(n).open <= e(n - 1).open, `${n}건에서 문턱이 거꾸로 갔다`);
+  const cap = PM.TUNING.comrade.buried.cap;
+  assert.deepEqual(e(cap + 50), e(cap), '더미 상한이 안 걸렸다');
+  assert.deepEqual(PM.buriedEffect(undefined), e(0), '더미를 안 주면 빈 더미가 아니다');
 });
 
-test('전우애는 큰 사고만 막는다 — 잔사고까지 없애 주지는 않는다', () => {
-  // 끈끈하고 빡센 부대(마초·난이도 높음)는 여전히 작은 사건이 잦아야 한다
-  const tough = PM.incidentRisk({ gara: 5, conflict: 3 }, { intel: 4, macho: 9, difficulty: 8, comrade: 10 });
-  const easy = PM.incidentRisk({ gara: 5, conflict: 3 }, { intel: 8, macho: 2, difficulty: 3, comrade: 2 });
+test('사고 롤은 전우애를 아예 안 본다 — 같은 부대라도 무엇을 묻었느냐가 정한다', () => {
+  const unit = { macho: 5, difficulty: 5 };
+  const clean = PM.incidentRisk({ gara: 5, conflict: 8 }, unit);
+  // 부대 성향에 전우애를 실어 봐도 아무 일도 안 일어난다 — 그 자리는 비었다
+  assert.deepEqual(PM.incidentRisk({ gara: 5, conflict: 8 }, { ...unit, comrade: 10 }), clean);
+  assert.deepEqual(PM.incidentRisk({ gara: 5, conflict: 8 }, { ...unit, comrade: 1 }), clean);
+  // 가르는 것은 더미다
+  const dirty = PM.incidentRisk({ gara: 5, conflict: 8, buried: 5 }, unit);
+  assert.ok(dirty.big > clean.big, '묻힌 것이 큰 사고를 안 민다');
+  assert.ok(dirty.small > clean.small, '묻힌 것이 잔사건을 안 민다');
+});
+
+test('겉으론 잔잔하다가 터진다 — 아무것도 안 묻은 부대는 갈등 8에서 아직 안 열린다', () => {
+  const at = (buried, conflict) =>
+    PM.incidentRisk({ gara: 5, conflict, buried }, { macho: 5, difficulty: 5 }).big;
+  assert.equal(at(0, 7), 0, '기준선 아래에서 문이 열렸다');
+  assert.ok(at(4, 7) > 0, '넉 건을 묻어 뒀는데 갈등 7이 안전하다');
+  // 열린 뒤에도 더미가 두꺼운 쪽이 더 크게 번진다
+  assert.ok(at(6, 10) > at(0, 10), '갈등 10에서 번짐 폭이 안 갈렸다');
+});
+
+test('빡센 부대는 여전히 잔사건이 잦다 — 그게 「사건은 많다」의 자리다', () => {
+  // 마초·난이도가 높은 부대는 사건이 더 난다. 침묵은 그걸 줄이는 것이 아니라 덮는 것이라
+  // 이 숫자는 두 부대가 갈린 뒤에도 그대로 갈려 있어야 한다.
+  const tough = PM.incidentRisk({ gara: 5, conflict: 3 }, { macho: 9, difficulty: 8 });
+  const easy = PM.incidentRisk({ gara: 5, conflict: 3 }, { macho: 2, difficulty: 3 });
   assert.ok(tough.small > easy.small, '빡센 부대의 잔사고가 편한 부대보다 적다');
   assert.equal(tough.big, 0);
   assert.equal(easy.big, 0);
 });
 
-test('멘탈이 여는 문은 전우애와 무관하다 — 한 사람이 무너지는 것은 부대가 못 막는다', () => {
-  const at = comrade =>
-    PM.incidentRisk({ gara: 5, conflict: 0, minMental: 1 }, { intel: 5, macho: 5, difficulty: 5, comrade }).big;
-  assert.ok(at(10) > 0, '전우애가 멘탈 위험까지 막아 버렸다');
-  assert.equal(at(10), at(1), '멘탈 위험이 전우애를 탄다');
+test('멘탈이 여는 문은 더미와 무관하다 — 한 사람이 무너지는 것은 덮어도 안 막힌다', () => {
+  const at = buried =>
+    PM.incidentRisk({ gara: 5, conflict: 0, minMental: 1, buried }, { macho: 5, difficulty: 5 }).big;
+  assert.ok(at(0) > 0, '멘탈 위험이 안 열렸다');
+  assert.equal(at(0), at(8), '멘탈 위험이 더미를 탄다');
 });
 
 // ── 마지막 씬 — 환송회는 행복도가 연다 ──────────────────

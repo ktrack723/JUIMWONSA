@@ -15,7 +15,7 @@ import { UNITS, UNIT_BY_ID } from './units.js';
 import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } from './roster.js';
 import {
   PLACES, PARAM_LABELS, BAND_LABELS, band,
-  slotsFor, weekdayOf, dayFraction, effectiveDifficulty, comradeEffect, SCALE, TUNING,
+  slotsFor, weekdayOf, dayFraction, effectiveDifficulty, reportChance, TUNING,
   GARA_BY_ID, GARA_TIERS, SLOTS, ABSENCE_KINDS, repBite,
   ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf,
 } from './params.js';
@@ -126,7 +126,8 @@ function renderUnits() {
       <p class="dim">${escapeHtml(u.desc)}</p>
       <p class="unit-stats">지능 ${u.intel.score} — “${escapeHtml(u.intel.desc)}”<br>
         마초 ${u.macho.score} — “${escapeHtml(u.macho.desc)}”<br>
-        전우애 ${u.comrade.score} — “${escapeHtml(u.comrade.desc)}”<br>
+        전우애 ${u.comrade.score} — “${escapeHtml(u.comrade.desc)}”
+        <i class="dim">(잔사건 열에 ${Math.round(reportChance('minor', { comrade: u.comrade.score, macho: u.macho.score }) * 10)}건이 위로 올라온다)</i><br>
         일과 난이도 ${u.difficulty} · 복무기간 ${u.serviceMonths}개월 · 정원 ${ROSTER_SIZE}명</p>
       <div class="radio-btns">
         <button class="btn95 big" data-unit="${u.id}" type="button">${saved ? '새로 부임 (기록 삭제)' : '이 부대로 부임'}</button>
@@ -372,18 +373,19 @@ const GAUGE_DEFS = [
   { k: 'difficulty', label: '일과 난이도', cls: 'diff', note: '오늘 실효치 — 계절·주말이 정한다' },
   { k: 'gara', label: '가라', cls: 'gara', note: '이 숫자가 곧 지금 돌고 있는 편법의 개수다 — 무엇인지는 아래 내역에서' },
   { k: 'happy', label: '행복도', cls: 'happy', note: '낮으면 싸움이 늘고 멘탈이 쓸려 내려간다' },
-  { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: 'comrade', note: '이 눈금을 넘으면 탈영·자해급 사고의 문이 열린다 — 자리는 전우애가 정한다' },
+  { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: TUNING.roll.big.open, note: '이 눈금을 넘으면 탈영·자해급 사고의 문이 열린다 — 다만 실제 자리는 이보다 앞에 있을 수 있다' },
   { k: 'rep', label: '평판', cls: 'rep', note: '개입마다 −1 · 조용한 날 +1. 낮으면 지침이 안 먹힌다' },
 ];
 function renderGauges() {
   const p = state.engine.state.params;
   const values = { ...p, difficulty: effectiveDifficulty(state.unit.difficulty, state.engine.state.date) };
-  // 큰 사고의 문턱은 부대마다 다르다 — 전우애가 그걸 민다(params.js의 comradeEffect).
-  // 눈금을 실제 문턱 자리에 그려야 계기판이 이 부대의 진실을 말한다.
-  const open = comradeEffect(state.unit.comrade.score).open;
+  // 계기판이 그리는 문턱은 **기준선**이다. 진짜 문턱은 그 부대가 그동안 안 올린 것의
+  // 개수만큼 앞으로 당겨져 있는데(params.js의 buriedEffect), 그 개수는 화면에 안 나간다.
+  // 여기에 실제 자리를 그리면 더미가 계기판이 되고, 그러면 「안 올라온다」가
+  // 「빨간 눈금이 왼쪽으로 기어간다」가 된다 — 이 게임에 남겨 둔 마지막 안개가 그거다.
   $('#gauge-box').innerHTML = GAUGE_DEFS.map(g => {
     const v = values[g.k];
-    const mark = g.danger === 'comrade' ? open : g.danger;
+    const mark = g.danger;
     const dangerNow = mark != null && v >= mark;
     return `<div class="pgauge ${g.cls}${dangerNow ? ' danger-now' : ''}" title="${escapeHtml(g.note)}">
       <span class="pg-label">${escapeHtml(g.label)}</span>
@@ -395,14 +397,14 @@ function renderGauges() {
     </div>`;
   }).join('');
   const note = $('#gauge-open-note');
-  // 문턱이 눈금 끝에 붙어 있으면 그건 「높은 문턱」이 아니라 **닫힌 문**이다. 계기판이
-  // 「이 눈금을 넘으면 열린다」라고 말하면서 10을 가리키면, 100일 내내 안 일어날 일을
-  // 예고하는 셈이다(실측: 전우애 10인 부대에서 갈등이 8을 넘은 날이 100일에 1일).
-  // 그 부대의 진실은 「갈등으로는 안 무너진다」이고, 화면은 그걸 그대로 말해야 한다.
+  // 문턱 옆에 쓰는 것은 **그 부대에서 이 눈금을 얼마나 믿을 수 있는가**다. 침묵이 두꺼운
+  // 부대에서는 이 자리가 거짓말을 한다 — 안 올라온 것마다 문턱이 앞으로 당겨지는데
+  // 계기판은 여전히 기준선을 가리키고 있기 때문이다. 그 사실 자체는 숨기지 않는다:
+  // 숨기는 것은 **얼마나 당겨졌는가**지 「당겨진다」가 아니다.
   if (note) {
-    note.textContent = open >= SCALE.max
-      ? `사실상 닫혀 있다 (전우애 ${state.unit.comrade.score} — 이 부대는 갈등으로 무너지지 않는다)`
-      : `${open.toFixed(1)} (전우애 ${state.unit.comrade.score})`;
+    const p = reportChance('minor', { comrade: state.unit.comrade.score, macho: state.unit.macho.score });
+    note.textContent = `${TUNING.roll.big.open.toFixed(1)} — 다만 이 부대는 잔사건 열에 `
+      + `${Math.round(p * 10)}건만 위로 올라온다. 안 올라온 것마다 이 자리가 앞으로 당겨진다.`;
   }
 }
 
@@ -830,8 +832,19 @@ async function runFarewell() {
   }
   if (out.closing) await addEntry('closing', out.closing);
 
+  // **여기서 장부가 열린다.** 100일 내내 화면이 세어 온 것은 「올라온 것」이었고,
+  // 그 옆에 처음으로 「있었던 것」이 선다. 침묵이 두꺼운 부대일수록 이 두 줄이 벌어진다 —
+  // 무사고 100일을 완주한 부대가 실제로 무사고였는지는 이 문단이 답한다.
+  const sil = out.silence || {};
+  const unknown = sil.unknown || 0;
   $('#farewell-text').innerHTML = `<b>${escapeHtml(sc.note)}</b><br>` +
-    `${escapeHtml(state.unit.name)} 근무 끝. 무사고 ${TUNING.goal}일 · 사고 누계 ${state.engine.snapshot().accidents}건.`;
+    `${escapeHtml(state.unit.name)} 근무 끝. 무사고 ${TUNING.goal}일 · 사고 누계 ${state.engine.snapshot().accidents}건.` +
+    `<br><span class="dim">장부에 오른 사건 ${sil.reported || 0}건. `
+    + `실제로 있었던 것은 ${sil.happened || 0}건이다 — 그중 ${sil.buried || 0}건은 그날 위로 안 갔고, `
+    + (unknown > 0
+      ? `${unknown}건은 <b>당신이 부대를 떠날 때까지 아무도 말하지 않았다.</b>`
+      : `끝내는 전부 올라왔다.`)
+    + `</span>`;
   panel('#btn-farewell-end', true);
   panel('#farewell-panel', true);
   // 게임의 마지막 버튼이다 — 접혀 있는 자리에서 끝나지 않게 화면으로 끌어온다.
@@ -983,6 +996,11 @@ async function doInspect() {
   const pulled = out.pulled.length
     ? `\n■ 재판급이라 그 자리에서 끊었다 — ${out.pulled.map(g => g.label).join(' · ')} (가라 추가 −${out.pulled.length})`
     : '';
+  // 그리고 들어가 봐야만 알 수 있는 것 — 그 자리에서 났는데 아무도 안 올린 사건.
+  // 이건 적발과 달리 「명부에 올린다」가 아니라 **이제야 안다**에 가깝다.
+  const surfaced = (out.surfaced || []).map(b =>
+    `\n■ 여기서 이미 있었던 일이 지금 나왔다 — ${b.date} · ${b.desc} (${b.names.join(' · ')}). `
+    + `아무도 올리지 않았고, 당신은 오늘 처음 들었다.`).join('');
   const when = out.slot ? ` · ${out.slot.label} ${out.slot.time}` : '';
   // 사람 쪽에서 덮친 것 — 여기는 이름이 붙는다. 가라 적발과 줄을 갈라 놓는다.
   const grabbed = out.caught.length
@@ -996,7 +1014,7 @@ async function doInspect() {
     ? '\n' + out.rescued.map(m => `${m.name}은(는) 오늘 처음으로 숨을 쉬었다. 멘탈 +${TUNING.abuse.rescue}`).join('\n')
     : '';
   const bill = out.wasted ? '\n(헛걸음이다 — 행복 −1)' : '\n(뭔가 나온 걸음이라 분위기는 안 깎였다)';
-  await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}${grabbed}${cuffed}${saved}${bill}`, { typed: false });
+  await addEntry('inspect', `🔦 군기 점검 · ${out.place}${when}\n${out.findings}${caught}${pulled}${grabbed}${cuffed}${surfaced}${saved}${bill}`, { typed: false });
   renderHud(); renderCost();
   saveCampaign();
   if (out.pulled.length || out.hauled.length) sfx.trombone();

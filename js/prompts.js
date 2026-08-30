@@ -85,7 +85,7 @@ ${unit.soldierRules}
 ${unit.intel.desc}
 [THE BLOOD — how macho this population is]
 ${unit.macho.desc}
-[THE BOND — how much these men actually have each other's backs]
+[THE BOND — how hard these men close ranks, and what that does to what gets said upward]
 ${unit.comrade.desc}
 [THE SONGS — what this unit's music is, and how it reaches the soldiers]
 ${unit.songMode === 'chorus'
@@ -240,7 +240,7 @@ Write the morning briefing and the ambient slot lines.`;
 // 여기 실린다고 플레이어가 그걸 아는 것은 아니다: 장면이 그것을 입 밖에 낼 수도 있고
 // 안 낼 수도 있으며, **확인 명부는 이 호출로는 절대 안 채워진다.** 읽어서 눈치채는 것은
 // 플레이어의 몫이고, 도장을 찍어 주는 것은 여전히 불시점검뿐이다.
-export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [], garaHere = [], abuseHere = [] }) {
+export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [], garaHere = [], abuseHere = [], buriedHere = 0 }) {
   return `[INCIDENT — the machine rolled one. Write the scene as it is found]
 · when: ${slotLabel}
 · where: ${place}
@@ -256,6 +256,12 @@ ${garaHere.length ? garaHere.map(g => `· ${g}`).join('\n') : '(nothing worth no
 given, that man is in this scene. Let the incident come out of the relationship that is
 already there; never announce it as a finding]
 ${abuseHere.length ? abuseHere.map(a => `· ${a.en}${a.by && a.to ? ` — ${a.by} to ${a.to}` : ''}`).join('\n') : '(nothing standing between them — whatever happens here starts today)'}
+[HOW OFTEN THIS SPOT HAS ALREADY HAD SOMETHING NOBODY PUT UPSTAIRS]
+${buriedHere > 0
+    ? `${buriedHere} time(s) before this. None of it was ever written down or told to anyone above.
+Write it as somewhere that has been here before: nobody is startled, someone knows exactly where
+the bandages are, the sentence "again" is available to be said. Never state the count.`
+    : '(first time here — this one is actually new)'}
 [STANDING NOTICES — directives the sergeant major has posted. They shape how soldiers behave]
 ${notices.length ? notices.map((n, i) => `${i + 1}. ${n}`).join('\n') : '(none posted)'}
 
@@ -276,16 +282,18 @@ ${d ? `The sergeant major ran over and gave this instruction, verbatim:
 ${d}
 """` : '(no intervention — he watched it play out and let the day continue)'}
 [HOW MUCH HIS WORD CARRIES RIGHT NOW] ${label(standing)}
-[HOW MUCH THESE MEN CATCH EACH OTHER — a word for you only, never repeat it] ${label(bond)}
+[HOW HARD THESE MEN CLOSE RANKS — a word for you only, never repeat it] ${label(bond)}
 
 Write the outcome scene, 3-6 sentences: what actually happened next. His word carrying
 little means soldiers half-listen, slow-walk or perform compliance; carrying much means
 they snap to it. ${d ? '' : 'Nobody stepped in, so whether this lands anywhere is up to these men alone. '}
-Whatever he did or did not do, **the men around it decide how far it travels.** Where they
-catch each other, someone steps in unasked and it is absorbed on the spot — loudly, badly,
-with a joke nobody finds funny, but absorbed, and by evening it is somebody else's turn to be
-the idiot. Where they do not, nobody is cruel and nobody moves either: the thing is left
-exactly where it fell, everyone steps around it, and it is still there tomorrow and bigger.
+Whatever he did or did not do, **the men around it decide where it goes.** Where they close
+ranks, it is settled among themselves on the spot — loudly, badly, with a joke nobody finds
+funny — and then it stops there: nothing about it goes upward, nobody writes it anywhere, and
+by evening it is somebody else's turn to be the idiot. That is not the same as it being gone;
+it is only no longer visible, and these men know it. Where they do not close ranks, nobody is
+cruel and nobody moves either: the thing is left exactly where it fell, everyone steps around
+it, and it is still there tomorrow and bigger.
 End the scene on what the situation has become, good or bad — do not judge it.`;
 }
 
