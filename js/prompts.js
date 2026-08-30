@@ -32,7 +32,7 @@
 // (3) 한국어 출력 예시 — 셋뿐이다. ASCII 가상 부대로 전 블록을 지어
 // 한글이 한 글자라도 남으면 테스트가 깨진다 (tests/hierarchy.test.mjs).
 
-import { SLOT_KEYS, GARA_POOL, GARA_IDS } from './params.js';
+import { SLOT_KEYS, GARA_POOL, GARA_TIERS, GARA_IDS } from './params.js';
 
 // 출력 언어 고정. 블록마다 반복한다. 한 번만 넣으면 뒤쪽 출력에서 새어나간다.
 const KO = 'Write your output in Korean. Every word of it. No English in the output.';
@@ -399,14 +399,54 @@ ${KO}`;
 
 export const inspectSystem = unit => sys(unit, I2_ROLE);
 
-export function inspectUser({ place, readings, found = [] }) {
+export function inspectUser({ place, readings, found = [], when = null }) {
   return `[PLACE] ${place}
+[TIME HE WALKED IN] ${when || '(unspecified hour)'}
 [WHAT THIS PLACE CAN REVEAL — words for you only, never repeat them]
 ${Object.entries(readings).map(([k, v]) => `· ${k}: ${label(v)}`).join('\n')}
 [CAUGHT IN THE ACT — show every one of these as evidence he finds]
-${found.length ? found.map(f => `· ${f}`).join('\n') : '(nothing caught — whatever was running here got put away in time)'}
+${found.length
+    ? found.map(f => `· ${typeof f === 'string' ? f : `${f.en}  [${f.grade}]`}`).join('\n')
+    : '(nothing caught — whatever was running here got put away in time, or this hour is simply the wrong hour for it)'}
 
-Write the inspection findings.`;
+Write the inspection findings. The hour matters: a room at lights-out is not the same
+room at midday, and what he does not find may simply not happen at this time of day.`;
+}
+
+// ── C. 검열 강평 — 밖에서 들어온 눈 ─────────────────────────
+// 불시점검(I-2)이 주임원사의 눈이라면 이것은 **주임원사를 보는 눈**이다. 그래서 시점이 다르다:
+// 소견은 그가 본 것을 쓰고, 강평은 그에 대해 쓰인 것을 쓴다. 문체도 다르다 — 사람의 눈이 아니라
+// 서류의 목소리이고, 칭찬도 비난도 없이 항목과 처분만 적힌다. 그 건조함이 이 블록의 전부다.
+//
+// 무엇이 걸렸는지는 코드가 이미 다 정했다. LLM은 그것을 강평문으로 옮겨 쓸 뿐이고,
+// 목록에 없는 것을 지어내면 화면의 적발 목록과 강평이 서로 다른 말을 하게 된다.
+const C_ROLE = `[ROLE — THE INSPECTORATE]
+A team from higher command spent the day inside this unit. Sunglasses, black field jackets,
+clipboards; they did not introduce themselves and they did not eat here. You write the
+closing remarks they leave behind — 3-6 sentences of document voice: flat, itemised, no
+praise, no anger, no advice. Refer to the unit in the third person. Never name a soldier.
+
+[WHAT THEY WROTE UP]
+The findings are given to you, already decided, each with its grade. Write every one of them
+and invent none: an item not on the list did not happen today. Grades matter to the tone —
+a petty item is a line in a paragraph, a court-martial-grade item is the paragraph.
+When a court-martial-grade item is listed, say plainly that it leaves with them: the case
+goes to the military police and so does a man. When the list is empty, write the other kind
+of remark — a unit that came through with nothing written up, and how rare the inspectors
+make that sound without ever saying they are pleased.
+${KO}`;
+
+export const censorSystem = unit => sys(unit, C_ROLE);
+
+export function censorUser({ level, found = [], clean = false, blown = false }) {
+  return `[INSPECTION] ${level}
+[FINDINGS — every one of these goes in the remarks, in this order. Nothing else]
+${found.length ? found.map(f => `· ${f.en}\n    grade: ${f.grade}\n    found at: ${f.place}`).join('\n') : '(nothing written up)'}
+[OUTCOME] ${clean ? 'clean — the sheet goes up with no items on it'
+    : blown ? 'a court-martial-grade item is on the sheet; the military police take it, and a man, with them'
+      : 'items written up, all of them handled inside the unit'}
+
+Write the closing remarks.`;
 }
 
 // ── N. 공지 판정 — 게시는 저장이고, 판정은 방향뿐이다 ───────
@@ -433,7 +473,7 @@ export const NOTICE_SCHEMA = {
 // 이 군대에 존재하는 편법의 종류 전부다. 그래서 캐시가 붙고, 그래서 새는 것이 없다:
 // 판정자는 부대의 현재 상태를 여전히 하나도 못 본다. 어느 것이 실제로 돌고 있었는지는
 // 코드가 돌려받은 id를 제 목록과 맞대 보고 혼자 안다.
-const GARA_CATALOGUE = GARA_POOL.map(g => `· ${g.id} — ${g.en}`).join('\n');
+const GARA_CATALOGUE = GARA_POOL.map(g => `· ${g.id} — ${g.en} [${GARA_TIERS[g.tier].en}]`).join('\n');
 
 const N_ROLE = `[ROLE — THE NOTICE READER]
 The sergeant major posted a barracks-life directive. You judge only the notice itself:

@@ -52,8 +52,10 @@ import {
   applyDrift, endOfDayStreak, isPromoted, effectiveDifficulty, slotsFor, seasonOf,
   weekdayOf, dateAdd, todayIso, startDateFor, reviewDate, rollSlot, pickEvent,
   pickInvolved, rollGrades, rollMental, mentalPass, counselMental, incidentMental,
-  minMentalOf, applyInspection, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
-  GARA_BY_ID, garaCap, garaAt, syncGaraList, inspectGara,
+  minMentalOf, applyInspection, applyCensor, capDay, categoryFor, absenceFor, ABSENCE_KINDS, PLACES, TUNING,
+  GARA_BY_ID, GARA_TIERS, garaCap, garaAt, garaWeight, garaOverreach, garaTierOf,
+  syncGaraList, inspectGara,
+  censorOn, censorAhead, censorSweep, censorReport, custodyFor,
   farewellTone, pickSendoff, PARAM_KEYS,
 } from './params.js';
 import { assignJob, rankLine } from './roster.js';
@@ -100,6 +102,9 @@ export class Engine {
     this.ambient = ambient || new AmbientPool(unit);
     this.ambient.load();
     this.thread = [];            // 오늘의 D·E-1·E-2 공유 스레드
+    // 지금 어느 슬롯을 지나고 있는가. **불시점검이 이걸 본다** — 자리만이 아니라 시간도
+    // 맞아야 잡히기 때문이다. 슬롯 밖에서 부르면(테스트·콘솔) null이고, 그때는 시간을 안 따진다.
+    this.slotNow = null;
     this.daySys = P.daySystem(unit);
     this.interventionsToday = 0;
     this.accidentToday = false;
@@ -121,7 +126,10 @@ export class Engine {
       //   active — 지금 돌고 있는 관행 id들. **플레이어에게 통째로는 절대 안 보인다**
       //   known  — 확인 명부 [{id, on}]. 들이닥쳐서 잡은 것만 오른다. 확인한 그날의 사실이다
       //   seen   — 장소별 마지막 확인 날짜. 명부가 얼마나 낡았는지의 근거
-      gara: { active: [], known: [], seen: {} },
+      gara: { active: [], known: [], seen: {}, seenAt: {} },
+      // 검열 내역 — 당한 것의 기록. 무엇이 걸렸고 무엇이 터졌는가.
+      // 걸린 관행은 그 자리에서 멎으므로 이 목록은 **가라 명부와 달리 안 낡는다** — 지나간 일이다.
+      censors: [],
       yesterday: '',      // 어제의 코드 요약 (⬛ → D의 입력)
       accidents: [],      // [{date, desc}] — 기록
       promoted: false,
@@ -139,6 +147,13 @@ export class Engine {
     g.active = (g.active || []).filter(id => GARA_BY_ID[id]);
     g.known = (g.known || []).filter(k => GARA_BY_ID[k?.id]);
     g.seen ||= {};
+    g.seenAt ||= {};
+    // 옛 저장분에는 시간대·등급이 없던 가라가 있을 수 있다 — 표에서 사라진 id는 여기서 떨어진다.
+    s.censors = (s.censors || []).map(c => ({
+      ...c,
+      findings: (c.findings || []).filter(id => GARA_BY_ID[id]),
+      blows: (c.blows || []).filter(id => GARA_BY_ID[id]),
+    }));
   }
 
   /** 지침이 막아 놓은 관행 전부. 지침을 철회하면 그 문이 다시 열린다. */
@@ -194,7 +209,15 @@ export class Engine {
         known: s.gara.known.map(k => ({ ...k })),   // 그중 확인한 것
         banned: this.bannedGara(),                  // 지침으로 막아 놓은 것
         seen: { ...s.gara.seen },                   // 장소별 마지막 확인 날짜
+        seenAt: { ...s.gara.seenAt },               // 그때가 어느 시간대였는가
         cap: garaCap(this.bannedGara()),            // 금지가 내려 놓은 천장
+      },
+      // 검열 — 미리 안다는 것이 주임원사가 검열관에게 가진 유일한 우위다. 그래서 예고는
+      // 화면 몫이고, 무엇이 돌고 있는지는 여전히 안 준다. 날짜만 알고 내용은 모른다.
+      censor: {
+        today: censorOn(s.day + 1),
+        next: censorAhead(s.day + 1),
+        history: s.censors.map(c => ({ ...c, findings: [...c.findings], blows: [...c.blows] })),
       },
       // 파라미터 수치는 화면에 안 띄운다 — 콘솔·테스트용으로만 실어 보낸다.
       params: { ...s.params },
@@ -348,6 +371,11 @@ export class Engine {
     const effDiff = effectiveDifficulty(this.unit.difficulty, date);
     const slots = slotsFor(date);
     const incidents = [];   // 오늘의 사건 기록 (코드 요약용)
+    // 오늘이 검열일인가. 맞으면 검열관들이 일과 슬롯을 따라 부대를 통과한다 —
+    // 하루가 통째로 바뀌는 것이 아니라, 평소 일과 위에 검은 옷 셋이 얹힌다.
+    const censor = censorOn(s.day + 1);
+    const caught = [];      // 오늘 검열관에게 걸린 관행들
+    const checked = [];     // 오늘 이미 굴려진 관행들 — 하나당 굴림은 하루 한 번이다
     // 새벽의 바늘. 하루가 끝나면 여기와 비교해 「오늘 무엇이 얼마나 움직였나」를 만든다 —
     // 개입·판정·드리프트가 각자 조용히 미는 값이라, 이 차이 말고는 화면이 알 길이 없다.
     // 사건 판정도 이걸 본다: 하루의 총 이동은 축마다 한 칸이다(params.js의 capDay).
@@ -397,19 +425,50 @@ export class Engine {
       this.thread.push({ role: 'assistant', content: [brief.briefing, ...slotLines].filter(Boolean).join('\n') });
       await this.h.briefing?.({ date, day: s.day, briefing: String(brief.briefing || ''), arrivals, departures, returns });
 
+      // 검열관 입장. 콜은 안 나간다 — 정해진 사람들이 정해진 모습으로 들어올 뿐이다.
+      // 오늘 이 부대에서 돌고 있는 것이 몇이고 그중 재판급이 몇인지는 **아무도 말해 주지 않는다.**
+      if (censor) await this.h.censorOpen?.({ ...censor, date, warned: true });
+
       // 첫 슬롯이 대사를 뽑기 전에 소음 풀이 눕는다 — 브리핑을 받고 읽는 동안 뒤에서 날아왔다.
       await ambientJob;
 
       // 슬롯 아홉 — 슬롯마다 사고 롤이 돈다. 화면은 h.slot에서 개입(면담·점검·공지)할 수 있다.
       for (let i = 0; i < slots.length; i++) {
         const slot = slots[i];
+        this.slotNow = slot;   // 불시점검이 이걸 본다 — 지금 이 시간에 도는 것만 잡힌다
         await this.h.slot?.({
           index: i, count: slots.length, slot, line: slotLines[i] || '',
           // 스프라이트가 흘릴 대사. 캐시된 잡담과 static 군가가 섞여 나온다 — 콜은 없다.
           chatter: this.ambientFor(slot.key, 3),
         });
 
-        const roll = rollSlot({ ...s.params, minMental: minMentalOf(this.roster.present) }, {
+        // 검열관들이 이 시간대의 부대를 훑는다. **자리를 안 고른다** — 흩어져서 전부 뒤진다.
+        // 거르는 축은 시간 하나고, 관행 하나는 오늘 하루에 딱 한 번 굴려진다(checked).
+        if (censor) {
+          const sweep = censorSweep({
+            active: s.gara.active, slotKey: slot.key, done: checked,
+            intel: this.unit.intel.score, level: censor.level, rng: this.garaRng,
+          });
+          checked.push(...sweep.checked);
+          caught.push(...sweep.caught);
+          if (sweep.checked.length) {
+            await this.h.censorSlot?.({
+              slot,
+              // 어느 자리를 뒤졌는가 — 걸린 것이 없어도 「거기까지 갔다」는 것은 보여야 한다.
+              places: [...new Set(sweep.checked.map(id => PLACES[GARA_BY_ID[id].place]?.label || ''))].filter(Boolean),
+              found: sweep.caught.map(id => ({ ...GARA_BY_ID[id], grade: garaTierOf(id) })),
+            });
+          }
+        }
+
+        // 사고 롤. 개수(params.gara)만 보던 눈금에 목록이 아는 것 둘이 붙는다 —
+        // 감당 못 하는 관행의 개수(어설프면 다친다)와 등급의 무게 합(재판급은 그 자체로 폭탄).
+        const roll = rollSlot({
+          ...s.params,
+          minMental: minMentalOf(this.roster.present),
+          overreach: garaOverreach(s.gara.active, this.unit.intel.score),
+          heat: garaWeight(s.gara.active),
+        }, {
           intel: this.unit.intel.score, macho: this.unit.macho.score,
           comrade: this.unit.comrade.score, difficulty: effDiff,
         }, slot.kind, this.rng);
@@ -418,6 +477,11 @@ export class Engine {
         const incident = await this.#runIncident(slot, roll.tier, roll.cause);
         if (incident) incidents.push(incident);
       }
+
+      this.slotNow = null;
+
+      // 검열 강평 — 하루의 끝, 드리프트보다 먼저. 여기서 사고가 확정될 수 있다.
+      const censorOut = censor ? await this.#closeCensor(censor, caught, date) : null;
 
       // 하루 마감 — 드리프트, 조용한 날 평판 회복, 카운터, 날짜 전진.
       // 병사별 멘탈 드리프트 — 부대 분위기가 전원을 쓸어간다. 파라미터 드리프트보다 먼저,
@@ -433,6 +497,9 @@ export class Engine {
         interventions: this.interventionsToday,
         baseline: this.unit.difficulty,   // 「오늘이 평소보다 힘든가」는 이 부대 기준이다
       });
+      // 드리프트도 가라를 민다 — 밀었으면 목록이 따라와야 한다. 이 한 줄이 없으면 개입 없는
+      // 날마다 「게이지의 개수」와 「실제 목록」이 벌어지고, 그 틈만큼 검열도 급습도 헛돈다.
+      this.#syncGara();
       s.streak = endOfDayStreak(s.streak, this.accidentToday);
       s.yesterday = this.#summarize(date, incidents, arrivals, departures, returns);
       s.date = dateAdd(date, 1);
@@ -454,13 +521,16 @@ export class Engine {
         departures: departures.map(d => d.name),
         returns: returns.map(r => r.name),
         // 오늘 사고가 데려간 인원 — 카운터가 0으로 돌아간 것과 별개로 부대가 실제로 빈다.
-        taken: incidents.flatMap(i => i.absences || []).map(a => a.soldier.name),
+        taken: [...incidents.flatMap(i => i.absences || []), ...(censorOut?.absences || [])]
+          .map(a => a.soldier.name),
+        censor: censorOut,
       };
       const snap = { ...this.snapshot(), today: ledger };
       await this.h.dayEnd?.(snap);
       return snap;
     } finally {
       this.running = false;
+      this.slotNow = null;
       this.thread = [];   // 100일치 원문을 끌고 다니지 않는다 — 내일은 코드 요약으로 시작한다
     }
   }
@@ -493,7 +563,9 @@ export class Engine {
         involved: this.dressedAll(involved), notices: s.notices.map(n => n.text),
         // 그 자리에서 잘라먹고 있던 모서리. 사건이 거기서 자라 나오게 하는 재료다 —
         // 실린다고 플레이어가 아는 것은 아니다. 확인 명부는 점검으로만 채워진다.
-        garaHere: garaAt(s.gara.active, event.place).map(id => GARA_BY_ID[id].en),
+        // 자리만이 아니라 **지금 이 시간에** 그 자리에서 돌던 것이다. 점호 때 도는 대리 점호가
+        // 오후 작업장 사건의 재료가 되면 장면이 부대에 대해 거짓말을 한다.
+        garaHere: garaAt(s.gara.active, event.place, slot.key).map(id => GARA_BY_ID[id].en),
       }),
     });
     let scene;
@@ -566,6 +638,91 @@ export class Engine {
       desc: event.desc, tier, escalated, directive: !!directive,
       category: stamped?.id || null, absences,
     };
+  }
+
+  /**
+   * C. 검열 강평 — 검열관들이 하루를 헤집고 나간 자리에서 무엇이 남았는가.
+   *
+   * 무엇이 걸렸는지는 슬롯을 도는 동안 코드가 이미 다 정했다(censorSweep). 여기서 하는 일은
+   * 셋이다: 강평 한 장을 받아 오고, 확정 효과를 꽂고, **재판급이 걸렸으면 사고를 낸다.**
+   *
+   * 이 게임에서 사고는 언제나 「사건이 확전했다」였다. 검열이 세 번째 길을 연다 —
+   * **걸리는 것 자체가 사고다.** 장면도 지침도 없다. 아침에 미리 알려 줬고, 치울 시간도 줬다.
+   * 걸린 관행은 그 자리에서 멎는다(검열관 앞에서 계속 돌릴 수는 없다) — 그래서 검열은
+   * 가라를 확실하게 깎는 레버이기도 하다. 다만 주임원사가 고르지 못하는 레버다.
+   *
+   * 지적이 하나도 없으면 이 게임에 몇 안 되는 상방이 열린다(평판 +1 · 행복 +1).
+   * 그래서 「가라를 다 잡아라」가 답이 아니다 — 100일 내내 0으로 눌러 두려면 점검·공지로
+   * 평판과 행복을 계속 태워야 하고, 검열은 넉 날뿐이다. 무엇을 언제까지 치울 것인가가 게임이다.
+   */
+  async #closeCensor(censor, caught, date) {
+    const s = this.state;
+    const report = censorReport(caught);
+    const sheet = report.findings.map(id => ({ ...GARA_BY_ID[id], grade: garaTierOf(id) }));
+
+    // 걸린 것은 멎는다 — 목록에서 직접 뺀다. 여기만은 무작위가 아니다: 검열관이 콕 집어
+    // 서류에 적어 놓은 것이라, 「아무거나 하나 멎는다」로 뭉갤 수가 없다.
+    s.gara.active = s.gara.active.filter(id => !report.findings.includes(id));
+    s.params.gara = Math.max(0, s.params.gara - report.findings.length);
+    // 명부에서도 내린다 — 검열이 끊었으니 안 돌아간다는 것은 주임원사도 안다.
+    s.gara.known = s.gara.known.filter(k => !report.findings.includes(k.id));
+    this.#syncGara();
+
+    // 확정 효과. 개입과 같은 부류라 하루 한 칸 제한(capDay)을 안 받는다.
+    s.params = applyCensor(s.params, report.effect);
+
+    // 재판급이 걸렸다 — 그 자리에서 사고다. 헌병대가 사람을 데려간다.
+    // 사고 기재는 **검열 하나에 한 건**이다: 그날 무너진 것은 관행 몇이 아니라 부대 하나다.
+    // 데려가는 인원만 적발 건수를 따르고, 그것도 상한이 있다(TUNING.censor.maxTaken).
+    const absences = [];
+    if (report.blows.length) {
+      this.accidentToday = true;
+      const want = Math.min(report.blows.length, TUNING.censor.maxTaken);
+      for (const man of pickInvolved(this.roster.present, want, this.rng)) {
+        if (!man || man.away) continue;
+        const rule = custodyFor(this.rng);
+        const gone = this.roster.sendAway(man, { kind: rule.kind, days: rule.days, since: date });
+        if (gone) absences.push({ soldier: gone, kind: rule.kind, days: rule.days, until: gone.away.until });
+      }
+      this.roster.save();
+      s.accidents.push({
+        date, tier: 'major',
+        desc: `${censor.label} — ${report.blows.map(id => `「${GARA_BY_ID[id].label}」`).join(' · ')} 적발`,
+        // 유형은 제일 무거운 것 하나로 찍는다 — 사고 대장에 그림 한 장이 붙는 자리다.
+        category: GARA_BY_ID[report.blows[0]].cat || null,
+        away: absences.map(a => ({ name: a.soldier.name, serial: a.soldier.serial, kind: a.kind, until: a.until })),
+      });
+    }
+
+    // 강평 한 장. 콜이 죽어도 판정은 이미 끝났다 — 코드가 정한 것은 한 글자도 안 바뀐다.
+    let review = '';
+    try {
+      review = await this.#judge({
+        label: `검열 강평 · ${censor.label}`,
+        system: P.censorSystem(this.unit),
+        user: P.censorUser({
+          level: censor.label,
+          found: sheet.map(g => ({ en: g.en, grade: g.grade.en, place: PLACES[g.place]?.label || g.place })),
+          clean: report.clean,
+          blown: report.blows.length > 0,
+        }),
+        schema: null,
+      });
+    } catch {
+      review = '(강평문은 나중에 문서로 내려온다고 했다.)';
+    }
+
+    const record = {
+      date, day: s.day + 1, level: censor.level, label: censor.label,
+      findings: [...report.findings], blows: [...report.blows],
+      clean: report.clean, effect: { ...report.effect },
+      taken: absences.map(a => ({ name: a.soldier.name, serial: a.soldier.serial, until: a.until })),
+    };
+    s.censors.push(record);
+
+    const out = { ...record, review: String(review || ''), sheet, absences };
+    await this.h.censorReport?.(out);
+    return out;
   }
 
   /**
@@ -683,15 +840,20 @@ export class Engine {
     const place = PLACES[placeKey];
     if (!place) throw new Error(`대응표에 없는 장소: ${placeKey}`);
     const s = this.state;
+    // 지금 몇 시인가. 슬롯 밖에서 부르면(테스트·콘솔) null이고 그때는 시간을 안 따진다.
+    const slot = this.slotNow;
     this.#charge();
 
     // 무엇이 걸리고 무엇이 숨는가 — 전부 코드다. 호출보다 먼저 끝난다.
     const res = inspectGara({
-      active: s.gara.active, known: s.gara.known, placeKey,
+      active: s.gara.active, known: s.gara.known, placeKey, slotKey: slot?.key || null,
       intel: this.unit.intel.score, on: s.date, rng: this.garaRng,
     });
     s.gara.known = res.known;
+    // 「이 자리를 언제 봤는가」다. 시간까지 적어 두는 이유는, 낮에 본 생활관과 점호 때 본
+    // 생활관이 같은 자리가 아니기 때문이다 — 명부의 낡음은 자리만으로는 못 잰다.
     s.gara.seen[placeKey] = s.date;
+    (s.gara.seenAt ||= {})[placeKey] = slot?.key || null;
 
     const NAMES = { gara: 'corner-cutting', happy: 'morale', conflict: 'friction-and-abuse' };
     const readings = Object.fromEntries(place.reveals.map(k => [NAMES[k], band(s.params[k])]));
@@ -700,7 +862,8 @@ export class Engine {
       system: P.inspectSystem(this.unit),
       user: P.inspectUser({
         place: place.label, readings,
-        found: res.spotted.map(id => GARA_BY_ID[id].en),
+        when: slot ? `${slot.label} (${slot.time})` : null,
+        found: res.spotted.map(id => ({ en: GARA_BY_ID[id].en, grade: garaTierOf(id).en })),
       }),
       schema: null,
     });
@@ -709,13 +872,27 @@ export class Engine {
     // 명부는 여기서 안 건드린다. 무엇이 멎었는지는 주임원사가 알 길이 없고, 방금 확인한 것이
     // 조용히 멎었다면 그 줄은 그날부터 낡기 시작한다 — 그게 이 게임에 남겨 둔 안개다.
     s.params = applyInspection(s.params);
+
+    // 예외 하나 — **재판급은 보고도 두고 나올 수가 없다.** 눈앞에서 실탄이 나오는데
+    // 「정체를 샀다」로 끝내는 주임원사는 없다. 그 자리에서 끊긴다(가라 추가 −1)이고,
+    // 이것이 점검을 「정보 창구」에서 **검열 전에 폭탄을 뽑는 레버**로 만드는 자리다.
+    // 가벼운 것과 징계감은 원래대로다: 정체만 사고, 끊는 것은 여전히 지침의 일이다.
+    const pulled = res.spotted.filter(id => garaTierOf(id).blows);
+    if (pulled.length) {
+      s.gara.active = s.gara.active.filter(id => !pulled.includes(id));
+      s.params.gara = Math.max(0, s.params.gara - pulled.length);
+      s.gara.known = s.gara.known.filter(k => !pulled.includes(k.id));
+    }
     this.#syncGara();
 
     // 놓친 것의 **개수조차** 안 돌려준다. 「3건 중 1건 적발」이라고 말해 버리면
     // 그 자리의 진짜 개수가 통째로 새고, 숨긴다는 것 자체가 의미를 잃는다.
     return {
-      place: place.label, findings, effect: { ...TUNING.inspect },
-      spotted: res.spotted.map(id => GARA_BY_ID[id]),
+      place: place.label, findings,
+      slot: slot ? { key: slot.key, label: slot.label, time: slot.time } : null,
+      effect: { ...TUNING.inspect },
+      spotted: res.spotted.map(id => ({ ...GARA_BY_ID[id], grade: garaTierOf(id) })),
+      pulled: pulled.map(id => GARA_BY_ID[id]),
     };
   }
 

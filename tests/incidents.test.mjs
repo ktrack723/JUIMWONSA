@@ -138,14 +138,18 @@ test('무게가 큰 사건이 실제로 더 자주 나온다', () => {
 
 // ── 부재 규칙 — 어느 사고가 사람을 며칠 빼내는가 ──────────
 // 유형만 보고 정한다(판정 호출은 안 는다). 폭(일수)은 언제나 코드가 굴린다.
-test('부재 규칙의 유형은 전부 열둘 안에 있고, 종류는 입원·이탈 둘뿐이다', () => {
+test('부재 규칙의 유형은 전부 열둘 안에 있고, 종류는 입원·이탈·구속 셋이다', () => {
   for (const [cat, rule] of Object.entries(TUNING.absence.rules)) {
     assert.ok(INCIDENT_CATEGORIES[cat], `부재 규칙에 모르는 유형: ${cat}`);
     assert.ok(ABSENCE_KINDS[rule.kind], `${cat}: 모르는 부재 종류 ${rule.kind}`);
     const [lo, hi] = rule.days;
     assert.ok(lo >= 1 && hi >= lo, `${cat}: 부재 일수가 이상하다 ${lo}~${hi}`);
   }
-  assert.deepEqual(Object.keys(ABSENCE_KINDS).sort(), ['awol', 'hospital']);
+  // 구속은 사고가 아니라 **검열이** 데려가는 자리라 absence.rules에는 없다 — 유형이 아니라
+  // 검열 자신이 정한다(TUNING.censor.custody). 부재 종류로는 셋째다.
+  assert.deepEqual(Object.keys(ABSENCE_KINDS).sort(), ['awol', 'custody', 'hospital']);
+  assert.ok(!Object.values(TUNING.absence.rules).some(r => r.kind === 'custody'),
+    '구속이 사고 부재 규칙에 섞였다 — 그건 검열의 몫이다');
   for (const k of Object.values(ABSENCE_KINDS)) {
     assert.ok(k.label && k.icon && k.where, '부재 종류에 화면 몫이 빠졌다');
     assert.ok(!/[가-힣]/.test(k.en), `프롬프트 표기에 한글이 있다: ${k.en}`);
