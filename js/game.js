@@ -16,7 +16,7 @@ import { Roster, staggeredJoinDates, ROSTER_SIZE, rankLine, rankOf, cohortOf } f
 import {
   PLACES, PARAM_LABELS, BAND_LABELS, band,
   slotsFor, weekdayOf, dayFraction, effectiveDifficulty, reportChance, TUNING,
-  GARA_BY_ID, GARA_TIERS, SLOTS, SLOT_BY_KEY, ABSENCE_KINDS, repBite, tourVerdict, tourOutlook,
+  GARA_BY_ID, GARA_TIERS, SLOTS, SLOT_BY_KEY, ABSENCE_KINDS, repBite, tourVerdict, tourOutlook, reviewedAccidents,
   ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf,
 } from './params.js';
 import { AmbientPool } from './ambient.js';
@@ -373,7 +373,7 @@ function renderGara(snap) {
 // 난이도는 오늘의 실효값(계절·주말 보정 후)이다 — static이지만 달력이 만지는 것이 보여야 한다.
 const GAUGE_DEFS = [
   { k: 'difficulty', label: '일과 난이도', cls: 'diff', note: '오늘 실효치 — 계절·주말이 정한다' },
-  { k: 'gara', label: '가라', cls: 'gara', note: '이 숫자가 곧 지금 돌고 있는 편법의 개수다 — 무엇인지는 아래 내역에서' },
+  { k: 'gara', label: '가라', cls: 'gara', note: '지금 돌고 있는 편법의 개수다. 놔두면 병사들이 편하고, 너무 잡으면 힘들어한다 — 터뜨리는 것은 검열이다' },
   { k: 'happy', label: '행복도', cls: 'happy', note: '낮으면 싸움이 늘고 멘탈이 쓸려 내려간다' },
   { k: 'conflict', label: '갈등·부조리', cls: 'conflict', danger: TUNING.roll.big.open, note: '이 눈금을 넘으면 탈영·자해급 사고의 문이 열린다 — 다만 실제 자리는 이보다 앞에 있을 수 있다' },
   { k: 'rep', label: '평판', cls: 'rep', note: '개입마다 −1 · 조용한 날 +1. 낮으면 지침이 안 먹힌다' },
@@ -824,8 +824,12 @@ async function runOneDay() {
   panel('#dayend-panel', false);
   // 앞의 하루가 선 채로 끝났으면(회선 오류 뒤 재시도 따위) 죽은 손잡이가 남는다.
   // 그대로 두면 버튼이 「재개」라고 쓰인 채 아무것도 안 하는 물건이 된다 — 여기서 턴다.
-  state.holdRelease = null;
-  setHold(pace.HOLD.idle);
+  // **armed는 턴다에 안 들어간다.** 마감 화면은 내일 어느 슬롯에서 설지 정하는 자리라,
+  // 거기서 누른 ⏸는 다음 날 첫 슬롯 경계에서 서야 한다. 예전에는 여기서 무조건 idle로
+  // 밀어서, 「⏸ 세우는 중…」이라고 쓰인 버튼과 토스트까지 띄워 놓고 예약을 조용히
+  // 버렸다(실측: 마감에서 예약 → 다음날 버튼 → 한 번도 안 서고 마감까지 갔다).
+  if (state.holdRelease) { state.holdRelease = null; setHold(pace.HOLD.idle); }
+  else if (state.hold === pace.HOLD.held) setHold(pace.HOLD.idle);   // 손잡이 없는 「서 있음」은 죽은 표시다
   panel('#intervene-panel', false);
   try {
     await state.engine.runDay();
@@ -850,20 +854,24 @@ async function runOneDay() {
  * 그날의 게이지를 한 칸 미는 것이 전부라, 임기가 끝나면 아무도 세어 주지 않았다.
  */
 async function showReview(snap) {
-  const v = tourVerdict({ accidents: snap.accidents, bestStreak: snap.record.bestStreak });
   const r = snap.record;
+  // 검거·구조는 이제 심사에 **정상참작으로 올라간다** — 표창이 붙는 실적이라서다.
+  // 사고 대장을 지워 주지는 않는다(reviewedAccidents의 상한). 진급은 여전히 못 산다.
+  const merit = (r.abuseCut || 0) + (r.rescued || 0);
+  const v = tourVerdict({ accidents: snap.accidents, bestStreak: snap.record.bestStreak, merit });
+  const counted = reviewedAccidents(snap.accidents, merit);
+  const pardoned = snap.accidents - counted;
   $('#promo-text').innerHTML =
     `<b>${escapeHtml(snap.date)} — 주임원사 임기 ${snap.goal}일 만료. 심사 결과: `
     + `<span class="verdict-${v.id}">${escapeHtml(v.label)}</span></b><br>${escapeHtml(v.line)}`;
   $('#promo-sheet').innerHTML =
     `<div class="sheet-block"><h4>심사표 — 군이 세는 것</h4>`
     + row('무사고 최장 연속', `${r.bestStreak}일 / ${snap.goal}일`)
-    + row('사고 누계', `${snap.accidents}건`)
+    + row('사고 누계', pardoned ? `${snap.accidents}건 — 실적 참작으로 ${counted}건` : `${snap.accidents}건`)
+    + row('검거·구조 실적', `부조리 ${r.abuseCut}건 · ${r.rescued}명${pardoned ? '' : merit ? ' (참작 문턱 미달)' : ''}`)
     + `</div>`
     + `<div class="sheet-block"><h4>그 밖에 당신이 한 일 — 심사표에는 없다</h4>`
     + row('끊은 관행', `${r.garaCut}건`)
-    + row('끊은 부조리', `${r.abuseCut}건`)
-    + row('숨 쉬게 한 사람', `${r.rescued}명`)
     + row('면담 · 점검 · 공지', `${r.counsels} · ${r.inspects} · ${r.notices}회`)
     + `</div>`;
   panel('#promo-panel', true);
@@ -912,7 +920,16 @@ async function runFarewell() {
   if (!out) return;
   saveCampaign();
 
-  const sc = FAREWELL_SCENES[out.tone] || FAREWELL_SCENES.thin;
+  let sc = FAREWELL_SCENES[out.tone] || FAREWELL_SCENES.thin;
+  // 아무도 안 나온 밤인데 대사가 있다 — 구조된 놈이 와 있는 것이다. 무대와 문패가
+  // 「아무도 없다」라고 말하면 장면과 어긋난다: 빈 식당에 그 사람이 서 있는 밤으로 바꾼다.
+  if (out.tone === 'none' && out.lines.length) {
+    sc = {
+      ...sc, title: '전출', head: '식당은 비었는데, 불이 하나 켜져 있다',
+      slot: { ...sc.slot, at: 'messhall' },
+      note: '부대는 아무도 나오지 않았다. 그런데 당신이 현장에서 끊어 줬던 그 사람이 거기 서 있었다.',
+    };
+  }
   markIncident(false);
   renderTimeline(9);
   stageTo(sc.slot, []);
@@ -1049,6 +1066,7 @@ function renderOutlook(snap) {
   const o = tourOutlook({
     accidents: snap.accidents, bestStreak: snap.record.bestStreak,
     streak: snap.streak, dayNo: snap.dayNo,
+    merit: (snap.record.abuseCut || 0) + (snap.record.rescued || 0),
   });
   el.innerHTML = `<span class="hud-k">이대로 끝나면</span>`
     + `<b class="verdict-${o.now.id}">${escapeHtml(o.now.label)}</b>`
@@ -1081,7 +1099,7 @@ function renderLead(snap) {
     + `<i>그 시간에 거기서 뭔가 있다는 말이 아침에 돌았다. 무엇인지는 아무도 안 말했다.`
     + ` <b>이 부대에서 이런 말은 열에 ${Math.round(bite / 10)}쯤 맞는다</b> (평판 ${snap.params.rep}/10).`
     + `<br>근거를 갖고 간 걸음이라 <b>빈손으로 나와도 분위기는 안 깎인다.</b>`
-    + ` 다만 들이닥치면 각이 잡혀 <b>가라가 한 칸 내려간다</b> — 그게 이 부대에 이득인지는 당신이 판단한다.</i>`;
+    + ` 점검은 정체를 살 뿐이다 — 끊는 것은 공지의 일이고, 재판급만은 눈앞에서 잡히면 그 자리에서 끊긴다.</i>`;
 }
 
 function renderInspectClock() {
@@ -1185,7 +1203,7 @@ async function doInspect() {
   if (out.caught.length) bits.push(`부조리 ${out.caught.length}건 검거`);
   toast(bits.length
     ? `${bits.join(' · ')} — 성과가 있는 걸음이라 행복은 안 깎였다`
-    : '아무것도 안 나왔다 — 가라 −1 · 행복 −1 (헛걸음)');
+    : '아무것도 안 나왔다 — 행복 −1 (헛걸음)');
 }
 
 async function doNotice() {

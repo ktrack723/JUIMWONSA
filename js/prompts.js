@@ -597,15 +597,21 @@ tonight. You write that last night and nothing past it.
   clumsy, genuinely warm. They came because these hundred days were survivable.
 · thin — a couple of men waited around because somebody had to. Nothing was prepared.
   Short, awkward, over quickly, and not unkind.
-· none — nobody came. Write the empty room: the lights, what is still on the tables from
-  dinner, the sound of the place with nobody in it, what is audible from the barracks
-  that nobody left. **No dialogue at all** — the lines array must be empty. Do not
-  soften it, do not have one man appear late, do not let him be thanked from a window.
-  Nobody sends off a sergeant major the soldiers spent a hundred days enduring.
+· none — the unit did not come. Write the empty room: the lights, what is still on the
+  tables from dinner, the sound of the place with nobody in it, what is audible from the
+  barracks that nobody left. Do not soften it, do not have the unit appear late, do not
+  let him be thanked from a window. Nobody sends off a sergeant major the soldiers spent
+  a hundred days enduring. **The one exception is the men listed below, if any are
+  listed**: they are there anyway, alone in that empty room, because of what he once
+  walked in on and stopped. If the list is empty, no dialogue at all —
+  the lines array must be empty.
 
 [WHO SPEAKS]
 Only the men listed speak, each exactly once, in the order given, using the name given.
 Nobody else has a line — not an officer, not an unnamed soldier, not the player.
+A man marked as one the sergeant major once pulled out of something knows exactly why he
+came tonight. He never names what was happening to him out loud — the room may hold men
+who were there — but his thanks is the realest one in the scene, and the hardest to say.
 
 [THANKS, IF IT IS SAID AT ALL]
 When these men thank him, they thank him for something specific that a conscript would
@@ -623,6 +629,11 @@ ${KO}`;
 export const farewellSystem = unit => sys(unit, F_ROLE);
 
 export function farewellUser({ tone, morale, clean, speakers = [] }) {
+  // saved가 붙은 병사는 주임원사가 현장에서 끊어 준 그 사람이다 — 결이 none이어도 와 있다.
+  // 무엇을 당하고 있었는지는 안 나간다. 「그가 들어와서 멈췄다」까지가 장면의 재료다.
+  const sheet = s => soldierSheet(s) + (s.saved
+    ? '\n[THIS ONE CAME NO MATTER WHAT — the sergeant major once walked in on what was being done to him and stopped it. He remembers]'
+    : '');
   return `[THE LAST NIGHT — the run is done and he is leaving this unit]
 [SHAPE OF THE SEND-OFF — decided by the machine. Write this one] ${tone}
 [MORALE READING — a word for you only. Never repeat it, never number it] ${label(morale)}
@@ -630,7 +641,7 @@ export function farewellUser({ tone, morale, clean, speakers = [] }) {
     ? 'the counter never once went back to zero while he held the post'
     : 'the counter went back to zero more than once along the way, and he got here anyway'}
 [WHO SPEAKS — in this order, once each, by these names. Nobody else has a line]
-${speakers.length ? speakers.map(soldierSheet).join('\n\n') : '(nobody — write the empty room, and leave the lines empty)'}
+${speakers.length ? speakers.map(sheet).join('\n\n') : '(nobody — write the empty room, and leave the lines empty)'}
 
 Write the last night.`;
 }

@@ -1045,15 +1045,15 @@ test('면담 프롬프트에 그 병사의 멘탈이 밴드로 실린다 — 숫
   assert.ok(!/spirit: 1\b/.test(user), '멘탈 숫자가 샜다');
 });
 
-test('점검은 군기 레버다 — 가라 −1 · 행복 −1이 코드로 확정 적용된다', async () => {
-  const { engine, state } = fixture();
+test('점검은 가라를 안 건드린다 — 값은 헛걸음의 행복 −1과 평판뿐이다', async () => {
+  const { engine, state } = fixture({ garaRng: () => 0.999 });   // 전부 숨긴다 — 확실한 헛걸음
   const { gara, happy, rep } = state.params;
   engine.interventionsToday = TUNING.rep.freePerDay;
   const out = await engine.inspect('worksite');
-  assert.equal(state.params.gara, gara - 1);
-  assert.equal(state.params.happy, happy - 1);
+  assert.equal(state.params.gara, gara, '점검이 가라를 깎았다 — 정체를 사는 걸음일 뿐이다');
+  assert.equal(state.params.happy, happy - 1, '헛걸음의 행복 −1이 안 붙었다');
   assert.equal(state.params.rep, rep - 1);
-  assert.deepEqual(out.effect, { gara: -1, happy: -1 }, '화면에 보여줄 효과가 안 실렸다');
+  assert.deepEqual(out.effect, { gara: 0, happy: -1 }, '화면에 보여줄 효과가 안 실렸다');
 });
 
 test('잔사건에 이름이 오르는 것은 상처가 아니다 — 남는 것은 사고가 된 것뿐이다', async () => {
@@ -1164,7 +1164,8 @@ test('들이닥치면 그 자리 것이 명부에 오른다 — 산 정보가 �
   const out = await engine.inspect('barracks');
   assert.deepEqual(out.spotted.map(g => g.id).sort(), here.slice().sort(), '그 자리 것이 다 안 걸렸다');
   assert.equal(state.gara.seen.barracks, state.date, '확인 날짜가 안 찍혔다');
-  assert.equal(state.params.gara, gara0 - 1, '점검의 가라 −1이 안 먹혔다');
+  // 눈금이 움직였다면 그건 재판급 현장 적발(blows)뿐이다 — 일반 효과의 −1은 없다.
+  assert.equal(state.params.gara, gara0 - out.pulled.length, '재판급 몫 말고 가라가 움직였다');
   // 명부는 적발한 만큼 그대로 남는다 — 점검의 −1이 방금 산 정보를 도로 먹으면 안 된다.
   // (그렇게 만들었다가 「털고 나면 명부가 언제나 빈다」로 물린 자리다.)
   const known = state.gara.known.map(k => k.id).sort();
@@ -1208,8 +1209,8 @@ test('머리 좋은 부대는 들이닥쳐도 숨긴다 — 명부가 빈 채로
   assert.deepEqual(state.gara.known, [], '못 봤는데 명부가 채워졌다');
   // 그래도 자리는 확인한 것으로 찍힌다 — 「가 봤는데 아무것도 못 봤다」도 정보다
   assert.equal(state.gara.seen[key], state.date);
-  // 못 잡았어도 각은 잡힌다. 다만 멎는 것은 적발과 무관한 아무거나다
-  assert.equal(state.params.gara, TUNING.start.gara - 1);
+  // 못 잡았으면 아무것도 안 멎는다 — 점검은 정체를 살 뿐, 부대를 바꾸지 않는다
+  assert.equal(state.params.gara, TUNING.start.gara);
 });
 
 test('점검 소견 프롬프트에는 적발한 것만 실린다 — 숨긴 것은 모형도 모른다', async () => {
@@ -1735,6 +1736,8 @@ test('들이닥쳐 덮치면 그 자리에서 끊긴다 — 가라와 달리 정
   assert.equal(f.state.abuse.known[0].how, 'caught');
   // 피해자가 숨을 쉰다 — 급습이 값을 하는 자리다
   assert.ok(out.rescued.some(m => m.serial === to.serial), '끊었는데 그 사람에게 아무 일도 안 일어났다');
+  // 그리고 그 사람에게 남는다 — 마지막 밤에 pickSendoff가 이 표를 보고 그를 부른다
+  assert.equal(f.engine.roster.bySerial(to.serial).saved, f.state.date, '구조가 명부에 안 남았다');
 });
 
 test('시간이 어긋나면 같은 자리라도 아무 일도 없다', async () => {

@@ -183,10 +183,8 @@
 
           <!-- 개입 콘솔 — 일과가 서 있을 때만 열린다. 하루 첫 번은 공짜, 그 뒤로 평판 −1 -->
           <div id="intervene-panel" class="panel95 radio-panel hidden" data-title="개입 콘솔 · 하루 한 번은 일과, 그 다음부터가 소문">
-            <p class="radio-note"><b>일과를 세웠다.</b> <b>하루 첫 개입은 평판을 안 깎는다</b> — 주임원사가 하루에 한 번 뭘 하는 것은
-              일과지 소문이 아니다. <b>두 번째부터 −1씩</b>이고, 그게 병사들 눈에 「주임원사가 또 온다」로 보이는 자리다.<br>
-              <b>평판이 낮으면 레버가 무뎌진다</b> — 면담은 듣는 시늉만 하고, 점검은 가기 전에 소문이 돌아 방이 치워져 있다.
-              개입이 <b>한 번도</b> 없이 지나간 날은 평판이 +1 회복된다.</p>
+            <p class="radio-note"><b>일과를 세웠다.</b> 하루 첫 개입은 일과고, <b>두 번째부터가 소문이다</b> (평판 −1씩 ·
+              개입 없는 날은 +1). 평판이 낮으면 레버가 무뎌진다 — 나머지는 해 보면 안다.</p>
             <p id="iv-cost" class="iv-cost"></p>
             <div class="intervene-tabs">
               <button class="btn95 iv-tab" data-tab="interview" type="button">🗣 면담(상담)</button>
@@ -194,11 +192,9 @@
               <button class="btn95 iv-tab" data-tab="notice" type="button">📢 공지</button>
             </div>
             <div id="iv-interview" class="iv-body hidden">
-              <p class="dim small">캐묻는 자리가 아니라 <b>들어주는 자리</b>다. 불려온 병사의 <b>멘탈이 +1</b> 회복된다 —
-                계기판에서 무너져 가는 놈부터 불러라. 멘탈 2 이하는 큰 사고의 문이다.<br>
-                <b>먹히느냐는 평판이 정한다</b> — 씹히는 주임원사 앞에서는 듣는 시늉만 하고 나간다.<br>
-                <b>그리고 당하고 있으면 말한다.</b> 부조리 명부에 오르고, 그 자리 그 시간에 들이닥치면 잘 잡힌다 —
-                <b>불러서 알아내고, 덮쳐서 끊는다</b>가 이 게임의 수순이다. 가해자는 절대 제 입으로 안 분다.</p>
+              <p class="dim small">캐묻는 자리가 아니라 <b>들어주는 자리</b>다 — 들어준 놈은 조금 돌아온다(멘탈 +1).
+                그리고 <b>당하고 있으면 말한다.</b> 불러서 알아내고, 덮쳐서 끊는다.
+                가해자는 절대 제 입으로 안 분다.</p>
               <label>불러올 병사 <select id="interview-who"></select></label>
               <textarea id="interview-q" rows="2" placeholder="예: 요즘 잠은 자냐. 힘든 거 있으면 말해라."></textarea>
               <div class="radio-btns">
@@ -214,20 +210,13 @@
             <div id="iv-inspect" class="iv-body hidden">
               <label>들이닥칠 장소 <select id="inspect-where"></select></label>
               <p id="inspect-when" class="inspect-when"></p>
-              <p class="dim small"><b>가라 내역을 사는 유일한 창구</b>다. 그 자리에서 돌던 관행이
-                적발되면 명부에 오르고, 각이 잡히면서 아무거나 하나가 멎는다(<b>가라 −1</b>) —
-                대신 분위기는 가라앉는다(<b>행복 −1</b>). 전부 걸리지는 않는다: <b>머리 좋은 부대일수록 잘 숨긴다.</b><br>
-                <b>지금 이 시간에 그 자리에서 도는 것만 잡힌다.</b> 대리 점호는 점호 때만 돌고, 실탄 반출은
-                일과 뒤에만 돈다 — 자리를 맞춰도 시간이 어긋나면 방은 깨끗하다.<br>
-                <b class="tier-court">재판급</b>을 눈앞에서 잡으면 그 자리에서 끊긴다(<b>가라 추가 −1</b>).
-                검열 전에 폭탄을 뽑는 유일한 방법이다.<br>
-                <b>같은 걸음에 사람 쪽도 본다</b> — 그 자리 그 시간에 벌어지고 있는 부조리는 <b>현장에서 끊긴다</b>
-                (갈등 −1, 그 피해자는 숨을 쉰다). <b class="tier-crime">형사건</b>이면 가해자를 그 자리에서 데려간다.<br>
-                <b>성과가 하나라도 있으면 행복은 안 깎인다</b> — 값이 붙는 것은 헛걸음이다.
-                <b>아침 낌새가 가리킨 자리·시간</b>이면 빈손으로 나와도 헛걸음이 아니다.<br>
-                장소 이름 옆에 적힌 것은 <b>소견이 어느 파라미터를 보여주는가</b>다.</p>
+              <p class="dim small"><b>정체를 사는 걸음이다.</b> 계기판은 개수만 말하고, 무엇이 도는지는 들이닥쳐야 안다 —
+                <b>지금 이 시간에 거기서 도는 것만</b> 잡힌다. 끊는 것은 공지의 일이되,
+                <b class="tier-court">재판급</b> 관행과 그 자리의 부조리만은 <b>보고도 두고 나올 수 없다</b> — 현장에서 끊긴다.<br>
+                값은 <b>헛걸음의 행복 −1</b> 하나다. 뭔가 나오거나 아침 낌새가 가리킨 자리·시간이면 안 깎인다.
+                장소 옆의 표기는 소견이 보여주는 파라미터다.</p>
               <div class="radio-btns">
-                <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (가라 −1 · 행복 −1)</button>
+                <button id="btn-inspect-go" class="btn95" type="button">들이닥친다 (헛걸음이면 행복 −1)</button>
               </div>
             </div>
             <div id="iv-notice" class="iv-body hidden">
@@ -246,7 +235,8 @@
 
           <!-- 사건 대응 — ❗가 뜨면 열린다 -->
           <div id="incident-panel" class="panel95 radio-panel hidden" data-title="❗ 사건 발생 · 대응 지침">
-            <p class="radio-note"><b>사건은 아직 사고가 아니다.</b> 지침을 내리면 그대로 현장에 꽂힌다 — 채점되지 않는다.
+            <p class="radio-note"><b>사건은 아직 사고가 아니다.</b> 지침을 내리면 그대로 현장에 꽂힌다 — 문장은 채점되지 않는다.
+        다만 <b>주임원사가 선 사건은 사고가 되어도 연루자가 덜 무너진다</b> — 위에서 정리해 준 사고는 혼자 뒤집어쓰지 않는다.
               무시할 수도 있다. 그 경우 「개입 없음」으로 결과가 굴러간다. <b>확전으로 판정될 때만 사고다.</b></p>
             <p id="incident-standing" class="standing-line"></p>
             <textarea id="incident-input" rows="3" placeholder="예: 둘 다 떼어놔라. 선임은 내 방으로, 후임은 의무대부터."></textarea>

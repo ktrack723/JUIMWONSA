@@ -255,7 +255,9 @@ test('가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
 });
 
 test('힘든 날은 그 부대의 평소 대비다 — 절대 눈금이 아니다', () => {
-  const base = { gara: 5, happy: 5, conflict: 5, rep: 5 };
+  // 가라는 시작값(4)에 둔다 — garaHigh가 5로 내려온 뒤로 5는 「놔둬서 편한 날」이라
+  // 행복이 그쪽 사유로 움직여서, 이 테스트가 재려는 달력 효과와 섞인다.
+  const base = { gara: 4, happy: 5, conflict: 5, rep: 5 };
   // 난이도 9라도 그게 이 부대의 평소면 힘든 날이 아니다. 평소보다 한 칸 높아야 힘든 날이다.
   assert.equal(PM.applyDrift(base, 9, { interventions: 1, baseline: 9 }).conflict, 4,
     '제자리 회복이 갈등을 5→4로 당겨야 한다');
@@ -276,7 +278,7 @@ test('빡센 부대라고 행복이 매일 깎이지 않는다 — 되돌릴 레
 });
 
 test('아무것도 안 민 날은 제자리로 한 칸 돌아온다 — 평판의 조용한 날 회복과 같은 자리다', () => {
-  const calm = { gara: 5, happy: 5, conflict: 3, rep: 5 };
+  const calm = { gara: 4, happy: 5, conflict: 3, rep: 5 };
   const still = PM.applyDrift(calm, 5, { interventions: 1, baseline: 5 });
   assert.equal(still.happy, PM.TUNING.start.happy, '제자리에 있는 값이 움직였다');
   assert.equal(still.conflict, PM.TUNING.start.conflict);
@@ -473,14 +475,16 @@ test('연루 가중은 등급이 낮을수록, 멘탈이 낮을수록 크다', (
 });
 
 // ── 불시점검(군기 점검) — 순수 코드 효과 ─────────────────
-test('점검은 가라 −1 · 행복 −1이고, LLM은 폭을 못 만진다', () => {
+test('점검은 가라를 안 깎는다 — 정체를 살 뿐, 끊는 것은 공지·재판급·검열의 일이다', () => {
+  // gara −1이던 시절, 성과와 무관한 그 한 칸이 회복(조용한 날 +1)보다 빨라서 사흘에 한 번만
+  // 들이닥쳐도 가라가 3 아래 래칫에 앉았고, 부조리를 쫓는 걸음까지 그 벌을 대신 냈다(§3.9).
   const p = { gara: 5, happy: 5, conflict: 5, rep: 5 };
   const out = PM.applyInspection(p);
-  assert.equal(out.gara, 4);
-  assert.equal(out.happy, 4);
+  assert.equal(out.gara, 5, '점검이 가라를 깎았다 — 이 한 칸이 코어 딜레마를 뒤집는다');
+  assert.equal(out.happy, 4, '헛걸음의 행복 −1은 남는다 — 이게 마구 터는 플레이의 벌이다');
   assert.equal(out.conflict, 5);
   assert.equal(out.rep, 5, '점검 효과가 평판을 건드렸다 — 평판은 applyIntervention 몫이다');
-  assert.equal(PM.applyInspection({ ...p, gara: 0, happy: 0 }).gara, 0, '바닥을 뚫었다');
+  assert.equal(PM.applyInspection({ ...p, happy: 0 }).happy, 0, '바닥을 뚫었다');
   assert.notEqual(out, p, '원본을 돌려줬다');
 });
 
@@ -1170,8 +1174,56 @@ test('성과가 있는 급습은 분위기를 안 깎는다 — 값이 붙는 �
   const p = { gara: 5, happy: 5, conflict: 3, rep: 5 };
   const wasted = PM.applyInspection(p);
   assert.equal(wasted.happy, 4, '헛걸음인데 분위기가 안 깎였다');
-  assert.equal(wasted.gara, 4, '각은 어느 쪽이든 잡힌다');
+  assert.equal(wasted.gara, 5, '점검이 가라를 건드렸다 — 정체만 사는 걸음이다');
   const found = PM.applyInspection(p, { found: true });
   assert.equal(found.happy, 5, '뭔가 나온 걸음인데 분위기를 깎았다');
-  assert.equal(found.gara, 4);
+  assert.equal(found.gara, 5);
+});
+
+// ── 심사의 정상참작 — 검거·구조 실적이 문턱에서 참작된다 ──
+test('검거·구조 실적은 심사에서 참작된다 — 다만 진급은 못 산다', () => {
+  const T = PM.TUNING.review;
+  // 실적 meritPer건이 사고 하나를 참작한다. 상한은 meritCap이다.
+  assert.equal(PM.reviewedAccidents(4, 0), 4);
+  assert.equal(PM.reviewedAccidents(4, T.meritPer), 3);
+  assert.equal(PM.reviewedAccidents(4, T.meritPer * 10), 4 - T.meritCap, '표창이 사고 대장을 다 지웠다');
+  assert.equal(PM.reviewedAccidents(0, T.meritPer), 0, '없는 사고가 음수가 됐다');
+
+  // 유임 문턱 바로 밖의 임기가 실적으로 안쪽에 들어온다
+  const over = { accidents: T.retainAccidents + 1, bestStreak: T.retainStreak };
+  assert.equal(PM.tourVerdict(over).id, 'transferred');
+  assert.equal(PM.tourVerdict({ ...over, merit: T.meritPer }).id, 'retained',
+    '스무 명을 구한 임기와 아무도 안 구한 임기가 같은 등급을 받았다');
+  // 진급만은 기록이다 — 사고 1건은 어떤 실적으로도 무사고가 안 된다
+  assert.notEqual(PM.tourVerdict({ accidents: 1, bestStreak: 99, merit: 999 }).id, 'promoted',
+    '참작이 진급을 샀다');
+  assert.equal(PM.tourVerdict({ accidents: 0, bestStreak: 100 }).id, 'promoted');
+});
+
+// ── 지침의 방패 — 주임원사가 선 사고는 혼자 뒤집어쓰지 않는다 ──
+test('지침이 꽂힌 사건은 사고가 되어도 추가 타격이 없다 — 섰는가만 세지, 내용은 안 센다', () => {
+  const M = PM.TUNING.mental;
+  const base = 6;
+  assert.equal(PM.incidentMental(base, true, 'major'), base + M.incidentHit + M.escalationHit);
+  assert.equal(PM.incidentMental(base, true, 'major', true), base + M.incidentHit,
+    '현장에 선 사고인데 그 놈이 다 뒤집어썼다');
+  // 연루의 기본 타격은 방패가 못 막는다 — 현장에 있었던 것까지 지워 주지는 않는다
+  assert.equal(PM.incidentMental(base, false, 'major', true), base + M.incidentHit);
+  // 수습된 잔사건은 원래 아무도 안 깎는다 — 방패가 있어도 없어도 같다
+  assert.equal(PM.incidentMental(base, false, 'minor', true), base);
+});
+
+// ── 마지막 밤의 명단 — 구조된 놈은 결과 무관하게 온다 ──
+test('구조된 병사는 아무도 안 온 밤에도 나온다 — 부대에 없는 사람만 못 온다', () => {
+  const man = (serial, mental, extra = {}) => ({ serial, name: `m${serial}`, joined: '2025-01-01', mental, ...extra });
+  const roster = [man(1, 9), man(2, 8), man(3, 2, { saved: '2026-06-01' }),
+    man(4, 7, { saved: '2026-06-10', away: { kind: 'hospital', until: '2027-01-01' } }), man(5, 6)];
+  // none — 부대는 아무도 안 나온다. 그런데 구조된 3번이 서 있다. 입원한 4번은 못 온다.
+  assert.deepEqual(PM.pickSendoff(roster, 'none').map(s => s.serial), [3],
+    '빈 식당에 서 있어야 할 사람이 없다');
+  // grand — 구조된 놈이 먼저 서고, 나머지 자리는 잘 버틴 순이다. 같은 사람이 두 번 안 선다.
+  const grand = PM.pickSendoff(roster, 'grand').map(s => s.serial);
+  assert.equal(grand[0], 3, '구조된 놈이 명단 머리에 안 섰다');
+  assert.equal(new Set(grand).size, grand.length, '같은 사람이 두 번 인사한다');
+  assert.ok(!grand.includes(4), '병원에 있는 사람이 환송회에 왔다');
 });

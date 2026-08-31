@@ -841,7 +841,9 @@ export class Engine {
     // 확전한 사건은 유형이 넘어갈 수 있다 — 「취침 중 누가 운다」가 사고가 되면 자해다.
     const stamped = categoryFor(event, escalated);
     // 연루는 멘탈을 깎는다. 사고가 되면 더 깎인다 — 그 병사들이 다음 사건의 씨앗이 된다.
-    for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated, tier);
+    // 지침이 꽂힌 사건은 예외다: 주임원사가 현장을 정리한 사고는 그 놈이 혼자 뒤집어쓰지
+    // 않는다(incidentMental의 shielded). 내용은 여전히 채점 안 된다 — 섰는가만 센다.
+    for (const man of involved) man.mental = incidentMental(man.mental ?? TUNING.mental.default, escalated, tier, !!directive);
     this.roster.save();
     // 사고가 사람을 데려간다 — 탈영은 사라지고, 부상·자해는 실려 간다. 유형만 보고 코드가 정한다.
     const absences = escalated ? this.#takeAway(involved, stamped?.id) : [];
@@ -1091,13 +1093,14 @@ export class Engine {
    *   · 그 자리의 관행 중 일부가 적발돼 확인 명부에 오른다 — **일부다.** 나머지는 제때 치웠다.
    *     적발 확률은 부대 지능이 정한다: 머리 좋은 부대일수록 절반쯤만 걸린다.
    *   · 없어진 것은 명부에서 지워진다. 들어가 봤으면 아니까.
-   *   · 파라미터가 확정으로 밀린다(가라 −1 · 행복 −1). 그 −1은 「각이 잡혔다」는 **일반 효과**라
-   *     아무 관행이나 하나를 멎게 한다 — 방금 적발한 그것을 골라 끊지는 않는다.
+   *   · 헛걸음이면 분위기가 언다(행복 −1 — applyInspection). **가라는 안 건드린다.**
    *
    * 마지막 줄이 중요하다. **점검은 정체를 사고, 관행을 끊는 것은 지침의 일이다.** 적발한 것을
    * 점검이 스스로 끊게 해 봤더니, 한 자리에 도는 관행이 평균 한 건이라 산 정보가 같은 개입의
-   * 부수효과에 그대로 지워졌다(실측: 털고 나면 명부가 언제나 비었다). 자세한 것은 params.js의
-   * syncGaraList 주석에 남겼다.
+   * 부수효과에 그대로 지워졌다(실측: 털고 나면 명부가 언제나 비었다). 그 뒤로도 「각이 잡힌다」는
+   * 일반 효과(가라 −1)가 남아 있었는데, 그것마저 뗐다 — 성과와 무관한 −1이 회복보다 빨라서,
+   * 부조리를 쫓는 걸음까지 가라 박멸의 벌을 대신 내고 있었다(TUNING.inspect 주석의 실측).
+   * 자세한 것은 params.js의 syncGaraList 주석에 남겼다.
    * LLM은 코드가 정해 준 적발 목록을 장면으로 옮겨 쓸 뿐이다. 무엇이 걸리는지는 안 정한다.
    */
   async inspect(placeKey) {
@@ -1181,6 +1184,8 @@ export class Engine {
       const man = this.roster.bySerial(a.to);
       if (!man || man.away || rescued.includes(man)) continue;
       man.mental = Math.min(10, (man.mental ?? TUNING.mental.default) + TUNING.abuse.rescue);
+      // 그 사람에게 남는다 — 마지막 밤에 이 표가 그를 부른다(pickSendoff). 명부에 저장된다.
+      man.saved = s.date;
       rescued.push(man);
     }
     if (hauled.length || rescued.length) this.roster.save();
@@ -1324,15 +1329,18 @@ export class Engine {
         tone,
         morale: band(s.params.happy),
         clean: s.accidents.length === 0,
-        speakers: this.dressedAll(speakers),
+        // 구조된 놈(saved)은 결과 무관하게 그 밤에 나와 있다 — 장면을 쓰는 쪽이 그 사실을
+        // 알아야 「빈 식당에 그 한 명이 서 있다」를 쓸 수 있다. 날짜·경위는 안 나간다.
+        speakers: this.dressedAll(speakers).map((x, i) => ({ ...x, saved: !!speakers[i].saved })),
       }) }],
       schema: P.FAREWELL_SCHEMA, maxTokens: 4000,
     });
 
     // 이름은 코드가 고른 그 몇 명 밖으로 안 나간다 — 없는 병사가 인사하고 가면
     // 마지막 장면이 명부에 대해 거짓말을 한다. 아무도 안 온 밤은 대사 자체가 없다.
+    // 「아무도」는 이제 결(tone)이 아니라 명단이 정한다 — 싸늘한 밤에도 구조된 놈은 와 있다.
     const allowed = new Map(speakers.map(x => [x.name, x]));
-    const lines = tone === 'none' ? [] : (Array.isArray(out?.lines) ? out.lines : [])
+    const lines = !speakers.length ? [] : (Array.isArray(out?.lines) ? out.lines : [])
       .map(l => ({ name: String(l?.name || '').trim(), text: String(l?.text || '').trim() }))
       .filter(l => l.text && allowed.has(l.name))
       .map(l => ({ ...l, serial: allowed.get(l.name).serial }));

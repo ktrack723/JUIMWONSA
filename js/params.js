@@ -37,7 +37,11 @@ export const TUNING = {
   //   큰사건 위험   = (갈등 ≥ big.open 이면) (갈등 − big.open + 1) × big.per
   roll: {
     base: 0.015,          // 아무 일 없어도 군대는 군대다
-    machoPer: 0.006,      // 마초 1당
+    machoPer: 0.005,      // 마초 1당. 0.006에서 내렸다 — 해병의 사고 바닥이 이 항 하나로
+                          // 깔려서, 어떻게 플레이해도 공군과 성적 격차가 2.4배였다(실측 §3.9:
+                          // 최상 플레이 유임+ 20% 대 78%). 한 눈금 내리면 53% 대 68%로 좁혀지고,
+                          // 마초가 어떤 사건을 만드는가(pullPer의 씨앗 당김)는 그대로다 —
+                          // 결이 아니라 빈도만 눌렀다.
     hardSloppyPer: 0.015, // 힘든 일을 대충 하면 다친다 — max(0, 가라+난이도−10) 1당.
                           // 0.03이던 것을 반으로 내렸다: 난이도 8 부대가 하루 0.89건이라
                           // 하루가 7.5콜이 되고 플레이어가 매일 지침을 쓰는 게임이 됐다(실측).
@@ -64,10 +68,13 @@ export const TUNING = {
   // 이중 과금이다. 달력이 하는 일은 둘로 줄였다 — 힘든 날은 싸울 기력이 없어 갈등이
   // 내려가고(원래 주석 그대로다), 평소보다 편한 날(주말·비수기)은 숨통이 트인다.
   drift: {
-    // garaHigh를 7에서 6으로 내렸다. 이 게임의 **코어 딜레마의 위쪽 절반**이 여기 걸려 있는데,
-    // 7은 100일 중 4~9일만 닿는 자리라 「가라를 놔두면 병사가 편하다」가 사실상 안 켜졌다.
-    // 6이면 해병 21일 · 공군 8일 — 놔두기로 한 선택이 실제로 값을 치러 주는 빈도다.
-    garaHigh: 6, garaLow: 3,      // 가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
+    // garaHigh를 7 → 6 → 5로 두 번 내렸다. 이 게임의 **코어 딜레마의 위쪽 절반**이 여기
+    // 걸려 있는데, 실측(임기 10판 × 40일 = 396일)에서 가라 ≥6인 날이 **3%**뿐이었다 —
+    // 벌(≤3, 41%의 날)만 살아 있고 「가라를 놔두면 병사가 편하다」는 사실상 안 켜져 있었다.
+    // 5는 시작값(4)의 바로 위라, 판정이 하루 밀어 올린 것만으로도 그날 저녁 애들 얼굴이
+    // 편해진다 — 실측으로 상방 구간이 100일 중 12~18일로 살아났고(환송회 48% → 68%),
+    // 가라를 눌러 다니는 플레이(눈감고 매일)는 여전히 사고 12~14건으로 망한다.
+    garaHigh: 5, garaLow: 3,      // 가라↑ → 행복 드리프트↑, 가라↓ → 행복 드리프트↓
     hardOver: 1,                  // 평소보다 이만큼 힘든 날 — 싸울 기력도 없다 (갈등↓)
     easyUnder: 1,                 // 평소보다 이만큼 편한 날 — 숨통이 트인다 (행복↑)
     // happyHigh를 8에서 7로 내렸다. 8은 **어떤 플레이로도 안 닿는 자리**였다(100일 × 4판 실측:
@@ -259,14 +266,28 @@ export const TUNING = {
     default: 6,                       // 멘탈 없는 옛 저장분을 읽을 때
   },
 
-  // 불시점검(군기 점검)의 효과 — 순수 코드다. 들이닥치면 일은 각이 잡히고(가라↓)
-  // 분위기는 가라앉는다(행복↓). LLM은 점검 소견(장면)만 쓴다.
-  inspect: { gara: -1, happy: -1 },
+  // 불시점검(군기 점검)의 효과 — 순수 코드다. LLM은 점검 소견(장면)만 쓴다.
+  //
+  // **가라를 안 깎는다.** 오래도록 여기 gara: -1이 있었고, 그 한 칸이 이 게임의 코어 딜레마를
+  // 뒤집어 놓고 있었다(실측 §3.9): 점검은 성과와 무관하게 언제나 가라를 깎는데 제자리 회복은
+  // 조용한 날에만 한 칸이라, **사흘에 한 번보다 자주 들이닥치면 가라가 3 아래로 영구히
+  // 내려앉는다.** 가라 ≤3은 행복 −1/일의 래칫이고, 그 벌은 부조리를 쫓느라 들이닥친 —
+  // 가라를 낮출 생각이 전혀 없던 — 플레이어에게도 똑같이 청구됐다. 낌새를 그대로 따라간
+  // 플레이(근거 100% · 헛걸음 0%)가 스무 명을 구하고도 방치보다 나빴다(사고 8.4 대 7.3,
+  // 환송회 3% 대 50%). 설계문의 원칙은 처음부터 「점검은 정체를 사고, 관행을 끊는 것은
+  // 지침의 일이다」였다 — 코드를 그 문장에 맞춘다.
+  // 깎는 길은 셋이 남고, 셋 다 이유가 있는 자리다: 공지가 콕 집어 끊고(bans), 재판급은
+  // 눈앞에서 잡히면 그 자리에서 끊기고(blows), 검열이 걸어 놓은 것은 멎는다.
+  // 0으로 바꾼 뒤의 실측(100일 × 40판): 낌새대로만 사고 8.38 → 4.03 · 환송회 3% → 68%,
+  // 눈감고 매일 터는 플레이는 여전히 12.3으로 망한다(헛걸음의 행복 −1이 살아 있다) —
+  // 「잘 하면 상, 마구 하면 벌」이 이 한 칸에서 나왔다.
+  inspect: { gara: 0, happy: -1 },
 
-  // 환송회 — 100일을 찍고 부대를 뜨는 마지막 밤. 병사들이 나오느냐 마느냐는
-  // **행복도 하나**가 정한다. 눈금은 밴드 경계 그대로다(high는 7부터, low는 3까지) —
+  // 환송회 — 100일을 찍고 부대를 뜨는 마지막 밤. **밥상의 크기**(grand/thin/none)는
+  // 행복도 하나가 정한다. 눈금은 밴드 경계 그대로다(high는 7부터, low는 3까지) —
   // 계기판에서 「높다/낮다」로 읽히는 자리가 곧 씬이 갈리는 자리여야 한다.
-  // speakers는 그 자리에서 입을 여는 인원. 아무도 안 나온 밤은 당연히 0이다.
+  // speakers는 그 결에서 나오는 인원. 다만 **구조된 병사는 결과 무관하게 온다**(pickSendoff) —
+  // 아무도 안 나온 밤에 그 한둘만 서 있는 것이 이 게임이 구조에 주는 마지막 값이다.
   farewell: { grand: 7, empty: 3, speakers: { grand: 4, thin: 1, none: 0 } },
 
   // 가라 내역 — 「가라 4」가 실제로 무엇 넷인가. 적발 확률은 부대 지능이 정한다:
@@ -382,7 +403,14 @@ export const TUNING = {
   // 임기 심사의 눈금. 사고 건수가 먼저 읽히고, 최장 무사고 연속이 그 다음이다.
   // 실측(100일 방치): 두 부대 다 사고 3건대 → 방치는 전출이다. 매일 점검한 해병은 1.4건 →
   // 유임에 닿는다. **플레이가 결말을 바꾸는 폭**이 여기 있어야 해서 눈금을 그 사이에 뒀다.
-  review: { retainAccidents: 2, retainStreak: 50, transferAccidents: 5 },
+  //
+  // merit — **정상참작.** 심사표에 사고 건수 옆으로 검거·구조 실적이 올라간다(부조리 검거는
+  // 실제로 표창이 붙는 실적이다 — docs/research.md §3). 실적 meritPer건이 사고 한 건을
+  // 참작해 주고, 상한은 meritCap이다: 표창이 사고 대장을 지워 주지는 않는다.
+  // 이게 없으면 스무 명을 구한 임기와 아무도 안 구한 임기가 같은 등급을 받는다(실측 §3.9) —
+  // 사고를 막는 일과 사람을 남기는 일이 성적표에서 정확히 반대 방향이었다.
+  // **진급만은 못 산다.** 무사고 100일은 참작이 아니라 기록이라서다.
+  review: { retainAccidents: 2, retainStreak: 50, transferAccidents: 5, meritPer: 3, meritCap: 2 },
 
   // 낌새 — 아침에 도는 말. 매일 오지 않는다(pickLead의 주석이 이유를 든다).
   // base 0.3에 등급 1당 +0.2 → 가벼운 것만 도는 부대는 사흘에 한 번, 재판급·형사건이
@@ -1914,9 +1942,16 @@ export const counselTakes = (rep, rng = Math.random) => rng() < repBite(rep);
  * 그래서 escalationHit도 여기서 처음으로 제 일을 한다 — 예전에는 이미 바닥난 사람에게
  * 한 칸 더 얹는 항이라 절제해도 게임이 안 움직였다(감도 0.001).
  */
-export const incidentMental = (mental, escalated, tier = 'major') => {
+/**
+ * shielded — **주임원사가 현장에 지침을 꽂은 사건**이다. 사고가 되어도 추가 타격이 없다:
+ * 위에서 누가 정리해 준 사고는 그 놈이 혼자 뒤집어쓰지 않는다. 사건 연루의 기본 타격은
+ * 그대로다 — 현장에 있었던 것까지 지워 주지는 않는다.
+ * 지침의 **내용**은 여전히 채점되지 않는다(장면 몫이다). 코드가 세는 것은 「주임원사가
+ * 그 자리에 섰는가」 하나고, 그건 내용이 아니라 사실이라 코드가 셀 수 있다.
+ */
+export const incidentMental = (mental, escalated, tier = 'major', shielded = false) => {
   const M = TUNING.mental;
-  const d = (tier === 'major' ? M.incidentHit : 0) + (escalated ? M.escalationHit : 0);
+  const d = (tier === 'major' ? M.incidentHit : 0) + (escalated && !shielded ? M.escalationHit : 0);
   return clamp(mental + d);
 };
 
@@ -2171,16 +2206,20 @@ const VERDICT_ORDER = ['relieved', 'transferred', 'retained', 'promoted'];
  * 화면은 이걸 매일 한 줄로 말한다. 「무엇을 하면 결말이 바뀌는가」를 아는 것이
  * 이 게임에서 플레이어가 가진 유일한 장기 동기다.
  */
-export function tourOutlook({ accidents = 0, bestStreak = 0, streak = 0, dayNo = 1 } = {}) {
+export function tourOutlook({ accidents = 0, bestStreak = 0, streak = 0, dayNo = 1, merit = 0 } = {}) {
   const T = TUNING.review;
-  const now = tourVerdict({ accidents, bestStreak });
+  const now = tourVerdict({ accidents, bestStreak, merit });
   const left = Math.max(0, TUNING.goal - dayNo + 1);   // 오늘 포함, 남은 임기
   const up = VERDICT_ORDER[VERDICT_ORDER.indexOf(now.id) + 1];
   if (!up) return { now, next: null, need: null, reachable: false, left };
 
+  // 심사가 실제로 세는 건수 — 검거·구조 실적이 참작된 값이다. 문턱 얘기는 전부 이걸로 한다.
+  const acc = reviewedAccidents(accidents, merit);
+  const pardoned = accidents - acc;
+
   // 한 등급 위가 요구하는 것을 **지금 상태에서 모자란 것**으로 말한다.
   if (up === 'promoted') {
-    // 사고가 한 건이라도 있으면 영영 닫힌다 — 그 사실을 숨기지 않는다.
+    // 사고가 한 건이라도 있으면 영영 닫힌다 — 그 사실을 숨기지 않는다. 참작도 여긴 못 온다.
     const reachable = accidents === 0 && left >= TUNING.goal - streak;
     return {
       now, next: TOUR_VERDICTS.promoted, left, reachable,
@@ -2190,27 +2229,39 @@ export function tourOutlook({ accidents = 0, bestStreak = 0, streak = 0, dayNo =
   }
   if (up === 'retained') {
     const needStreak = Math.max(0, T.retainStreak - bestStreak);
-    const overAcc = accidents > T.retainAccidents;
+    const overAcc = acc > T.retainAccidents;
     return {
       now, next: TOUR_VERDICTS.retained, left,
       reachable: !overAcc && needStreak <= left,
-      need: overAcc ? `사고 ${T.retainAccidents}건 이하라야 한다 — 이미 ${accidents}건이다`
+      need: overAcc ? `사고 ${T.retainAccidents}건 이하라야 한다 — 이미 ${acc}건이다${pardoned ? ` (실적으로 ${pardoned}건 참작받고도)` : ''}`
         : needStreak === 0 ? `사고를 ${T.retainAccidents}건 안에서 끝내면 된다`
           : `무사고 ${T.retainStreak}일 연속 (지금 최장 ${bestStreak}일, ${needStreak}일 더)`,
     };
   }
   return {
     now, next: TOUR_VERDICTS.transferred, left, reachable: true,
-    need: `사고를 ${T.transferAccidents}건 안에서 끝내면 된다 — 지금 ${accidents}건`,
+    need: `사고를 ${T.transferAccidents}건 안에서 끝내면 된다 — 지금 ${acc}건${pardoned ? ` (${pardoned}건 참작)` : ''}`,
   };
 }
 
-/** 100일이 끝난 자리의 판정. 사고 건수가 먼저고, 최장 연속이 그 다음이다. */
-export function tourVerdict({ accidents = 0, bestStreak = 0 } = {}) {
+/** 심사가 참작하는 사고 건수 — 검거·구조 실적이 깎아 준다. 0 아래로는 안 간다. */
+export function reviewedAccidents(accidents = 0, merit = 0) {
   const T = TUNING.review;
+  const pardon = Math.min(T.meritCap || 0, Math.floor(Math.max(0, merit) / (T.meritPer || Infinity)));
+  return Math.max(0, accidents - pardon);
+}
+
+/**
+ * 100일이 끝난 자리의 판정. 사고 건수가 먼저고, 최장 연속이 그 다음이다.
+ * merit(끊은 부조리 + 구조 인원)는 유임·전출의 문턱에서만 참작된다 —
+ * **진급은 실제 사고가 0이라야 한다.** 기록은 참작이 안 된다.
+ */
+export function tourVerdict({ accidents = 0, bestStreak = 0, merit = 0 } = {}) {
+  const T = TUNING.review;
+  const acc = reviewedAccidents(accidents, merit);
   const id = accidents === 0 ? 'promoted'
-    : (accidents <= T.retainAccidents && bestStreak >= T.retainStreak) ? 'retained'
-      : accidents <= T.transferAccidents ? 'transferred'
+    : (acc <= T.retainAccidents && bestStreak >= T.retainStreak) ? 'retained'
+      : acc <= T.transferAccidents ? 'transferred'
         : 'relieved';
   return { id, ...TOUR_VERDICTS[id] };
 }
@@ -2241,14 +2292,20 @@ export const sendoffSize = tone => TUNING.farewell.speakers[tone] || 0;
  * 환송회에서 입을 여는 놈들 — **잘 버틴 순**(멘탈 내림차순)이고, 같으면 짬 순이다.
  * 사건 연루자 선정(pickInvolved)의 정확한 반대편이다: 사고는 무너진 놈들에게서 나고,
  * 인사는 버틴 놈들이 한다. 난수를 안 쓴다 — 마지막 밤은 굴리는 자리가 아니다.
+ *
+ * **구조된 놈은 결과 무관하게 온다.** 부대가 아무리 싸늘해도, 현장에서 끊겨 숨을 쉰
+ * 사람은(soldier.saved) 그 밤에 나온다 — 부대의 분위기는 부대의 것이고, 그 일은 그
+ * 사람의 것이라서다. 아무도 없는 밤(none)에 그 한둘만 서 있는 것이 이 규칙의 그림이다.
+ * 부대에 없는 사람(away)은 못 온다 — 병원에서 나올 수는 없다.
  */
 export function pickSendoff(roster, tone) {
-  const n = sendoffSize(tone);
-  if (!n) return [];
   const m = s => s.mental ?? TUNING.mental.default;
-  return roster.slice()
-    .sort((a, b) => m(b) - m(a) || String(a.joined).localeCompare(String(b.joined)))
-    .slice(0, n);
+  const bySpirit = (a, b) => m(b) - m(a) || String(a.joined).localeCompare(String(b.joined));
+  const here = roster.filter(s => !s.away);
+  const saved = here.filter(s => s.saved).sort(bySpirit);
+  const n = sendoffSize(tone);
+  const crowd = n ? here.filter(s => !s.saved).sort(bySpirit).slice(0, Math.max(0, n - saved.length)) : [];
+  return [...saved, ...crowd];
 }
 
 /** 게이지 하나를 화면에 그릴 때 쓰는 값 (평판 등 노출용). */
