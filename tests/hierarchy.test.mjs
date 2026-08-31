@@ -354,7 +354,7 @@ test('아무도 안 온 밤은 빈 방이 명시되고 대사 자리가 비어 �
   assert.ok(!has(Fnone, M.sheet), '아무도 없는 밤에 병사 본문이 실렸다');
   assert.ok(/nobody/i.test(Fnone), '빈 방이라는 못이 안 박혔다');
   assert.ok(/lines array must be empty/i.test(P.farewellSystem(unit)), '대사를 비우라는 못이 안 박혔다');
-  assert.ok(/do not have one man appear late/i.test(P.farewellSystem(unit)), '빈 방을 위로하지 말라는 못이 안 박혔다');
+  assert.ok(/do not have the unit appear late/i.test(P.farewellSystem(unit)), '빈 방을 위로하지 말라는 못이 안 박혔다');
 });
 
 test('F는 이름을 지어낼 수 없다 — 나열된 놈만 입을 연다', () => {
@@ -500,4 +500,13 @@ test('확인 명부는 어떤 프롬프트에도 안 실린다 — 플레이어�
   // 「확인한 날짜」에 해당하는 것이 하나도 안 보이는지로 확인한다.
   const built = [U, A, Pb, D, E1, E2, E3, I1, I2, N].join('\n');
   assert.ok(!/confirmed|last seen|days since|명부/i.test(built), '확인 명부의 흔적이 프롬프트에 있다');
+});
+
+test('구조된 병사는 F에 「그가 끊어 준 그 사람」으로 표시된다 — 무엇을 당했는지는 안 나간다', () => {
+  const sold = { name: '박구조', serial: '25-70011011', joined: '2025-03-02', grade: 'B', character: '중',
+    job: '통신병', sheet: '말이 없는 편이다.', mental: 4, saved: true };
+  const out = P.farewellUser({ tone: 'none', morale: 'low', clean: false, speakers: [sold] });
+  assert.ok(/CAME NO MATTER WHAT/.test(out), '구조 표시가 안 실렸다');
+  const plain = P.farewellUser({ tone: 'grand', morale: 'high', clean: true, speakers: [{ ...sold, saved: false }] });
+  assert.ok(!/CAME NO MATTER WHAT/.test(plain), '구조 안 된 병사에게 표시가 붙었다');
 });
