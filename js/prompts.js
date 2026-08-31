@@ -209,7 +209,7 @@ export const BRIEFING_SCHEMA = {
   additionalProperties: false,
 };
 
-export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [], away = [], returns = [], lead = null }) {
+export function briefingUser({ date, weekday, season, slots, difficulty, bands, yesterday, arrivals = [], departures = [], excerpt = [], away = [], returns = [], lead = null, lastNight = [] }) {
   return `[TODAY] ${date} (${weekday}) · season: ${season}
 [SCHEDULE] ${slots.join(' → ')}
 [WORKLOAD READING] ${label(difficulty)}
@@ -241,6 +241,14 @@ that — a place and a time and the fact that it was mentioned at all. Never gue
 is, never name a practice, never say who said it, never treat it as established. One
 sentence, and then move on as if it were nothing.]
 ${lead ? `· ${lead.place}, around ${lead.when}` : '(nothing came to his ear this morning — do not invent one)'}
+[LAST NIGHT, AFTER LIGHTS-OUT — this happened and he was not there]
+${lastNight.length
+    ? `${lastNight.map(n => `· ${n.place ? `${n.place}: ` : ''}the junior men were stood up and worked over after lights-out, because of ${n.reason}. ${n.count} of them were on their feet for it.`).join('\n')}
+Write only what is left of it **this morning**: which men are short of sleep, where the
+room goes quiet when he walks in, who is standing very correctly today. Never state that
+there was a standing-to — he does not know, and nobody is going to tell him. Never name
+who ran it. One or two sentences, folded into the morning like anything else.`
+    : '(nothing — the barracks had an ordinary night)'}
 
 Write the morning briefing and the ambient slot lines.`;
 }
@@ -253,7 +261,7 @@ Write the morning briefing and the ambient slot lines.`;
 // 여기 실린다고 플레이어가 그걸 아는 것은 아니다: 장면이 그것을 입 밖에 낼 수도 있고
 // 안 낼 수도 있으며, **확인 명부는 이 호출로는 절대 안 채워진다.** 읽어서 눈치채는 것은
 // 플레이어의 몫이고, 도장을 찍어 주는 것은 여전히 불시점검뿐이다.
-export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [], garaHere = [], abuseHere = [], buriedHere = 0 }) {
+export function incidentUser({ slotLabel, place, tier, event, category = null, involved, notices = [], garaHere = [], abuseHere = [], buriedHere = 0, stoodLastNight = [] }) {
   return `[INCIDENT — the machine rolled one. Write the scene as it is found]
 · when: ${slotLabel}
 · where: ${place}
@@ -275,6 +283,11 @@ ${buriedHere > 0
 Write it as somewhere that has been here before: nobody is startled, someone knows exactly where
 the bandages are, the sentence "again" is available to be said. Never state the count.`
     : '(first time here — this one is actually new)'}
+[STOOD UP LAST NIGHT — these men were assembled after lights-out and worked over, because
+somebody above got told off about something. Whatever happens here today happens to men
+who were on their feet in the dark a few hours ago: short of sleep, wound tight, and
+carrying it. Let that be in the scene. Never explain where it came from]
+${stoodLastNight.length ? stoodLastNight.map(n => `· ${n}`).join('\n') : '(nobody here was stood up last night)'}
 [STANDING NOTICES — directives the sergeant major has posted. They shape how soldiers behave]
 ${notices.length ? notices.map((n, i) => `${i + 1}. ${n}`).join('\n') : '(none posted)'}
 

@@ -207,6 +207,40 @@ export const TUNING = {
     recoverPer: 0.25,
   },
 
+  // ── 내리갈굼 — 위에서 뭐라 하면, 그 말은 그 자리에서 안 멈춘다 ──────────
+  //
+  // 이 군대에서 지적은 **아래로 굴러간다.** 주임원사가 생활관을 털고 관물대 셋이 각이
+  // 안 잡혔다고 하면, 그 말을 듣는 것은 관물대 주인이 아니라 분대장이다. 분대장이 닦이고,
+  // 그날 밤 소등 뒤에 후임들이 집합한다. 주임원사는 그 집합을 **못 본다** — 그가 보는 것은
+  // 다음 날 아침 그 생활관이 이상하게 조용하다는 것뿐이다.
+  //
+  // 이게 이 게임의 마지막 아이러니를 완성한다: **부조리를 잡으러 들어간 걸음이 부조리를
+  // 만든다.** 예전에도 그 되먹임은 있었지만 이름이 없었다(점검 → 행복↓ → 갈등↑ → 목록이
+  // 길어짐). 이름 없는 되먹임은 버그와 구별이 안 돼서 §3.9에서 한 번 잘라냈다. 다시 넣되
+  // 이번에는 **이름과 브레이크와 대응책**을 붙인다.
+  //
+  //   브레이크 — **평판.** 존경받는 주임원사의 지적은 선임 선에서 멎는다("제가 정리하겠습니다").
+  //     씹히는 주임원사의 지적은 화풀이가 된다("저 인간 때문에 우리가"). 이게 평판의 셋째
+  //     일이다 — 그전까지 평판은 개입의 실효 계수(repBite)와 프롬프트 밴드뿐이었다.
+  //   가속 — **마초.** 집합이 문화인 부대에서 더 굴러간다.
+  //   멈춤 — 그 자리에서 사람이 실려 나갔으면 안 굴러간다. **책임이 이미 확정됐다.**
+  //     재판급·형사건을 현장에서 잡는 걸음이 값나가는 이유가 하나 더 생긴다.
+  //
+  // 굴러간 밤에 일어나는 일은 둘이다: 그 자리에 선 후임들이 깎이고(hit), 그 사람들에게
+  // 돌고 있던 부조리의 시계가 앞당겨진다(ripenBoost). 갈등 눈금은 안 민다 — 그건 판정과
+  // 묻힌 더미의 몫이고, 여기서 또 밀면 §3.9에서 잘라낸 그 래칫이 이름만 바꿔 돌아온다.
+  rollDown: {
+    base: 0.75,        // 지적 하나가 밤에 집합으로 굴러갈 기본 확률
+    repPer: 0.055,     // 평판 1당 내려간다 — 평판 10이면 0.20, 0이면 0.75
+    machoPer: 0.03,    // 중립 초과 마초 1당 오른다
+    floor: 0.05,       // 아무리 존경받아도 아래로 한 마디도 안 가는 부대는 없다
+    ceil: 0.9,
+    size: 3,           // 그 밤에 서는 인원
+    hit: -1,           // 선 놈의 멘탈
+    ripenBoost: 10,    // 그 사람들에게 돌던 부조리의 시계를 이만큼 앞당긴다 (일)
+    censorMul: 2,      // 검열 지적은 부대 전체다 — 인원도 시계도 두 배
+  },
+
   // 계절 보정 — 여름 혹서기·겨울 제설이 일과 난이도에 +1. 주말은 일과 없음.
   season: { summerBonus: 1, winterBonus: 1, weekendDifficulty: 1 },
 
@@ -1166,6 +1200,59 @@ export function syncAbuseList(active, target, { roster = [], cohortOf, macho, da
  * 창이 스물넷 날이다.
  * 무거워지면 `since`가 다시 찍힌다 — 다음 단계까지 또 그만큼이 걸린다.
  */
+// ── 내리갈굼 — 지적이 아래로 굴러간다 ─────────────────────
+/**
+ * 지적 하나가 그날 밤 집합으로 굴러갈 확률. **평판이 브레이크고 마초가 가속이다.**
+ * 순수 함수 — 엔진이 개입·검열마다 한 번씩 굴린다.
+ */
+export function rollDownChance(rep, macho = TUNING.comrade.neutral) {
+  const R = TUNING.rollDown;
+  const p = R.base - clamp(rep) * R.repPer
+    + Math.max(0, macho - TUNING.comrade.neutral) * R.machoPer;
+  return Math.max(R.floor, Math.min(R.ceil, p));
+}
+
+/**
+ * 그 밤에 누가 닦이고 누가 서는가. **난수를 쓰되 자리는 기수가 정한다** —
+ * 닦이는 것은 그 자리에서 제일 위(선임)고, 서는 것은 아래 기수들이다.
+ * 이미 당하고 있는 놈에게 쏠린다(pileOn): 집합은 새로운 사람을 찾지 않는다.
+ * 부대에 없는 사람은 못 선다 — 병원에 있는 놈을 집합시킬 수는 없다.
+ */
+export function pickAssembly(roster, { cohortOf, active = [], size = TUNING.rollDown.size, rng = Math.random } = {}) {
+  const men = roster.filter(m => !m.away);
+  if (men.length < 2) return null;
+  const cohort = new Map(men.map(m => [m.serial, cohortOf(m)]));
+  // 기수 번호가 작을수록 위다 — 닦이는 것은 제일 위 하나.
+  const by = men.slice().sort((a, b) => cohort.get(a.serial) - cohort.get(b.serial))[0];
+  const juniors = men.filter(m => cohort.get(m.serial) > cohort.get(by.serial));
+  if (!juniors.length) return null;
+  const victims = new Set(active.map(a => a.to));
+  const pool = juniors.slice();
+  const weights = pool.map(m => {
+    const w = involveWeight(m) * (1 + (cohort.get(m.serial) - cohort.get(by.serial)) * 0.05);
+    return victims.has(m.serial) ? w * TUNING.abuse.pileOn : w;
+  });
+  const on = [];
+  for (let i = 0; i < Math.min(size, pool.length); i++) {
+    const k = weightedPick(weights, rng);
+    on.push(pool[k].serial);
+    weights[k] = 0;   // 같은 놈이 두 번 서지는 않는다
+    if (weights.every(w => w === 0)) break;
+  }
+  return { by: by.serial, on };
+}
+
+/**
+ * 집합이 앞당기는 시계. 그 밤에 선 사람들에게 돌고 있던 부조리의 `since`를 뒤로 민다 —
+ * **아무도 안 말리면 무거워진다**(ripenAbuse)는 시계는 그대로 두고, 바늘만 밀어 준다.
+ * 「집합 한 번이 열흘어치」가 이 게임에서 갈굼이 가혹행위가 되는 제일 빠른 길이다.
+ */
+export function boostRipen(active, on = [], days = TUNING.rollDown.ripenBoost) {
+  if (!on.length || !days) return active;
+  const hit = new Set(on);
+  return active.map(a => (hit.has(a.to) && a.since ? { ...a, since: dateAdd(a.since, -days) } : a));
+}
+
 export function ripenAbuse(active, today, { rng = Math.random } = {}) {
   const days = TUNING.abuse.ripenDays;
   return active.map(a => {

@@ -1827,3 +1827,77 @@ test('검열은 부조리를 못 잡는다 — 검열관이 보는 것은 서류
   assert.ok(f.state.abuse.active.some(a => a.by === one.by && a.to === one.to),
     '검열이 부조리를 걷어 갔다 — 그러면 주임원사가 사람을 볼 이유가 없어진다');
 });
+
+// ── 내리갈굼 — 지적이 소등 뒤에 아래로 굴러간다 ──────────────
+test('뭔가 나온 점검은 그날 밤 집합으로 굴러간다 — 주임원사는 그 자리에 없다', async () => {
+  // 적발 확률 1(garaRng 0)로 확실히 뭔가 나오게 하고, 굴림도 확실히 성공시킨다(rng 0)
+  const f = fixture({ garaRng: () => 0, rng: () => 0 });
+  f.state.params.rep = 0;   // 씹히는 주임원사 — 확실히 굴러간다
+  const before = f.engine.roster.present.map(m => m.mental ?? 6);
+  // 개입은 하루 안에서 일어난다 — 슬롯 손잡이에서 들이닥친다(화면이 하는 그대로).
+  const prev = f.engine.h.slot;
+  let done = false;
+  f.engine.h.slot = async e => {
+    await prev(e);
+    if (done || e.index !== 2) return;
+    done = true;
+    await f.engine.inspect('barracks');
+    assert.deepEqual(f.state.lastNight, [], '점검 그 자리에서 집합이 열렸다 — 집합은 소등 뒤다');
+  };
+  await f.engine.runDay();
+  assert.equal(f.state.lastNight.length, 1, '지적이 밤에 안 굴러갔다');
+  const night = f.state.lastNight[0];
+  assert.equal(night.place, 'barracks', '엉뚱한 자리에서 집합이 걸렸다');
+  assert.ok(night.on.length > 0 && !night.on.includes(night.by), '닦인 선임이 자기 집합에 섰다');
+  assert.equal(f.state.silence.rolled, 1);
+  assert.equal(f.state.silence.stood, night.on.length);
+  // 선 놈들이 깎였다
+  const after = f.engine.roster.present.map(m => m.mental ?? 6);
+  assert.ok(after.some((v, i) => v < before[i]), '집합에 섰는데 아무도 안 깎였다');
+});
+
+test('빈손으로 나온 점검은 안 굴러간다 — 분대장에게 할 말이 없다', async () => {
+  const f = fixture({ garaRng: () => 0.999, rng: () => 0 });   // 전부 숨긴다
+  f.state.params.rep = 0;
+  f.state.abuse.active = [];   // 사람 쪽에서도 안 걸리게
+  f.engine.h.slot = async e => { if (e.index === 2) await f.engine.inspect('barracks'); };
+  await f.engine.runDay();
+  assert.deepEqual(f.state.lastNight, [], '빈손인데 아래로 굴러갔다');
+  assert.equal(f.state.silence.rolled, 0);
+});
+
+test('존경받는 주임원사의 지적은 선임 선에서 멎는다 — 평판이 브레이크다', async () => {
+  // rng를 0.95로 두면 굴림이 실패한다: 평판 10의 확률은 그보다 한참 아래다
+  const f = fixture({ garaRng: () => 0, rng: () => 0.95 });
+  f.state.params.rep = 10;
+  f.engine.h.slot = async e => { if (e.index === 2) await f.engine.inspect('barracks'); };
+  await f.engine.runDay();
+  assert.deepEqual(f.state.lastNight, [], '평판 10인데 아래로 굴러갔다');
+});
+
+test('어젯밤 집합은 하루만 산다 — 다음 날 아침이면 브리핑에만 남는다', async () => {
+  const f = fixture({ garaRng: () => 0, rng: () => 0 });
+  f.state.params.rep = 0;
+  let once = false;
+  f.engine.h.slot = async e => {
+    if (once || e.index !== 2) return;
+    once = true;
+    await f.engine.inspect('barracks');
+  };
+  await f.engine.runDay();
+  assert.equal(f.state.lastNight.length, 1);
+  await f.engine.runDay();   // 아무것도 안 한 하루
+  assert.deepEqual(f.state.lastNight, [], '어젯밤이 이틀째 살아 있다');
+});
+
+test('공지도 위에서 온 말이다 — 붙인 밤에 누군가는 서서 듣는다', async () => {
+  const f = fixture({ rng: () => 0 });
+  f.state.params.rep = 0;
+  f.engine.h.slot = async e => {
+    if (e.index !== 2) return;
+    await f.engine.postNotice('금일부로 취침 전 휴대폰은 전량 수거함에 투입한다.');
+  };
+  await f.engine.runDay();
+  assert.equal(f.state.lastNight.length, 1, '공지가 아래로 안 갔다');
+  assert.equal(f.state.lastNight[0].place, null, '공지는 자리가 없다 — 부대 전체다');
+});

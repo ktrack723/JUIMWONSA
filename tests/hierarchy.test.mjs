@@ -29,6 +29,7 @@ const M = {
   honesty: 'HONESTY표식', standing: 'STANDING표식', bond: 'BONDBAND표식',
   yesterday: 'YESTER표식', notice: 'NOTICE표식', directive: 'DIRECTIVE표식',
   question: 'QUESTION표식', scene: 'SCENE표식', event: 'EVENT표식', place: 'PLACE표식',
+  nightWhy: 'NIGHTWHY표식', stoodName: 'STOODNAME표식',
 };
 
 const unit = {
@@ -60,8 +61,9 @@ const D = P.daySystem(unit) + '\n' + P.briefingUser({
   date: 'DATE표식', weekday: 'WD표식', season: 'SEASON표식', slots: ['SLOT표식'],
   difficulty: M.bandDiff, bands, yesterday: M.yesterday,
   arrivals: [other], departures: [], excerpt: [soldier],
+  lastNight: [{ place: M.place, reason: M.nightWhy, count: 3 }],
 });
-const E1 = P.incidentUser({ slotLabel: 'SLOT표식', place: M.place, tier: 'major', event: M.event, involved: [soldier], notices: [M.notice] });
+const E1 = P.incidentUser({ slotLabel: 'SLOT표식', place: M.place, tier: 'major', event: M.event, involved: [soldier], notices: [M.notice], stoodLastNight: [M.stoodName] });
 const E2 = P.outcomeUser({ directive: M.directive, standing: M.standing, bond: M.bond });
 const E2none = P.outcomeUser({ directive: null, standing: M.standing, bond: M.bond });
 const E3 = P.JUDGE_SYSTEM + '\n' + P.judgeUser({ scene: M.scene, tier: 'major' });
@@ -509,4 +511,29 @@ test('구조된 병사는 F에 「그가 끊어 준 그 사람」으로 표시�
   assert.ok(/CAME NO MATTER WHAT/.test(out), '구조 표시가 안 실렸다');
   const plain = P.farewellUser({ tone: 'grand', morale: 'high', clean: true, speakers: [{ ...sold, saved: false }] });
   assert.ok(!/CAME NO MATTER WHAT/.test(plain), '구조 안 된 병사에게 표시가 붙었다');
+});
+
+// ── 내리갈굼 — 어젯밤은 D와 E-1까지만 간다 ──────────────
+test('어젯밤 집합은 브리핑과 사건 장면만 안다 — 판정 계열은 못 본다', () => {
+  assert.ok(has(D, M.nightWhy), 'D가 어젯밤 사유를 못 받았다');
+  assert.ok(has(E1, M.stoodName), 'E-1이 어젯밤 선 놈을 못 받았다');
+  // 심판·공지·환송회는 여전히 그 하루를 못 본다
+  for (const [name, block] of [['E3', E3], ['N', N], ['F', F], ['I2', I2]]) {
+    assert.ok(!has(block, M.nightWhy) && !has(block, M.stoodName), `${name}에 어젯밤이 새어 들어갔다`);
+  }
+});
+
+test('브리핑은 집합을 사실로 쓰지 말라는 못이 박혀 있다 — 주임원사는 못 봤다', () => {
+  const flat = D.replace(/\s+/g, ' ');
+  assert.ok(/Never state that there was a standing-to/i.test(flat), '「있었다고 쓰지 마라」가 안 박혔다');
+  assert.ok(/Never name who ran it/i.test(flat), '「누가 세웠는지 쓰지 마라」가 안 박혔다');
+});
+
+test('어젯밤이 없는 날은 그 자리가 명시적으로 조용하다 — 없는 밤을 지어내지 않는다', () => {
+  const quiet = P.briefingUser({
+    date: 'D', weekday: 'W', season: 'S', slots: [], difficulty: 'mid', bands, yesterday: '',
+  });
+  assert.ok(/ordinary night/i.test(quiet), '집합이 없던 밤에 자리가 비어 있다');
+  const noStand = P.incidentUser({ slotLabel: 'S', place: 'P', tier: 'minor', event: 'E', involved: [soldier] });
+  assert.ok(/nobody here was stood up/i.test(noStand), 'E-1의 빈 자리가 안 명시됐다');
 });

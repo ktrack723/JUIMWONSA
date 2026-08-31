@@ -954,7 +954,14 @@ async function runFarewell() {
     + (unknown > 0
       ? `${unknown}건은 <b>당신이 부대를 떠날 때까지 아무도 말하지 않았다.</b>`
       : `끝내는 전부 올라왔다.`)
-    + `</span>`;
+    + `</span>`
+    // **그리고 여기가 그가 만든 몫이다.** 침묵 장부 바로 옆자리다: 위는 그가 못 본 것이고,
+    // 아래는 그가 낸 말이 아래에서 어떻게 갚였는가다. 임기 중에는 한 번도 안 보이던 숫자다.
+    + (sil.rolled
+      ? `<br><span class="dim">그리고 당신이 낸 지적 중 <b>${sil.rolled}번</b>이 그날 밤 아래로 내려갔다. `
+        + `<b>연인원 ${sil.stood || 0}명</b>이 소등 뒤에 서 있었다 — 당신은 한 번도 그 자리에 없었다.</span>`
+      : '')
+    ;
   panel('#btn-farewell-end', true);
   panel('#farewell-panel', true);
   // 게임의 마지막 버튼이다 — 접혀 있는 자리에서 끝나지 않게 화면으로 끌어온다.

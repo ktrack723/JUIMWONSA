@@ -1227,3 +1227,64 @@ test('구조된 병사는 아무도 안 온 밤에도 나온다 — 부대에 �
   assert.equal(new Set(grand).size, grand.length, '같은 사람이 두 번 인사한다');
   assert.ok(!grand.includes(4), '병원에 있는 사람이 환송회에 왔다');
 });
+
+// ── 내리갈굼 — 위에서 뭐라 하면 아래에서 집합이 걸린다 ──────
+test('평판이 브레이크고 마초가 가속이다 — 굴러갈 확률이 그 둘로 갈린다', () => {
+  const R = PM.TUNING.rollDown, N = PM.TUNING.comrade.neutral;
+  assert.ok(PM.rollDownChance(10, N) < PM.rollDownChance(0, N),
+    '존경받는 주임원사의 지적이 씹히는 쪽과 똑같이 굴러갔다');
+  assert.ok(PM.rollDownChance(5, 9) > PM.rollDownChance(5, 2),
+    '집합이 문화인 부대에서 더 안 굴러갔다');
+  // 중립 아래 마초는 안 민다 — 이 축은 가속이지 브레이크가 아니다
+  assert.equal(PM.rollDownChance(5, 2), PM.rollDownChance(5, N));
+  // 눈금 밖으로는 안 나간다
+  assert.ok(PM.rollDownChance(10, 0) >= R.floor, '아래로 한 마디도 안 가는 부대가 생겼다');
+  assert.ok(PM.rollDownChance(0, 10) <= R.ceil);
+});
+
+test('닦이는 것은 제일 위 기수고, 서는 것은 아래다 — 부재자는 못 선다', () => {
+  const man = (serial, cohort, extra = {}) => ({ serial, name: `m${serial}`, cohort, grade: 'B', mental: 6, ...extra });
+  const roster = [man(1, 1300), man(2, 1310), man(3, 1320), man(4, 1330),
+    man(5, 1340, { away: { kind: 'hospital', until: '2027-01-01' } })];
+  const cohortOf = m => m.cohort;
+  const out = PM.pickAssembly(roster, { cohortOf, size: 3, rng: () => 0.5 });
+  assert.equal(out.by, 1, '제일 위 기수가 안 닦였다');
+  assert.ok(out.on.length === 3 && !out.on.includes(1), '닦인 선임이 자기 집합에 섰다');
+  assert.ok(!out.on.includes(5), '병원에 있는 사람이 집합에 섰다');
+  assert.equal(new Set(out.on).size, out.on.length, '같은 놈이 두 번 섰다');
+  // 사람이 둘 미만이면 집합 자체가 성립 안 한다
+  assert.equal(PM.pickAssembly([man(1, 1300)], { cohortOf }), null);
+  // 기수가 전부 같으면 아래가 없다
+  assert.equal(PM.pickAssembly([man(1, 1300), man(2, 1300)], { cohortOf }), null);
+});
+
+test('이미 당하는 놈에게 쏠린다 — 집합은 새 사람을 찾지 않는다', () => {
+  const man = (serial, cohort) => ({ serial, name: `m${serial}`, cohort, grade: 'B', mental: 6 });
+  const roster = [man(1, 1300), ...Array.from({ length: 12 }, (_, i) => man(i + 2, 1310 + i))];
+  const cohortOf = m => m.cohort;
+  const active = [{ id: 'verbal-grind', by: 1, to: 7, since: '2026-05-01' }];
+  let hits = 0;
+  for (let i = 0; i < 400; i++) {
+    const rng = (() => { let n = i * 7919; return () => ((n = (n * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff); })();
+    if (PM.pickAssembly(roster, { cohortOf, active, size: 3, rng }).on.includes(7)) hits++;
+  }
+  // 열두 명 중 셋이면 균등하면 25%다. pileOn이 붙으면 뚜렷이 위다.
+  assert.ok(hits / 400 > 0.35, `당하고 있는 놈이 안 쏠렸다 (${(100 * hits / 400).toFixed(0)}%)`);
+});
+
+test('집합은 그 밤에 선 놈들의 시계만 앞당긴다 — 나머지 부조리는 그대로다', () => {
+  const active = [
+    { id: 'verbal-grind', by: 1, to: 7, since: '2026-05-20' },
+    { id: 'verbal-grind', by: 1, to: 9, since: '2026-05-20' },
+  ];
+  const out = PM.boostRipen(active, [7], 10);
+  assert.equal(out[0].since, '2026-05-10', '선 놈의 시계가 안 당겨졌다');
+  assert.equal(out[1].since, '2026-05-20', '안 선 놈의 시계까지 당겨졌다');
+  // 아무도 안 섰거나 폭이 0이면 원본 그대로다
+  assert.equal(PM.boostRipen(active, [], 10), active);
+  assert.equal(PM.boostRipen(active, [7], 0), active);
+  // 그 앞당김이 실제로 ripenAbuse를 넘긴다 — 갈굼이 가혹행위가 되는 제일 빠른 길이다
+  const ripeDay = PM.dateAdd('2026-05-20', PM.TUNING.abuse.ripenDays - 1);
+  assert.equal(PM.ripenAbuse(active, ripeDay)[0].id, 'verbal-grind', '시계가 아직 안 됐는데 익었다');
+  assert.notEqual(PM.ripenAbuse(out, ripeDay)[0].id, 'verbal-grind', '집합이 시계를 못 넘겼다');
+});

@@ -58,6 +58,7 @@ import {
   syncGaraList, inspectGara, pickLead, SLOT_BY_KEY,
   ABUSE_BY_ID, ABUSE_TIERS, abuseTierOf, abuseAt, abuseOn, abuseBy,
   syncAbuseList, inspectAbuse, ripenAbuse, tellChance,
+  rollDownChance, pickAssembly, boostRipen,
   censorOn, censorAhead, censorSweep, censorReport, custodyFor,
   farewellTone, pickSendoff, PARAM_KEYS,
 } from './params.js';
@@ -112,6 +113,7 @@ export class Engine {
     this.daySys = P.daySystem(unit);
     this.interventionsToday = 0;
     this.accidentToday = false;
+    this.scolds = [];   // 오늘 위에서 내려온 말들. 소등(#lightsOut)에서 아래로 굴러간다
     this.running = false;
   }
 
@@ -143,7 +145,11 @@ export class Engine {
       lead: null,
       // 임기 누계. **마지막 밤에만 드러난다** — 100일을 조용히 보낸 부대가 실제로는
       // 무슨 일을 겪었는지가 이 두 숫자의 차이다.
-      silence: { happened: 0, buried: 0, surfaced: 0 },
+      // rolled는 주임원사의 지적이 밤에 집합으로 굴러간 횟수다 — 그가 만든 몫이다.
+      silence: { happened: 0, buried: 0, surfaced: 0, rolled: 0, stood: 0 },
+      // **어젯밤 집합.** 소등 뒤 생활관에서 일어나고 주임원사는 못 본다 — 그가 보는 것은
+      // 다음 날 아침 그 자리가 이상하게 조용하다는 것뿐이다. 하루만 산다.
+      lastNight: [],
       // 임기 장부 — **100일이 끝나면 이게 성적표가 된다.**
       // 무사고 카운터는 임기 중에 몇 번이고 0으로 돌아가지만 이 숫자들은 안 돌아간다.
       // 그전까지 가라·부조리를 끊는 일에는 **종점 가치가 없었다**: 그날의 게이지를 한 칸
@@ -183,7 +189,8 @@ export class Engine {
     s.lead = s.lead && s.lead.place ? s.lead : null;
     s.record = { bestStreak: s.streak || 0, garaCut: 0, abuseCut: 0, rescued: 0, counsels: 0, inspects: 0, notices: 0, ...(s.record || {}) };
     s.over = !!s.over;
-    s.silence = { happened: 0, buried: 0, surfaced: 0, ...(s.silence || {}) };
+    s.silence = { happened: 0, buried: 0, surfaced: 0, rolled: 0, stood: 0, ...(s.silence || {}) };
+    s.lastNight = Array.isArray(s.lastNight) ? s.lastNight : [];
     // 옛 저장분에는 시간대·등급이 없던 가라가 있을 수 있다 — 표에서 사라진 id는 여기서 떨어진다.
     s.censors = (s.censors || []).map(c => ({
       ...c,
@@ -443,6 +450,7 @@ export class Engine {
     this.thread = [];
     this.interventionsToday = 0;
     this.accidentToday = false;
+    this.scolds = [];   // 오늘 위에서 내려온 말들. 소등(#lightsOut)에서 아래로 굴러간다
     const s = this.state;
     const date = s.date;
     const effDiff = effectiveDifficulty(this.unit.difficulty, date);
@@ -507,6 +515,12 @@ export class Engine {
           returns: returns.map(x => ({ name: x.name, serial: x.serial, en: ABSENCE_KINDS[x.away.kind]?.en || 'away' })),
           // 자리와 시간만. **참인지 거짓인지는 안 나간다** — 브리핑이 알면 말투에서 새어 나온다.
           lead: s.lead && { place: PLACES[s.lead.place]?.label || s.lead.place, when: SLOT_BY_KEY[s.lead.slot]?.label || s.lead.slot },
+          // 어젯밤 집합. **주임원사는 못 봤다** — 산문이 쓰는 것은 오늘 아침에 남은 것뿐이다.
+          // 이름은 안 나간다: 누가 세웠고 누가 섰는지는 그 방 안에서 끝난 일이다.
+          lastNight: (s.lastNight || []).map(n => ({
+            place: n.place ? PLACES[n.place]?.label || null : null,
+            reason: n.reason, count: n.on.length,
+          })),
         }),
       });
       let brief;
@@ -605,6 +619,11 @@ export class Engine {
       const after = mentalPass(present, s.params, this.unit.comrade.score, this.rng, { abuse: s.abuse.active, today: date });
       present.forEach((man, i) => { man.mental = after[i]; });
       this.roster.save();
+
+      // **소등.** 오늘 위에서 내려온 말이 여기서 아래로 굴러간다 — 분대장이 닦이고,
+      // 그 밤에 후임들이 선다. 분위기 드리프트(mentalPass) 다음이라야 맞다: 집합은
+      // 그날의 마지막 일이고, 그 한 칸은 다음 날 아침에 얼굴로 나타난다.
+      this.#lightsOut(date);
 
       // 안 올라간 것들이 부대를 민다 — 판정도 개입도 아니고, **장부에 이유가 안 적히는 한 칸**이다.
       // 더미가 갈등의 **바닥**이 된다: 자기 크기까지만, 하루 한 칸씩. 상한이 아니라 바닥이라
@@ -785,6 +804,12 @@ export class Engine {
         // 쓰이면 그 부대에 대해 거짓말이 된다 — 올라온 것이 처음일 뿐이다.
         // 수치는 안 나간다. 나가는 것은 「전에도 있었다」와 몇 번이었나뿐이다.
         buriedHere: s.buried.filter(b => b.place === event.place).length,
+        // 어젯밤 세워졌던 놈이 오늘 이 사건에 걸려 있는가. 그러면 그 사람은 몇 시간 전에
+        // 어둠 속에 서 있던 사람이다 — 장면이 그걸 알고 써야 한다.
+        stoodLastNight: (() => {
+          const stood = new Set((s.lastNight || []).flatMap(n => n.on));
+          return involved.filter(m => stood.has(m.serial)).map(m => m.name);
+        })(),
       }),
     });
     let scene;
@@ -948,6 +973,14 @@ export class Engine {
       review = '(강평문은 나중에 문서로 내려온다고 했다.)';
     }
 
+    // **검열 지적은 부대 전체로 굴러간다.** 주임원사가 낸 말이 아니라 위에서 들어온
+    // 말이라 브레이크(평판)는 같아도 폭이 두 배다 — 그날 밤은 전 생활관이 선다.
+    // 재판급이 터져 사람이 실려 나갔으면 멈춘다: 그날의 책임은 이미 정해졌다.
+    this.#scold(`${censor.label} 지적`, {
+      scale: TUNING.rollDown.censorMul,
+      stopped: absences.length > 0 || report.findings.length === 0,
+    });
+
     const record = {
       date, day: s.day + 1, level: censor.level, label: censor.label,
       findings: [...report.findings], blows: [...report.blows],
@@ -1007,6 +1040,57 @@ export class Engine {
     this.interventionsToday += 1;
     // 오늘 몇 번째 개입인가를 넘긴다 — 첫 몇 번은 평판을 안 깎는다(TUNING.rep.freePerDay).
     this.state.params = applyIntervention(this.state.params, this.interventionsToday);
+  }
+
+  /**
+   * **내리갈굼을 예약한다.** 주임원사가 오늘 위에서 뭐라 한 자리 하나 — 점검에서 뭔가
+   * 나왔거나, 검열이 지적을 냈거나, 공지가 붙었거나. 굴러갈지는 여기서 안 정한다:
+   * 집합은 소등 뒤에 있고, 굴림은 하루 마감(#lightsOut)에서 한 번에 돈다.
+   *
+   * `stopped`가 참이면 안 굴러간다 — 그 자리에서 사람이 실려 나갔다는 뜻이고,
+   * 그러면 **책임이 이미 확정돼서** 아래로 굴릴 것이 없다.
+   */
+  #scold(reason, { place = null, scale = 1, stopped = false } = {}) {
+    if (stopped) return;
+    (this.scolds ||= []).push({ reason, place, scale });
+  }
+
+  /**
+   * 소등. 오늘 위에서 내려온 말들이 여기서 아래로 굴러간다.
+   *
+   * 화면은 이 밤을 **못 본다** — 주임원사는 자기 방에 있고, 집합은 생활관에서 있다.
+   * 남는 것은 다음 날 아침의 조용함뿐이고, 그게 D와 E-1으로 간다.
+   */
+  #lightsOut(date) {
+    const s = this.state;
+    const scolds = this.scolds || [];
+    this.scolds = [];
+    s.lastNight = [];
+    if (!scolds.length) return;
+    const chance = rollDownChance(s.params.rep, this.unit.macho.score);
+    for (const sc of scolds) {
+      if (this.rng() >= chance) continue;   // 선임 선에서 멎었다 — "제가 정리하겠습니다"
+      const pick = pickAssembly(this.roster.present, {
+        cohortOf: m => cohortOf(this.unit, m.joined),
+        active: s.abuse.active,
+        size: TUNING.rollDown.size * (sc.scale || 1),
+        rng: this.rng,
+      });
+      if (!pick) continue;
+      // 선 놈이 깎인다. 그 밤에 있었던 일이라 부재자에게는 안 붙는다(pickAssembly가 이미 걸렀다).
+      for (const serial of pick.on) {
+        const man = this.roster.bySerial(serial);
+        if (!man) continue;
+        man.mental = clamp10((man.mental ?? TUNING.mental.default) + TUNING.rollDown.hit);
+      }
+      // 그 사람들에게 돌던 부조리의 시계가 앞당겨진다 — 갈굼이 가혹행위가 되는 제일 빠른 길이다.
+      s.abuse.active = boostRipen(s.abuse.active, pick.on,
+        TUNING.rollDown.ripenBoost * (sc.scale || 1));
+      s.silence.rolled += 1;
+      s.silence.stood += pick.on.length;
+      s.lastNight.push({ date, place: sc.place, reason: sc.reason, by: pick.by, on: pick.on });
+    }
+    if (s.lastNight.length) this.roster.save();
   }
 
 
@@ -1223,6 +1307,14 @@ export class Engine {
       s.silence.surfaced += surfaced.length;
     }
 
+    // **그리고 여기서 지적이 아래로 굴러가기 시작한다.** 뭔가 나온 걸음만이다 —
+    // 빈손으로 나온 걸음에는 분대장에게 할 말이 없다. 다만 그 자리에서 사람이 실려
+    // 나갔으면(hauled) 안 굴러간다: 책임이 이미 확정됐고, 아래로 굴릴 것이 없다.
+    this.#scold(`${place.label} 점검 지적`, {
+      place: placeKey,
+      stopped: hauled.length > 0 || (res.spotted.length === 0 && hit.caught.length === 0),
+    });
+
     // 놓친 것의 **개수조차** 안 돌려준다. 「3건 중 1건 적발」이라고 말해 버리면
     // 그 자리의 진짜 개수가 통째로 새고, 숨긴다는 것 자체가 의미를 잃는다.
     // 묻힌 것도 마찬가지다 — 올라온 그 한 건만 주고, 뒤에 몇 건이 더 있는지는 안 준다.
@@ -1286,6 +1378,10 @@ export class Engine {
     this.#syncGara();
     // 끊긴 것은 확인 명부에서도 내린다 — 내가 끊었으니 안 돌아간다는 것은 안다.
     s.gara.known = s.gara.known.filter(k => !cut.includes(k.id));
+
+    // **공지도 위에서 내려온 말이다.** 붙은 그날 밤에 그걸 집행할 사람들이 먼저 닦이고,
+    // 그 다음이 후임이다 — 「내일부터 이거 안 된다」는 언제나 누군가가 서서 듣는다.
+    this.#scold('공지 하달');
 
     return {
       reaction: String(out.reaction || ''),
